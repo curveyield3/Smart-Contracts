@@ -1,10 +1,10 @@
-name: fxUSD Yearn v14 Solidity size compile
+name: fxUSD Yearn v15 Solidity size compile
 on:
   push:
-    branches: [fxusd-yearn-v14-compile]
+    branches: [fxusd-yearn-v15-compile]
     paths:
-      - '.github/workflows/fxusd-yearn-compile-v14.yml'
-      - 'fxusd-yearn/compile/source-v14.b64'
+      - '.github/workflows/fxusd-yearn-compile-v15.yml'
+      - 'fxusd-yearn/compile/source-v15.b64'
 permissions:
   contents: read
 jobs:
@@ -18,14 +18,14 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-      - name: Restore exact v14 source and pinned dependencies
+      - name: Restore exact v15 source and pinned dependencies
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .fxusd-compile
           node <<'NODE'
           const fs=require('fs'),path=require('path'),zlib=require('zlib');
-          const src=fs.readFileSync('fxusd-yearn/compile/source-v14.b64','utf8').trim();
+          const src=fs.readFileSync('fxusd-yearn/compile/source-v15.b64','utf8').trim();
           const data=JSON.parse(zlib.brotliDecompressSync(Buffer.from(src,'base64')).toString('utf8'));
           for(const [relative,contents] of Object.entries(data)){
             if(relative.startsWith('/')||relative.includes('..'))throw Error('bad source path');
@@ -43,13 +43,13 @@ jobs:
         run: |
           set -euo pipefail
           cd .fxusd-compile
-          # Apply source-level virtual correction also present in the delivered v14 package.
+          # Apply source-level virtual correction also present in the delivered v15 package.
           sed -i 's/function availableWithdrawLimit(address) public view override/function availableWithdrawLimit(address) public view virtual override/' contracts/FXNYearnChildBase.sol
           forge build --use 0.8.30 --via-ir --sizes 2>&1 | tee compile.log
           python3 - <<'PY'
           import json
           from pathlib import Path
-          names=['FXNYearnMasterAllocator','CurveConvex32YearnStrategy','FxBaseConvex37YearnStrategy']
+          names=['FXNYearnMasterAllocator','CurveConvex32YearnStrategy','FxBaseConvex37YearnStrategy','FXNCurveRewardRouter']
           result={'solc':'0.8.30','optimizer_runs':200,'contracts':{}}
           for name in names:
               matches=list(Path('out').rglob(name+'.json'))
@@ -65,7 +65,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fxusd-yearn-v14-size-report
+          name: fxusd-yearn-v15-size-report
           path: |
             .fxusd-compile/compile.log
             .fxusd-compile/size-report.json
