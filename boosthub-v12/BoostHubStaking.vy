@@ -416,8 +416,7 @@ def _apply_activation_step():
 
 @internal
 @view
-def _cohort_reward_integral(_token: address, _start: uint256, _prior: uint256, _prior_q: uint256) -> uint256:
-    integral: uint256 = self.reward_integral[_token]
+def _cohort_reward_integral(_token: address, _start: uint256, _prior: uint256, _prior_q: uint256, integral: uint256, current_q: uint256) -> uint256:
     effective: uint256 = 0
     for phase: uint256 in range(4):
         first: uint256 = 0
@@ -450,7 +449,7 @@ def _cohort_reward_integral(_token: address, _start: uint256, _prior: uint256, _
             from_integral = boundary_integral
             from_q = self.activation_reward_q_at[_token][begin]
         to_integral: uint256 = integral
-        to_q: uint256 = self.activation_reward_q[_token]
+        to_q: uint256 = current_q
         if end <= self.last_activation_boundary:
             to_integral = self.activation_integral_at[_token][end]
             to_q = self.activation_reward_q_at[_token][end]
@@ -558,6 +557,7 @@ def _checkpoint_user_current(_addr: address, _claim: bool):
     prior: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
     current: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
     prior_q: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
+    current_q: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
     penalties: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
 
     for r: uint256 in range(MAX_REWARDS):
@@ -568,6 +568,7 @@ def _checkpoint_user_current(_addr: address, _claim: bool):
         prior[r] = self.reward_integral_for[token][_addr]
         current[r] = self.reward_integral[token]
         prior_q[r] = self.activation_reward_q_for[token][_addr]
+        current_q[r] = self.activation_reward_q[token]
 
     # Exactly one traversal of depositor buckets, across all reward tokens.
     # Matured buckets are cleared during this same pass.
@@ -589,7 +590,7 @@ def _checkpoint_user_current(_addr: address, _claim: bool):
                 delta: uint256 = current[r] - prior[r]
                 if delta == 0:
                     continue
-                effective: uint256 = self._cohort_reward_integral(tokens[r], start, prior[r], prior_q[r])
+                effective: uint256 = self._cohort_reward_integral(tokens[r], start, prior[r], prior_q[r], current[r], current_q[r])
                 inactive: uint256 = delta - min(delta, effective)
                 if inactive != 0:
                     penalties[r] += self._mul_scale_down(amount, inactive) + 1
@@ -612,7 +613,7 @@ def _checkpoint_user_current(_addr: address, _claim: bool):
             if earned != 0:
                 self.claim_data[_addr][token] += earned
         self.reward_integral_for[token][_addr] = current[r]
-        self.activation_reward_q_for[token][_addr] = self.activation_reward_q[token]
+        self.activation_reward_q_for[token][_addr] = current_q[r]
         if _claim:
             amount: uint256 = self.claim_data[_addr][token]
             if amount != 0:
