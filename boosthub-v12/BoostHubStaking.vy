@@ -416,7 +416,7 @@ def _apply_activation_step():
 
 @internal
 @view
-def _cohort_reward_integral(_token: address, _start: uint256, _prior: uint256, _prior_q: uint256, integral: uint256, current_q: uint256) -> uint256:
+def _cohort_reward_integral(_token: address, _start: uint256, _prior: uint256, _prior_q: uint256, integral: uint256, current_q: uint256, boundary: uint256) -> uint256:
     effective: uint256 = 0
     for phase: uint256 in range(4):
         first: uint256 = 0
@@ -439,7 +439,7 @@ def _cohort_reward_integral(_token: address, _start: uint256, _prior: uint256, _
             base = 2520
             slope = 270
         begin: uint256 = _start + first * ACTIVATION_STEP_SECONDS
-        if begin > self.last_activation_boundary:
+        if begin > boundary:
             break
         end: uint256 = _start + last * ACTIVATION_STEP_SECONDS
         from_integral: uint256 = _prior
@@ -450,7 +450,7 @@ def _cohort_reward_integral(_token: address, _start: uint256, _prior: uint256, _
             from_q = self.activation_reward_q_at[_token][begin]
         to_integral: uint256 = integral
         to_q: uint256 = current_q
-        if end <= self.last_activation_boundary:
+        if end <= boundary:
             to_integral = self.activation_integral_at[_token][end]
             to_q = self.activation_reward_q_at[_token][end]
         if to_integral > from_integral:
@@ -458,7 +458,7 @@ def _cohort_reward_integral(_token: address, _start: uint256, _prior: uint256, _
             moment: uint256 = to_q - from_q - (begin // ACTIVATION_STEP_SECONDS) * delta
             effective += (base * delta + slope * moment) // RAMP_SCALE
     finish: uint256 = _start + RAMP_STEPS * ACTIVATION_STEP_SECONDS
-    if finish <= self.last_activation_boundary:
+    if finish <= boundary:
         effective += integral - max(_prior, self.activation_integral_at[_token][finish])
     return effective
 
@@ -590,7 +590,7 @@ def _checkpoint_user_current(_addr: address, _claim: bool):
                 delta: uint256 = current[r] - prior[r]
                 if delta == 0:
                     continue
-                effective: uint256 = self._cohort_reward_integral(tokens[r], start, prior[r], prior_q[r], current[r], current_q[r])
+                effective: uint256 = self._cohort_reward_integral(tokens[r], start, prior[r], prior_q[r], current[r], current_q[r], boundary)
                 inactive: uint256 = delta - min(delta, effective)
                 if inactive != 0:
                     penalties[r] += self._mul_scale_down(amount, inactive) + 1
