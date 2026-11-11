@@ -351,6 +351,20 @@ def _ramp_parameters(_step: uint256) -> (uint256, uint256):
     return RAMP_SCALE, 0
 
 @internal
+def _change_ramp_increase(_boundary: uint256, _delta: uint256, _remove: bool):
+    if _remove:
+        self.activation_increase_at[_boundary] -= _delta
+    else:
+        self.activation_increase_at[_boundary] += _delta
+
+@internal
+def _change_ramp_decrease(_boundary: uint256, _delta: uint256, _remove: bool):
+    if _remove:
+        self.activation_decrease_at[_boundary] -= _delta
+    else:
+        self.activation_decrease_at[_boundary] += _delta
+
+@internal
 def _change_ramp_position(_addr: address, _start: uint256, _value: uint256, _remove: bool):
     age: uint256 = (self.last_activation_boundary - _start) // ACTIVATION_STEP_SECONDS
     active_units: uint256 = 0
@@ -371,28 +385,16 @@ def _change_ramp_position(_addr: address, _start: uint256, _value: uint256, _rem
         self.activation_rate += rate
     if age < 3:
         boundary = _start + 3 * ACTIVATION_STEP_SECONDS
-        if _remove:
-            self.activation_decrease_at[boundary] -= _value * 72
-        else:
-            self.activation_decrease_at[boundary] += _value * 72
+        self._change_ramp_decrease(boundary, _value * 72, _remove)
     if age < 33:
         boundary = _start + 33 * ACTIVATION_STEP_SECONDS
-        if _remove:
-            self.activation_increase_at[boundary] -= _value * 42
-        else:
-            self.activation_increase_at[boundary] += _value * 42
+        self._change_ramp_increase(boundary, _value * 42, _remove)
     if age < 41:
         boundary = _start + 41 * ACTIVATION_STEP_SECONDS
-        if _remove:
-            self.activation_increase_at[boundary] -= _value * 180
-        else:
-            self.activation_increase_at[boundary] += _value * 180
+        self._change_ramp_increase(boundary, _value * 180, _remove)
     if age < RAMP_STEPS:
         boundary = _start + RAMP_STEPS * ACTIVATION_STEP_SECONDS
-        if _remove:
-            self.activation_decrease_at[boundary] -= _value * 270
-        else:
-            self.activation_decrease_at[boundary] += _value * 270
+        self._change_ramp_decrease(boundary, _value * 270, _remove)
 
 @internal
 def _apply_activation_step():
