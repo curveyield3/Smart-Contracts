@@ -11,7 +11,7 @@ on:
       - 'boosthub-v12/compilation-sources-v12.tar.xz.b64'
       - '.github/workflows/boosthub-v12-runtime-size.yml'
 permissions:
-  contents: write
+  contents: read
 jobs:
   compile-only:
     runs-on: ubuntu-latest
@@ -57,17 +57,3 @@ jobs:
           name: boosthub-v12-runtime-size
           path: boosthub-v12/workspace/boosthub-v12-runtime-size.json
           if-no-files-found: error
-      - name: Save verifiable compilation result to the build branch
-        if: always()
-        shell: bash
-        run: |
-          if [ -f boosthub-v12/workspace/boosthub-v12-runtime-size.json ]; then
-            cp boosthub-v12/workspace/boosthub-v12-runtime-size.json boosthub-v12/runtime-size-report-v12.json
-          else
-            printf '{"contract":"BoostHub","version":"v12","status":"compile_failed_or_not_reached"}\n' > boosthub-v12/runtime-size-report-v12.json
-          fi
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git config user.name 'github-actions[bot]'
-          git add boosthub-v12/runtime-size-report-v12.json
-          if [ -f boosthub-v12/compile-log-v12.txt ]; then git add boosthub-v12/compile-log-v12.txt; fi
-          git diff --cached --quiet || (git commit -m 'Record BoostHub v12 compile result' && git push)
