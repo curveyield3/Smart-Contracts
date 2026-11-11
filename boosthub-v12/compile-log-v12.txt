@@ -1,0 +1,779 @@
+Compiling 14 files with Solc 0.8.28
+Solc 0.8.28 finished in 1.34s
+Compiler run successful!
+warning[missing-events-access-control]: `depositorIndexPlusOne` is changed without an event but is used for access control
+     ╭▸ contracts/BoostHub.sol:1296:13
+     │
+1296 │             depositorIndexPlusOne[pid][depositor] = list.length + 1;
+     │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-events-access-control]: `positions` is changed without an event but is used for access control
+     ╭▸ contracts/BoostHub.sol:1546:17
+     │
+1546 │                 position.claimable[token] += accumulated - debt;
+     │                 ━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/missing-events-access-control
+
+warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
+    ╭▸ contracts/BoostHub.sol:372:33
+    │
+372 │     constructor(address owner_, address vlBoost_, address rewardDistributor_) Ownable(owner_) {
+    │                                 ━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
+
+warning[uninitialized-local]: local variable is read before being initialized
+    ╭▸ contracts/BoostHub.sol:392:53
+    │
+392 │             if (pendingPoolFeeConfig[pid].exists) ++feeCount;
+    │                                                     ━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+    ╭▸ contracts/BoostHub.sol:400:34
+    │
+400 │                 view_.feeChanges[feeIndex++] = PendingFeeView({
+    │                                  ━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[non-reentrant-not-first]: `nonReentrant` is not the first modifier
+    ╭▸ contracts/BoostHub.sol:410:76
+    │
+410 │     function transferOwnership(address newOwner) public override onlyOwner nonReentrant {
+    │                                                                            ━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[missing-zero-check]: address parameter is used in a state write or value transfer without a zero-address check
+    ╭▸ contracts/BoostHub.sol:410:32
+    │
+410 │     function transferOwnership(address newOwner) public override onlyOwner nonReentrant {
+    │                                ━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+    ╭▸ contracts/BoostHub.sol:417:13
+    │
+417 │         if (block.timestamp < deployedAt + INITIAL_CONFIG_WINDOW) return block.timestamp;
+    │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+    ╭▸ contracts/BoostHub.sol:432:57
+    │
+432 │         bool ownershipReady = newOwner != address(0) && block.timestamp >= ownershipTransferReadyAt;
+    │                                                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+    ╭▸ contracts/BoostHub.sol:444:53
+    │
+444 │             if (pendingPoolFeeConfig[pid].exists && block.timestamp >= pendingPoolFeeConfig[pid].readyAt) {
+    │                                                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1518:34
+     │
+1518 │         if (pid >= pools.length) revert Errors.InvalidPool();
+     │                                  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:586:30
+    │
+586 │         if (!pending.exists) revert NoPendingChange();
+    │                              ━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:588:48
+    │
+588 │         if (block.timestamp < pending.readyAt) revert TimelockNotReady();
+    │                                                ━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[non-reentrant-not-first]: `nonReentrant` is not the first modifier
+    ╭▸ contracts/BoostHub.sol:452:53
+    │
+452 │     function clearTransactions() external onlyOwner nonReentrant {
+    │                                                     ━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[calls-loop]: external call inside a loop
+    ╭▸ contracts/BoostHub.sol:507:13
+    │
+507 │         if (IStakeDaoGauge(gauge).staking_token() != asset) revert Errors.InvalidGaugeAsset();
+    │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+    ╭▸ contracts/BoostHub.sol:540:13
+    │
+540 │         try ITokenDecimals(asset).decimals() returns (uint8 supplied) { decimals_ = supplied; } catch {}
+    │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:503:57
+    │
+503 │         if (asset == address(0) || gauge == address(0)) revert Errors.ZeroAddress();
+    │                                                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:505:32
+    │
+505 │         if (gaugeAdded[gauge]) revert Errors.DuplicateGauge();
+    │                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:507:61
+    │
+507 │         if (IStakeDaoGauge(gauge).staking_token() != asset) revert Errors.InvalidGaugeAsset();
+    │                                                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:509:54
+    │
+509 │         if (rewardTokens.length > MAX_REWARD_TOKENS) revert Errors.RewardTokenLimitExceeded();
+    │                                                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:515:48
+    │
+515 │             if (rewardTokens[i] == address(0)) revert Errors.ZeroAddress();
+    │                                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:519:57
+    │
+519 │                 if (rewardTokens[i] == rewardTokens[j]) revert Errors.DuplicateRewardToken();
+    │                                                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:541:29
+    │
+541 │         if (decimals_ > 36) revert InvalidStakingDecimals();
+    │                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1392:40
+     │
+1392 │         if (rewardToken == address(0)) revert Errors.ZeroAddress();
+     │                                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1394:60
+     │
+1394 │         if (pool.rewardTokens.length >= MAX_REWARD_TOKENS) revert Errors.RewardTokenLimitExceeded();
+     │                                                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1396:48
+     │
+1396 │         if (_isRewardToken(pool, rewardToken)) revert Errors.DuplicateRewardToken();
+     │                                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+    ╭▸ contracts/BoostHub.sol:588:13
+    │
+588 │         if (block.timestamp < pending.readyAt) revert TimelockNotReady();
+    │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1290:38
+     │
+1290 │         if (depositor == address(0)) revert Errors.ZeroAddress();
+     │                                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1293:39
+     │
+1293 │         if (poolDepositorLocked[pid]) revert Errors.AlreadySet();
+     │                                       ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[non-reentrant-not-first]: `nonReentrant` is not the first modifier
+    ╭▸ contracts/BoostHub.sol:646:89
+    │
+646 │     function reserveOwnerRewardTokens(address token, uint256 amount) external onlyOwner nonReentrant {
+    │                                                                                         ━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[non-reentrant-not-first]: `nonReentrant` is not the first modifier
+    ╭▸ contracts/BoostHub.sol:657:28
+    │
+657 │         external onlyOwner nonReentrant
+    │                            ━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[non-reentrant-not-first]: `nonReentrant` is not the first modifier
+    ╭▸ contracts/BoostHub.sol:672:82
+    │
+672 │     function sweep(address token, address recipient) external override onlyOwner nonReentrant {
+    │                                                                                  ━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[calls-loop]: external call inside a loop
+    ╭▸ contracts/BoostHub.sol:683:39
+    │
+683 │                 address gaugeReward = IStakeDaoGauge(pool.gauge).reward_tokens(i);
+    │                                       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:679:38
+    │
+679 │             if (pool.asset == token) revert TokenNotSweepable(token);
+    │                                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:684:43
+    │
+684 │                 if (gaugeReward == token) revert TokenNotSweepable(token);
+    │                                           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[reentrancy-eth]: uncapped ETH transfer can be reentered before `_status` is updated
+    ╭▸ contracts/BoostHub.sol:718:48
+    │
+718 │             (bool ok, bytes memory response) = targets[i].call{value: values[i]}(callData[i]);
+    │                                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-eth
+
+warning[non-reentrant-not-first]: `nonReentrant` is not the first modifier
+    ╭▸ contracts/BoostHub.sol:699:26
+    │
+699 │     ) external onlyOwner nonReentrant {
+    │                          ━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/non-reentrant-not-first
+
+warning[block-timestamp]: usage of `block.timestamp` in a comparison may be manipulated by validators
+    ╭▸ contracts/BoostHub.sol:714:13
+    │
+714 │         if (block.timestamp < pendingEmergencyRecoveryReadyAt) revert TimelockNotReady();
+    │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/block-timestamp
+
+warning[calls-loop]: external call inside a loop
+    ╭▸ contracts/BoostHub.sol:718:48
+    │
+718 │             (bool ok, bytes memory response) = targets[i].call{value: values[i]}(callData[i]);
+    │                                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    ╭▸ contracts/BoostHub.sol:721:9
+    │
+721 │         emit EmergencyRecoveryExecuted(callsHash, targets.length);
+    │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:706:47
+    │
+706 │                 if (targets[i] == address(0)) revert Errors.ZeroAddress();
+    │                                               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:719:22
+    │
+719 │             if (!ok) revert EmergencyRecoveryCallFailed(i, response);
+    │                      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+    ╭▸ contracts/BoostHub.sol:753:57
+    │
+753 │             if (poolDepositorLocked[pid] && !active[i]) revert Errors.AlreadySet();
+    │                                                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1324:36
+     │
+1324 │         if (selector == bytes4(0)) revert Errors.ZeroSelector();
+     │                                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1604:62
+     │
+1604 │         if (config.platformFeeBps > MAX_PERFORMANCE_FEE_BPS) revert Errors.InvalidFee();
+     │                                                              ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1605:85
+     │
+1605 │         if (config.platformFeeBps > 0 && config.platformFeeRecipient == address(0)) revert Errors.ZeroAddress();
+     │                                                                                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[reentrancy-no-eth]: external call can be reentered before `_status` is updated
+    ╭▸ contracts/BoostHub.sol:776:17
+    │
+776 │             try IvlBoost(vlBoost).checkpointUser(address(this)) {
+    │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `_status` is updated
+     ╭▸ contracts/BoostHub.sol:1235:13
+     │
+1235 │             gauge.call(abi.encodeWithSelector(selector, address(this)));
+     │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1235:13
+     │
+1235 │             gauge.call(abi.encodeWithSelector(selector, address(this)));
+     │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    ╭▸ contracts/BoostHub.sol:777:17
+    │
+777 │                 emit BoostCheckpointed(address(this));
+    │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    ╭▸ contracts/BoostHub.sol:780:17
+    │
+780 │                 emit BoostCheckpointFailed(address(this));
+    │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    ╭▸ contracts/BoostHub.sol:787:17
+    │
+787 │                 emit GaugeCheckpointFailed(pid, address(0));
+    │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    ╭▸ contracts/BoostHub.sol:794:17
+    │
+794 │                 emit GaugeCheckpointFailed(pid, pool.gauge);
+    │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+    ╭▸ contracts/BoostHub.sol:797:13
+    │
+797 │             emit GaugeCheckpointed(pid);
+    │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1340:9
+     │
+1340 │         ISnapshotDelegateRegistry(registry).setDelegate(spaceId, delegate);
+     │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+     ╭▸ contracts/BoostHub.sol:1342:9
+     │
+1342 │         emit VotingPowerDelegated(registry, spaceId, space, delegate);
+     │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1336:63
+     │
+1336 │         if (registry == address(0) || delegate == address(0)) revert Errors.ZeroAddress();
+     │                                                               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+     ╭▸ contracts/BoostHub.sol:1261:9
+     │
+1261 │         emit SnapshotVoteHashApproved(hash, spaceId);
+     │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[reentrancy-no-eth]: external call can be reentered before `positions` is updated
+    ╭▸ contracts/BoostHub.sol:969:9
+    │
+969 │         IStakeDaoGauge(pool.gauge).deposit(amount, address(this));
+    │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `_status` is updated
+     ╭▸ contracts/BoostHub.sol:1149:13
+     │
+1149 │             IStakeDaoGauge(pool.gauge).claim_rewards(address(this), address(this));
+     │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `_status` is updated
+     ╭▸ contracts/BoostHub.sol:1006:9
+     │
+1006 │         IStakeDaoGauge(pool.gauge).withdraw(amount, false);
+     │         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[reentrancy-no-eth]: external call can be reentered before `_status` is updated
+     ╭▸ contracts/BoostHub.sol:1063:13
+     │
+1063 │             stash.claim(entry.token, entry.index, address(this), entry.amount, entry.proof);
+     │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1055:28
+     │
+1055 │             bytes32 root = stash.merkleRoot(entry.token);
+     │                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1057:17
+     │
+1057 │             if (stash.isClaimed(entry.token, entry.index)) revert MerkleClaimAlreadyCompleted();
+     │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1061:36
+     │
+1061 │             uint256 updateNumber = stash.update(entry.token);
+     │                                    ━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1062:37
+     │
+1062 │             uint256 beforeBalance = IERC20(entry.token).balanceOf(address(this));
+     │                                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1063:13
+     │
+1063 │             stash.claim(entry.token, entry.index, address(this), entry.amount, entry.proof);
+     │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1064:32
+     │
+1064 │             uint256 received = IERC20(entry.token).balanceOf(address(this)) - beforeBalance;
+     │                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+     ╭▸ contracts/BoostHub.sol:1068:13
+     │
+1068 │             emit EthereumMerkleRewardClaimed(entry.token, updateNumber, entry.index, entry.amount, received);
+     │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1112:41
+     │
+1112 │         if (!_rewardTokenListed[token]) revert RewardTokenNotRegistered(token);
+     │                                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1053:36
+     │
+1053 │             if (entry.amount == 0) revert InvalidClaimAmount();
+     │                                    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1056:37
+     │
+1056 │             if (root == bytes32(0)) revert MerkleRootNotSet();
+     │                                     ━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1057:60
+     │
+1057 │             if (stash.isClaimed(entry.token, entry.index)) revert MerkleClaimAlreadyCompleted();
+     │                                                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1059:65
+     │
+1059 │             if (_processMerkleProof(entry.proof, leaf) != root) revert InvalidMerkleProof();
+     │                                                                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1065:32
+     │
+1065 │             if (received == 0) revert InvalidClaimAmount();
+     │                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[reentrancy-no-eth]: external call can be reentered before `_status` is updated
+     ╭▸ contracts/BoostHub.sol:1100:32
+     │
+1100 │             uint256 reported = urd.claim(address(this), entry.reward, entry.cumulativeClaimable, entry.proof);
+     │                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-no-eth
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1087:28
+     │
+1087 │             bytes32 root = urd.root();
+     │                            ━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1089:33
+     │
+1089 │             address recipient = urd.recipients(address(this));
+     │                                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1091:37
+     │
+1091 │             uint256 claimedAmount = urd.claimed(address(this), entry.reward);
+     │                                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1099:37
+     │
+1099 │             uint256 beforeBalance = IERC20(entry.reward).balanceOf(address(this));
+     │                                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1100:32
+     │
+1100 │             uint256 reported = urd.claim(address(this), entry.reward, entry.cumulativeClaimable, entry.proof);
+     │                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1101:32
+     │
+1101 │             uint256 received = IERC20(entry.reward).balanceOf(address(this)) - beforeBalance;
+     │                                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+     ╭▸ contracts/BoostHub.sol:1105:13
+     │
+1105 │             emit FraxtalUrdRewardClaimed(entry.reward, entry.cumulativeClaimable, received);
+     │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1086:49
+     │
+1086 │             if (entry.cumulativeClaimable == 0) revert InvalidClaimAmount();
+     │                                                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1088:37
+     │
+1088 │             if (root == bytes32(0)) revert MerkleRootNotSet();
+     │                                     ━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1090:72
+     │
+1090 │             if (recipient != address(0) && recipient != address(this)) revert UnsafeUrdRecipient(recipient);
+     │                                                                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1093:17
+     │
+1093 │                 revert UrdClaimAlreadyCompleted(claimedAmount, entry.cumulativeClaimable);
+     │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1097:65
+     │
+1097 │             if (_processMerkleProof(entry.proof, leaf) != root) revert InvalidMerkleProof();
+     │                                                                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1102:56
+     │
+1102 │             if (reported == 0 || received != reported) revert ClaimedBalanceMismatch(reported, received);
+     │                                                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1175:27
+     │
+1175 │         uint256 balance = IERC20(token).balanceOf(address(this));
+     │                           ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[reentrancy-events]: event emitted after an external call; reentrancy can reorder or fabricate logs that off-chain consumers rely on
+     ╭▸ contracts/BoostHub.sol:1206:13
+     │
+1206 │             emit RewardAttributed(pid, token, gross, net);
+     │             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/reentrancy-events
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1177:33
+     │
+1177 │         if (balance < reserved) revert RewardReserveUnderfunded(token);
+     │                                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1611:37
+     │
+1611 │         if (!poolFeeConfigSet[pid]) revert Errors.InvalidFee();
+     │                                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+
+warning[uninitialized-local]: local variable is read before being initialized
+     ╭▸ contracts/BoostHub.sol:1189:13
+     │
+1189 │             totalWeight += weight;
+     │             ━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1217:17
+     │
+1217 │             if (IStakeDaoGauge(gauge).claimable_reward(address(this), tokens[i]) != 0) {
+     │                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[calls-loop]: external call inside a loop
+     ╭▸ contracts/BoostHub.sol:1374:35
+     │
+1374 │             address rewardToken = IStakeDaoGauge(pool.gauge).reward_tokens(i);
+     │                                   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/calls-loop
+
+warning[require-revert-in-loop]: `require` or `revert` inside a loop
+     ╭▸ contracts/BoostHub.sol:1463:47
+     │
+1463 │             if (!_isRewardToken(pool, token)) revert Errors.RewardTokenNotRegistered();
+     │                                               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     │
+     ╰ help: https://getfoundry.sh/forge/linting/require-revert-in-loop
+

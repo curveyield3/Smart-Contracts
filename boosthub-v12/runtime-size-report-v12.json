@@ -1,0 +1,11 @@
+{
+  "contract": "BoostHub",
+  "version": "v12",
+  "solc": "0.8.28",
+  "optimizer_runs": 200,
+  "via_ir": true,
+  "runtime_bytes": 21718,
+  "eip170_limit_bytes": 24576,
+  "headroom_bytes": 2858,
+  "within_eip170": true
+}
