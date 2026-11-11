@@ -33,15 +33,6 @@ struct BoostHubPoolView:
     feeConfigSet: bool
     accRewardPerShare: DynArray[uint256, 8]
 
-struct RewardCheckpoint:
-    token: address
-    prior: uint256
-    current: uint256
-    prior_q: uint256
-    current_q: uint256
-    effective: uint256
-    penalty: uint256
-
 interface BoostHub:
     def poolInfo(pid: uint256) -> BoostHubPoolView: view
     def claim(pid: uint256, rewardTokens: DynArray[address, 8], receiver: address) -> (DynArray[address, 8], DynArray[uint256, 8]): nonpayable
@@ -511,25 +502,57 @@ def checkpoint_ramp(_steps: uint256 = MAX_RAMP_CHECKPOINT_STEPS) -> bool:
     return self.last_activation_boundary == block.timestamp // ACTIVATION_STEP_SECONDS * ACTIVATION_STEP_SECONDS
 
 @internal
+@view
+def _phase_reward_integral(
+    _token: address, _prior: uint256, _prior_q: uint256,
+    _current: uint256, _current_q: uint256, _begin: uint256,
+    _end: uint256, _base: uint256, _slope: uint256,
+    _boundary_index: uint256, _last_boundary: uint256
+) -> uint256:
+    # The maturity phase geometry is computed once for all reward tokens.
+    # Only token-specific historical integral lookups occur here.
+    from_integral: uint256 = _prior
+    from_q: uint256 = _prior_q
+    boundary_integral: uint256 = self.activation_integral_at[_token][_begin]
+    if boundary_integral > from_integral:
+        from_integral = boundary_integral
+        from_q = self.activation_reward_q_at[_token][_begin]
+    to_integral: uint256 = _current
+    to_q: uint256 = _current_q
+    if _end <= _last_boundary:
+        to_integral = self.activation_integral_at[_token][_end]
+        to_q = self.activation_reward_q_at[_token][_end]
+    if to_integral > from_integral:
+        delta: uint256 = to_integral - from_integral
+        moment: uint256 = to_q - from_q - _boundary_index * delta
+        return (_base * delta + _slope * moment) // RAMP_SCALE
+    return 0
+
+@internal
 def _checkpoint_user_current(_addr: address, _claim: bool):
     # Cache each reward's integral baseline, then traverse maturity buckets once.
     # On each bucket/phase, update each token's accrual without re-reading the
     # depositor's buckets and phase metadata for every reward token.
     bal: uint256 = self.staked_balance[_addr]
     n: uint256 = self.reward_count
-    rewards: RewardCheckpoint[MAX_REWARDS] = empty(RewardCheckpoint[MAX_REWARDS])
+    tokens: address[MAX_REWARDS] = empty(address[MAX_REWARDS])
+    prior_integrals: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
+    current_integrals: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
+    prior_qs: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
+    current_qs: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
+    penalties: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
     has_accrual: bool = False
 
     for r: uint256 in range(MAX_REWARDS):
         if r >= n:
             break
         token: address = self.reward_tokens[r]
-        rewards[r].token = token
-        rewards[r].prior = self.reward_integral_for[token][_addr]
-        rewards[r].current = self.reward_integral[token]
-        rewards[r].prior_q = self.activation_reward_q_for[token][_addr]
-        rewards[r].current_q = self.activation_reward_q[token]
-        if rewards[r].current > rewards[r].prior:
+        tokens[r] = token
+        prior_integrals[r] = self.reward_integral_for[token][_addr]
+        current_integrals[r] = self.reward_integral[token]
+        prior_qs[r] = self.activation_reward_q_for[token][_addr]
+        current_qs[r] = self.activation_reward_q[token]
+        if current_integrals[r] > prior_integrals[r]:
             has_accrual = True
 
     if self.ramp_deposit_weight[_addr] != 0:
@@ -549,6 +572,7 @@ def _checkpoint_user_current(_addr: address, _claim: bool):
             finish: uint256 = start + RAMP_STEPS * ACTIVATION_STEP_SECONDS
 
             if has_accrual:
+                effective: uint256[MAX_REWARDS] = empty(uint256[MAX_REWARDS])
                 for phase: uint256 in range(4):
                     first: uint256 = 0
                     last: uint256 = 3
@@ -579,39 +603,26 @@ def _checkpoint_user_current(_addr: address, _claim: bool):
                     for r: uint256 in range(MAX_REWARDS):
                         if r >= n:
                             break
-                        if rewards[r].current <= rewards[r].prior:
+                        if current_integrals[r] <= prior_integrals[r]:
                             continue
-                        token: address = rewards[r].token
-                        from_integral: uint256 = rewards[r].prior
-                        from_q: uint256 = rewards[r].prior_q
-                        boundary_integral: uint256 = self.activation_integral_at[token][begin]
-                        if boundary_integral > from_integral:
-                            from_integral = boundary_integral
-                            from_q = self.activation_reward_q_at[token][begin]
-                        to_integral: uint256 = rewards[r].current
-                        to_q: uint256 = rewards[r].current_q
-                        if end <= last_boundary:
-                            to_integral = self.activation_integral_at[token][end]
-                            to_q = self.activation_reward_q_at[token][end]
-                        if to_integral > from_integral:
-                            delta: uint256 = to_integral - from_integral
-                            moment: uint256 = to_q - from_q - boundary_index * delta
-                            rewards[r].effective += (base * delta + slope * moment) // RAMP_SCALE
-
+                        effective[r] += self._phase_reward_integral(
+                            tokens[r], prior_integrals[r], prior_qs[r],
+                            current_integrals[r], current_qs[r],
+                            begin, end, base, slope, boundary_index, last_boundary
+                        )
                 for r: uint256 in range(MAX_REWARDS):
                     if r >= n:
                         break
-                    if rewards[r].current <= rewards[r].prior:
+                    if current_integrals[r] <= prior_integrals[r]:
                         continue
-                    delta: uint256 = rewards[r].current - rewards[r].prior
-                    effective_integral: uint256 = rewards[r].effective
+                    delta: uint256 = current_integrals[r] - prior_integrals[r]
+                    effective_integral: uint256 = effective[r]
                     if finish <= last_boundary:
-                        finished_at: uint256 = self.activation_integral_at[rewards[r].token][finish]
-                        effective_integral += rewards[r].current - max(rewards[r].prior, finished_at)
+                        finished_at: uint256 = self.activation_integral_at[tokens[r]][finish]
+                        effective_integral += current_integrals[r] - max(prior_integrals[r], finished_at)
                     inactive_integral: uint256 = delta - min(delta, effective_integral)
                     if inactive_integral != 0:
-                        rewards[r].penalty += self._mul_scale_down(amount, inactive_integral) + 1
-                    rewards[r].effective = 0
+                        penalties[r] += self._mul_scale_down(amount, inactive_integral) + 1
 
             # Prune matured deposits in this same scan; no second bucket pass.
             if finish <= last_boundary:
@@ -626,16 +637,16 @@ def _checkpoint_user_current(_addr: address, _claim: bool):
     for r: uint256 in range(MAX_REWARDS):
         if r >= n:
             break
-        token: address = rewards[r].token
-        integral: uint256 = rewards[r].current
-        prior: uint256 = rewards[r].prior
+        token: address = tokens[r]
+        integral: uint256 = current_integrals[r]
+        prior: uint256 = prior_integrals[r]
         if integral > prior:
             earned: uint256 = self._mul_scale_down(bal, integral - prior)
-            earned -= min(earned, rewards[r].penalty)
+            earned -= min(earned, penalties[r])
             if earned != 0:
                 self.claim_data[_addr][token] += earned
         self.reward_integral_for[token][_addr] = integral
-        self.activation_reward_q_for[token][_addr] = rewards[r].current_q
+        self.activation_reward_q_for[token][_addr] = current_qs[r]
         if _claim:
             claimed: uint256 = self.claim_data[_addr][token]
             if claimed != 0:
