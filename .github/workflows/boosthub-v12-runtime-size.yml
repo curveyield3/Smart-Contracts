@@ -5,6 +5,11 @@ on:
     paths:
       - 'boosthub-v12/compilation-sources-v12.tar.xz.b64'
       - '.github/workflows/boosthub-v12-runtime-size.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'boosthub-v12/compilation-sources-v12.tar.xz.b64'
+      - '.github/workflows/boosthub-v12-runtime-size.yml'
 permissions:
   contents: write
 jobs:
@@ -13,6 +18,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
