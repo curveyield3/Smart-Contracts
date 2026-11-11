@@ -1,0 +1,71 @@
+name: fxUSD Yearn v14 Solidity size compile
+on:
+  push:
+    branches: [fxusd-yearn-v14-compile]
+    paths:
+      - '.github/workflows/fxusd-yearn-compile-v14.yml'
+      - 'fxusd-yearn/compile/source-v14.b64'
+permissions:
+  contents: read
+jobs:
+  compile-and-measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Restore exact v14 source and pinned dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .fxusd-compile
+          node <<'NODE'
+          const fs=require('fs'),path=require('path'),zlib=require('zlib');
+          const src=fs.readFileSync('fxusd-yearn/compile/source-v14.b64','utf8').trim();
+          const data=JSON.parse(zlib.brotliDecompressSync(Buffer.from(src,'base64')).toString('utf8'));
+          for(const [relative,contents] of Object.entries(data)){
+            if(relative.startsWith('/')||relative.includes('..'))throw Error('bad source path');
+            const out=path.join('.fxusd-compile',relative);
+            fs.mkdirSync(path.dirname(out),{recursive:true});
+            fs.writeFileSync(out,contents);
+          }
+          console.log('Restored',Object.keys(data).length,'files');
+          NODE
+          mkdir -p .fxusd-compile/lib
+          git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
+          sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
+      - name: Compile all contracts and report byte sizes (no tests)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .fxusd-compile
+          forge build --use 0.8.30 --sizes 2>&1 | tee compile.log
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          names=['FXNYearnMasterAllocator','CurveConvex32YearnStrategy','FxBaseConvex37YearnStrategy']
+          result={'solc':'0.8.30','optimizer_runs':200,'contracts':{}}
+          for name in names:
+              matches=list(Path('out').rglob(name+'.json'))
+              if len(matches)!=1: raise RuntimeError(f'expected one artifact for {name}, found {len(matches)}')
+              artifact=json.loads(matches[0].read_text())
+              creation=artifact['bytecode']['object'].removeprefix('0x')
+              runtime=artifact['deployedBytecode']['object'].removeprefix('0x')
+              result['contracts'][name]={'creation_bytes':len(creation)//2,'runtime_bytes':len(runtime)//2,'eip170_headroom':24576-len(runtime)//2}
+              print(f'FINAL_SIZE {name}: creation={len(creation)//2}, runtime={len(runtime)//2}, eip170_headroom={24576-len(runtime)//2}')
+          Path('size-report.json').write_text(json.dumps(result,indent=2)+'\n')
+          PY
+      - name: Store compilation result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fxusd-yearn-v14-size-report
+          path: |
+            .fxusd-compile/compile.log
+            .fxusd-compile/size-report.json
+          if-no-files-found: warn
+          retention-days: 14
