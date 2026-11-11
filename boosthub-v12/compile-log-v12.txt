@@ -1,5 +1,5 @@
 Compiling 14 files with Solc 0.8.28
-Solc 0.8.28 finished in 1.34s
+Solc 0.8.28 finished in 2.15s
 Compiler run successful!
 warning[missing-events-access-control]: `depositorIndexPlusOne` is changed without an event but is used for access control
      ╭▸ contracts/BoostHub.sol:1296:13
@@ -26,18 +26,18 @@ warning[missing-zero-check]: address parameter is used in a state write or value
     ╰ help: https://getfoundry.sh/forge/linting/missing-zero-check
 
 warning[uninitialized-local]: local variable is read before being initialized
-    ╭▸ contracts/BoostHub.sol:392:53
-    │
-392 │             if (pendingPoolFeeConfig[pid].exists) ++feeCount;
-    │                                                     ━━━━━━━━
-    │
-    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
-
-warning[uninitialized-local]: local variable is read before being initialized
     ╭▸ contracts/BoostHub.sol:400:34
     │
 400 │                 view_.feeChanges[feeIndex++] = PendingFeeView({
     │                                  ━━━━━━━━
+    │
+    ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
+
+warning[uninitialized-local]: local variable is read before being initialized
+    ╭▸ contracts/BoostHub.sol:392:53
+    │
+392 │             if (pendingPoolFeeConfig[pid].exists) ++feeCount;
+    │                                                     ━━━━━━━━
     │
     ╰ help: https://getfoundry.sh/forge/linting/uninitialized-local
 
