@@ -62,5 +62,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: boosthub-v13-runtime-size
-          path: boosthub-v12/workspace/boosthub-v12-runtime-size.json
+          path: boosthub-v12/workspace/boosthub-v13-runtime-size.json
           if-no-files-found: error
