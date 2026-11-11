@@ -307,7 +307,10 @@ def _current_user_inactive(_addr: address) -> uint256:
             break
         amount: uint256 = self.ramp_deposits[_addr][start]
         age: uint256 = (self.last_activation_boundary - start) // ACTIVATION_STEP_SECONDS
-        units += amount * (RAMP_SCALE - self._ramp_active_units(age))
+        active_units: uint256 = 0
+        unused_slope: uint256 = 0
+        active_units, unused_slope = self._ramp_parameters(age)
+        units += amount * (RAMP_SCALE - active_units)
     return min(self.staked_balance[_addr], units // RAMP_SCALE)
 
 @view
@@ -335,37 +338,26 @@ def _total_inactive() -> uint256:
 
 @internal
 @view
-def _ramp_active_units(_step: uint256) -> uint256:
-    # 45-day ramp on a daily grid: day 3 = 10%, day 33 = 50%,
-    # day 41 = 70%, day 45 = 100%. RAMP_SCALE = 3,600.
-    if _step <= 3:
-        return _step * 120
-    if _step <= 33:
-        return 360 + (_step - 3) * 48
-    if _step <= 41:
-        return 1800 + (_step - 33) * 90
-    if _step < RAMP_STEPS:
-        return 2520 + (_step - 41) * 270
-    return RAMP_SCALE
-
-@internal
-@view
-def _ramp_slope(_step: uint256) -> uint256:
+def _ramp_parameters(_step: uint256) -> (uint256, uint256):
+    # Shared cumulative activation and next-day slope.
     if _step < 3:
-        return 120
+        return _step * 120, 120
     if _step < 33:
-        return 48
+        return 360 + (_step - 3) * 48, 48
     if _step < 41:
-        return 90
+        return 1800 + (_step - 33) * 90, 90
     if _step < RAMP_STEPS:
-        return 270
-    return 0
+        return 2520 + (_step - 41) * 270, 270
+    return RAMP_SCALE, 0
 
 @internal
 def _change_ramp_position(_addr: address, _start: uint256, _value: uint256, _remove: bool):
     age: uint256 = (self.last_activation_boundary - _start) // ACTIVATION_STEP_SECONDS
-    inactive_units: uint256 = _value * (RAMP_SCALE - self._ramp_active_units(age))
-    rate: uint256 = _value * self._ramp_slope(age)
+    active_units: uint256 = 0
+    slope: uint256 = 0
+    active_units, slope = self._ramp_parameters(age)
+    inactive_units: uint256 = _value * (RAMP_SCALE - active_units)
+    rate: uint256 = _value * slope
     boundary: uint256 = 0
     if _remove:
         self.ramp_deposits[_addr][_start] -= _value
@@ -502,33 +494,6 @@ def checkpoint_ramp(_steps: uint256 = MAX_RAMP_CHECKPOINT_STEPS) -> bool:
     return self.last_activation_boundary == block.timestamp // ACTIVATION_STEP_SECONDS * ACTIVATION_STEP_SECONDS
 
 @internal
-@view
-def _phase_reward_integral(
-    _token: address, _prior: uint256, _prior_q: uint256,
-    _current: uint256, _current_q: uint256, _begin: uint256,
-    _end: uint256, _base: uint256, _slope: uint256,
-    _boundary_index: uint256, _last_boundary: uint256
-) -> uint256:
-    # The maturity phase geometry is computed once for all reward tokens.
-    # Only token-specific historical integral lookups occur here.
-    from_integral: uint256 = _prior
-    from_q: uint256 = _prior_q
-    boundary_integral: uint256 = self.activation_integral_at[_token][_begin]
-    if boundary_integral > from_integral:
-        from_integral = boundary_integral
-        from_q = self.activation_reward_q_at[_token][_begin]
-    to_integral: uint256 = _current
-    to_q: uint256 = _current_q
-    if _end <= _last_boundary:
-        to_integral = self.activation_integral_at[_token][_end]
-        to_q = self.activation_reward_q_at[_token][_end]
-    if to_integral > from_integral:
-        delta: uint256 = to_integral - from_integral
-        moment: uint256 = to_q - from_q - _boundary_index * delta
-        return (_base * delta + _slope * moment) // RAMP_SCALE
-    return 0
-
-@internal
 def _checkpoint_user_current(_addr: address, _claim: bool):
     # Cache each reward's integral baseline, then traverse maturity buckets once.
     # On each bucket/phase, update each token's accrual without re-reading the
@@ -605,11 +570,23 @@ def _checkpoint_user_current(_addr: address, _claim: bool):
                             break
                         if current_integrals[r] <= prior_integrals[r]:
                             continue
-                        effective[r] += self._phase_reward_integral(
-                            tokens[r], prior_integrals[r], prior_qs[r],
-                            current_integrals[r], current_qs[r],
-                            begin, end, base, slope, boundary_index, last_boundary
-                        )
+                        token: address = tokens[r]
+                        from_integral: uint256 = prior_integrals[r]
+                        from_q: uint256 = prior_qs[r]
+                        boundary_integral: uint256 = self.activation_integral_at[token][begin]
+                        if boundary_integral > from_integral:
+                            from_integral = boundary_integral
+                            from_q = self.activation_reward_q_at[token][begin]
+                        to_integral: uint256 = current_integrals[r]
+                        to_q: uint256 = current_qs[r]
+                        if end <= last_boundary:
+                            to_integral = self.activation_integral_at[token][end]
+                            to_q = self.activation_reward_q_at[token][end]
+                        if to_integral > from_integral:
+                            delta: uint256 = to_integral - from_integral
+                            moment: uint256 = to_q - from_q - boundary_index * delta
+                            effective[r] += (base * delta + slope * moment) // RAMP_SCALE
+
                 for r: uint256 in range(MAX_REWARDS):
                     if r >= n:
                         break
