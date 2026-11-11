@@ -1,7 +1,7 @@
 name: fxUSD Yearn v16 Solidity size compile
 on:
   push:
-    branches: [fxusd-yearn-v16-compile]
+    branches: [fxusd-yearn-v16-refactor]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
       - 'fxusd-yearn/compile/source-v16.b64'
