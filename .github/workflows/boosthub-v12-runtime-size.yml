@@ -1,7 +1,7 @@
-name: BoostHub v12 Solidity runtime-size build
+name: BoostHub v13 Solidity runtime-size build
 on:
   push:
-    branches: [boosthub-compile-v12]
+    branches: [boosthub-compile-v13]
     paths:
       - 'boosthub-v12/compilation-sources-v12.tar.xz.b64'
       - '.github/workflows/boosthub-v12-runtime-size.yml'
@@ -30,7 +30,14 @@ jobs:
           base64 --decode boosthub-v12/compilation-sources-v12.tar.xz.b64 > boosthub-v12/sources.tar.xz
           echo '26b4904672b6523ecf05aa06147e488816550c5e1be873ae5a513e77fcf128e1  boosthub-v12/sources.tar.xz' | sha256sum --check
           tar -xJf boosthub-v12/sources.tar.xz -C boosthub-v12/workspace
-      - name: Compile v12 without running tests
+      - name: Apply exact v13 Hub source patch to v12 source bundle
+        shell: bash
+        run: |
+          cat <<'BOOSTHUB_V13_PATCH' | base64 --decode | gzip -d | patch -p1 -d boosthub-v12/workspace
+          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
+          BOOSTHUB_V13_PATCH
+          echo '9b5769e2d6493a980427756c61ee6dc6fc68329578c99fb0104f0ad815014f41  boosthub-v12/workspace/contracts/BoostHub.sol' | sha256sum --check
+      - name: Compile v13 without running tests
         working-directory: boosthub-v12/workspace
         shell: bash
         run: |
@@ -46,14 +53,14 @@ jobs:
           code = artifact['deployedBytecode']['object']
           if not code or len(code) % 2: raise SystemExit('invalid deployed bytecode')
           size = len(code.removeprefix('0x')) // 2
-          result = {'contract':'BoostHub','version':'v12','solc':'0.8.28','optimizer_runs':200,'via_ir':True,'runtime_bytes':size,'eip170_limit_bytes':24576,'headroom_bytes':24576-size,'within_eip170':size<=24576}
-          Path('boosthub-v12-runtime-size.json').write_text(json.dumps(result, indent=2) + '\n')
-          print('BOOSTHUB_V12_RUNTIME_SIZE=' + str(size))
-          print('BOOSTHUB_V12_EIP170_COMPLIANT=' + str(size <= 24576))
+          result = {'contract':'BoostHub','version':'v13','solc':'0.8.28','optimizer_runs':200,'via_ir':True,'runtime_bytes':size,'eip170_limit_bytes':24576,'headroom_bytes':24576-size,'within_eip170':size<=24576}
+          Path('boosthub-v13-runtime-size.json').write_text(json.dumps(result, indent=2) + '\n')
+          print('BOOSTHUB_V13_RUNTIME_SIZE=' + str(size))
+          print('BOOSTHUB_V13_EIP170_COMPLIANT=' + str(size <= 24576))
           PY
       - name: Upload runtime-size report
         uses: actions/upload-artifact@v4
         with:
-          name: boosthub-v12-runtime-size
+          name: boosthub-v13-runtime-size
           path: boosthub-v12/workspace/boosthub-v12-runtime-size.json
           if-no-files-found: error
