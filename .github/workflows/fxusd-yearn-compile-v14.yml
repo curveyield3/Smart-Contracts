@@ -3,7 +3,7 @@ on:
   push:
     branches: [fxusd-yearn-v15-compile]
     paths:
-      - '.github/workflows/fxusd-yearn-compile-v14.yml'
+      - '.github/workflows/fxusd-yearn-compile-v15.yml'
       - 'fxusd-yearn/compile/source-v15.b64'
 permissions:
   contents: read
@@ -60,32 +60,6 @@ jobs:
               result['contracts'][name]={'creation_bytes':len(creation)//2,'runtime_bytes':len(runtime)//2,'eip170_headroom':24576-len(runtime)//2}
               print(f'FINAL_SIZE {name}: creation={len(creation)//2}, runtime={len(runtime)//2}, eip170_headroom={24576-len(runtime)//2}')
           Path('size-report.json').write_text(json.dumps(result,indent=2)+'\n')
-          PY
-      - name: Inspect master source, inherited code, and function sizes
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd .fxusd-compile
-          python3 - <<'PY'
-          import re
-          from pathlib import Path
-          master=Path('contracts/FXNYearnMasterAllocator.sol')
-          s=master.read_text()
-          print('MASTER_SOURCE bytes=',len(s.encode()),'lines=',s.count('\\n')+1)
-          print('MASTER_HEADER_BEGIN')
-          print('\\n'.join(s.splitlines()[:125]))
-          print('MASTER_HEADER_END')
-          print('MASTER_FUNCTION_INVENTORY_BEGIN')
-          matches=list(re.finditer(r'^\\s*(?:function|constructor|fallback|receive)\\s*([A-Za-z_0-9]*)\\s*\\(',s,re.M))
-          for i,m in enumerate(matches):
-              end=matches[i+1].start() if i+1<len(matches) else len(s)
-              chunk=s[m.start():end]
-              print('FUNC',m.group(1) or 'constructor/fallback', 'line=',s.count('\\n',0,m.start())+1,'span_lines=',chunk.count('\\n')+1,'bytes=',len(chunk.encode()),'calls=', ','.join(sorted(set(re.findall(r'\\b(?:TokenizedStrategy|_\w+|IERC20|SafeERC20)\\w*\\s*\\(',chunk)))[:14]))
-          print('MASTER_FUNCTION_INVENTORY_END')
-          print('MASTER_STORAGE_AND_TYPES_BEGIN')
-          for n,l in enumerate(s.splitlines(),1):
-              if re.search(r'^\\s*(?:struct|mapping|event|error|modifier|address (?:public|private|internal)|uint\\d* (?:public|private|internal)|bool (?:public|private|internal)|interface|import )',l): print(n,l[:220])
-          print('MASTER_STORAGE_AND_TYPES_END')
           PY
       - name: Store compilation result
         if: always()
