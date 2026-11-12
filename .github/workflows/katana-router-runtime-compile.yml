@@ -31,9 +31,7 @@ jobs:
           const solc = require('/tmp/omni-router-build/node_modules/solc');
           const base='routers/ethereum-fraxtal';
           const paths=[
-            base+'/CurveYieldOmniRouter.sol',
-            base+'/CurveYieldHistoricalOracleAdapters.sol',
-            base+'/CurveYieldV4ExactInputExecutor.sol'
+            base+'/CurveYieldOmniRouter.sol'
           ];
           const sources={};
           for(const filename of paths) sources[filename]={content:fs.readFileSync(filename,'utf8')};
@@ -84,24 +82,22 @@ jobs:
           name: omni-router-runtime-size-v1
           path: ${{ runner.temp }}/omni-router-runtime-size-v1.json
           if-no-files-found: ignore
-      - name: Assemble router-only source package v2
+      - name: Assemble router-only source package v3
         shell: bash
         run: |
           set -euo pipefail
-          out="${RUNNER_TEMP}/CurveYield_Omni_Router_v2"
+          out="${RUNNER_TEMP}/CurveYield_Omni_Router_v3"
           mkdir -p "$out"
           cp routers/ethereum-fraxtal/CurveYieldOmniRouter.sol "$out/"
-          cp routers/ethereum-fraxtal/CurveYieldHistoricalOracleAdapters.sol "$out/"
-          cp routers/ethereum-fraxtal/CurveYieldV4ExactInputExecutor.sol "$out/"
           {
-            printf '# CurveYield Omni Router source package v2\\n\\n'
-            printf 'Ethereum + Fraxtal. Router-only package. Contract source unchanged from GitHub implementation v1.\\n\\n'
-            cat routers/ethereum-fraxtal/README_v1.md
+            printf '# CurveYield Omni Router source package v3\\n\\n'
+            printf 'Ethereum + Fraxtal. Router-only package. Built-in V2/V3/V4/Curve/Balancer modules and future adapter registry integrated. No compilation has been performed on this version before the next user authorization.\\n\\n'
+            cat routers/ethereum-fraxtal/README_v2.md
           } > "$out/README.md"
           cat > "$out/package.json" <<'JSON'
           {
             "name": "curveyield-omni-router",
-            "version": "2.0.0",
+            "version": "3.0.0",
             "private": true,
             "description": "Ethereum/Fraxtal mixed-pool router Solidity sources",
             "dependencies": {
@@ -110,7 +106,7 @@ jobs:
           }
           JSON
           find "$out" -maxdepth 1 -type f -printf '%f\\n' | sort
-          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -eq 5
+          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -eq 3
       - name: Upload clean router-only source package v2
         uses: actions/upload-artifact@v4
         with:
