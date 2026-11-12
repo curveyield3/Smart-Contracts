@@ -10,6 +10,7 @@ on:
       - 'cywbtc-yearn/v18/**'
       - 'cywbtc-yearn/v19/**'
       - 'cywbtc-yearn/v20/**'
+      - 'cywbtc-yearn/v22/**'
 permissions:
   contents: read
 jobs:
@@ -129,15 +130,17 @@ jobs:
             contracts/fuses/fxmint/FXMintLTVManager_v17.sol \
             contracts/fuses/erc4626/Erc4626SupplyFuse.sol \
             contracts/fuses/erc4626/Erc4626BalanceFuse.sol 2>&1 | tee ipor-v18-compile.log
-      - name: Compile exact v20 production-path IPOR factory deployment and real fxUSD oracle
+      - name: Compile v22 direct fxMINT accounting, automatic deposit router and existing-factory deployment
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .ipor-source/script .ipor-source/contracts/price_oracle/price_feed
-          cp cywbtc-yearn/v20/script/DeployCYWBTCFusion_v20.s.sol .ipor-source/script/
+          mkdir -p .ipor-source/script .ipor-source/contracts/fuses/fxmint .ipor-source/contracts/entry .ipor-source/contracts/price_oracle/price_feed
+          cp cywbtc-yearn/v22/contracts/fuses/fxmint/*.sol .ipor-source/contracts/fuses/fxmint/
+          cp cywbtc-yearn/v22/contracts/entry/*.sol .ipor-source/contracts/entry/
+          cp cywbtc-yearn/v22/script/DeployCYWBTCFusion_v22.s.sol .ipor-source/script/
           cp cywbtc-yearn/v20/contracts/oracle/CurveFxUSDChainlinkUsdFeed_v20.sol .ipor-source/contracts/price_oracle/price_feed/
           cd .ipor-source
-          forge build script/DeployCYWBTCFusion_v20.s.sol --use 0.8.30 --via-ir --sizes 2>&1 | tee ipor-v20-deploy-compile.log
+          forge build script/DeployCYWBTCFusion_v22.s.sol --use 0.8.30 --via-ir --sizes 2>&1 | tee ipor-v22-deploy-compile.log
       - name: Execute v18 isolated Ethereum mainnet-fork lifecycle and state report
         shell: bash
         working-directory: .fxusd-compile
@@ -184,7 +187,7 @@ jobs:
             .fxusd-compile/size-report.json
             .fxusd-compile/simulation-output/
             .ipor-source/ipor-v18-compile.log
-            .ipor-source/ipor-v20-deploy-compile.log
+            .ipor-source/ipor-v22-deploy-compile.log
             .fxusd-compile/contracts/Accountant.sol
             .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
           if-no-files-found: warn
