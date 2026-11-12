@@ -639,6 +639,157 @@ contract CurveYieldOmniRouter {
         return abi.encode(out);
     }
 
+
+    // V2 historical observations are stored in the router itself. No separate
+    // deployed TWAP adapter is needed. Checkpoint each active V2 pool periodically.
+    function checkpointV2(address pair) external {
+        require(pair.code.length!=0,"PAIR_MISSING");
+        (uint256 c0,uint256 c1,uint32 timestamp)=_v2Cumulative(pair);
+        V2Observation[2] storage obs=v2Observations[pair];
+        uint32 age;
+        unchecked{age=timestamp-obs[1].timestamp;}
+        require(obs[1].timestamp==0||age>=900,"CHECKPOINT_TOO_SOON");
+        obs[0]=obs[1];
+        obs[1]=V2Observation(c0,c1,timestamp);
+        emit V2PriceCheckpointed(pair,timestamp);
+    }
+
+    function _v2Cumulative(address pair)
+        private view returns(uint256 c0,uint256 c1,uint32 nowTs)
+    {
+        IEmbeddedV2Pair p=IEmbeddedV2Pair(pair);
+        c0=p.price0CumulativeLast();
+        c1=p.price1CumulativeLast();
+        (uint112 r0,uint112 r1,uint32 updated)=p.getReserves();
+        require(r0>0&&r1>0,"V2_EMPTY_POOL");
+        nowTs=uint32(block.timestamp);
+        unchecked {
+            uint32 elapsed=nowTs-updated;
+            if(elapsed>0){
+                c0+=((uint256(r1)<<112)/r0)*elapsed;
+                c1+=((uint256(r0)<<112)/r1)*elapsed;
+            }
+        }
+    }
+
+    // A read-only quote for a V2 input based on a 15min+ observation interval.
+    function _v2HistoricalQuote(address pool,address tokenIn,uint256 amount)
+        private view returns(uint256)
+    {
+        IEmbeddedV2Pair p=IEmbeddedV2Pair(pool);
+        (uint256 c0,uint256 c1,uint32 nowTs)=_v2Cumulative(pool);
+        V2Observation storage obs=v2Observations[pool][1];
+        uint32 elapsed;
+        unchecked{elapsed=nowTs-obs.timestamp;}
+        if(obs.timestamp==0||elapsed<900){
+            obs=v2Observations[pool][0];
+            unchecked{elapsed=nowTs-obs.timestamp;}
+        }
+        require(obs.timestamp!=0 && elapsed>=900 && elapsed<=86400,"V2_TWAP_NOT_READY");
+        uint256 delta;
+        unchecked{
+            delta=tokenIn==p.token0()?c0-obs.cumulative0:c1-obs.cumulative1;
+        }
+        uint256 averageQ112=delta/elapsed;
+        uint256 quoted=RouterFullMath.mulDiv(amount,averageQ112,uint256(1)<<112);
+        require(quoted>0,"V2_ORACLE_ZERO");
+        return quoted;
+    }
+
+    // V3 native observe() provides a historical cumulative tick.
+    function _v3HistoricalQuote(SimpleHop storage hop,address tokenIn,uint256 amount)
+        private view returns(uint256)
+    {
+        uint32 window=hop.poolData.length==0?900:abi.decode(hop.poolData,(uint32));
+        require(window>=900,"V3_MIN_TWAP");
+        uint32[] memory secondsAgo=new uint32[](2);
+        secondsAgo[0]=window;
+        (int56[] memory cumulative,)=IEmbeddedV3Pool(hop.swapContract).observe(secondsAgo);
+        require(cumulative.length==2,"V3_OBSERVATIONS");
+        int56 delta=cumulative[1]-cumulative[0];
+        int56 secondsInt=int56(uint56(window));
+        int24 tick=int24(delta/secondsInt);
+        if(delta<0 && delta%secondsInt!=0) tick--;
+        uint160 sqrtRatio=TickMath.getSqrtPriceAtTick(tick);
+        if(sqrtRatio<=type(uint128).max){
+            uint256 ratioX192=uint256(sqrtRatio)*sqrtRatio;
+            return tokenIn==IEmbeddedV3Pool(hop.swapContract).token0()
+                ?RouterFullMath.mulDiv(ratioX192,amount,uint256(1)<<192)
+                :RouterFullMath.mulDiv(uint256(1)<<192,amount,ratioX192);
+        }
+        uint256 ratioX128=RouterFullMath.mulDiv(sqrtRatio,sqrtRatio,uint256(1)<<64);
+        return tokenIn==IEmbeddedV3Pool(hop.swapContract).token0()
+            ?RouterFullMath.mulDiv(ratioX128,amount,uint256(1)<<128)
+            :RouterFullMath.mulDiv(uint256(1)<<128,amount,ratioX128);
+    }
+
+    // Curve CryptoSwap, TriCrypto and StableSwap-NG expose EMA price_oracle().
+    // Legacy StableSwap has no universal historical oracle and must use an
+    // explicit external historical oracle.
+    function _curveHistoricalRate(SimpleHop storage hop) private view returns(uint256){
+        (uint8 i,uint8 j)=abi.decode(hop.poolData,(uint8,uint8));
+        uint256 rateIn=1e18;
+        uint256 rateOut=1e18;
+        if(i>0) rateIn=_curveOracleComponent(hop.swapContract,hop.poolType,uint256(i)-1);
+        if(j>0) rateOut=_curveOracleComponent(hop.swapContract,hop.poolType,uint256(j)-1);
+        require(rateIn>0 && rateOut>0,"CURVE_ORACLE_ZERO");
+        return RouterFullMath.mulDiv(rateIn,1e18,rateOut);
+    }
+
+    function _curveOracleComponent(address pool,uint16 poolType,uint256 index)
+        private view returns(uint256)
+    {
+        bytes memory callData=poolType==CURVE_CRYPTOSWAP
+            ?abi.encodeWithSignature("price_oracle()")
+            :abi.encodeWithSignature("price_oracle(uint256)",index);
+        (bool ok,bytes memory out)=pool.staticcall(callData);
+        if(!ok) _revertWith(out);
+        require(out.length>=32,"CURVE_EMA_MISSING");
+        uint256 rate=abi.decode(out,(uint256));
+        require(rate!=0,"CURVE_ORACLE_ZERO");
+        return rate;
+    }
+
+    function _simpleOracleQuote(SimpleHop storage hop,address tokenIn,uint256 amount)
+        private view returns(uint256 output)
+    {
+        require(amount>0,"ZERO_AMOUNT");
+        if(hop.oracle.oracleAddress==address(0) && hop.poolType==UNISWAP_V2){
+            require(!hop.oracle.invert,"NATIVE_ORACLE_NOT_INVERTIBLE");
+            return _v2HistoricalQuote(hop.swapContract,tokenIn,amount);
+        }
+        if(hop.oracle.oracleAddress==address(0) && hop.poolType==UNISWAP_V3){
+            require(!hop.oracle.invert,"NATIVE_ORACLE_NOT_INVERTIBLE");
+            return _v3HistoricalQuote(hop,tokenIn,amount);
+        }
+        uint256 rate;
+        uint256 precision;
+        if(hop.oracle.oracleAddress==address(0)){
+            require(hop.poolType==CURVE_CRYPTOSWAP||hop.poolType==CURVE_TRICRYPTO||
+                    hop.poolType==CURVE_STABLESWAP_NG,"HISTORICAL_ORACLE_REQUIRED");
+            rate=_curveHistoricalRate(hop);
+            precision=1e18;
+        } else {
+            (bool ok,bytes memory out)=hop.oracle.oracleAddress.staticcall(
+                abi.encodePacked(hop.oracle.readFunctionID,hop.oracle.requiredInputs)
+            );
+            if(!ok) _revertWith(out);
+            require(out.length>=32,"ORACLE_INVALID_OUTPUT");
+            rate=abi.decode(out,(uint256));
+            precision=10**uint256(hop.oracle.rateDecimals);
+        }
+        require(rate>0,"ORACLE_ZERO_RATE");
+        if(hop.oracle.invert){
+            rate=RouterFullMath.mulDiv(precision,precision,rate);
+            require(rate>0,"INVERTED_RATE_ZERO");
+        }
+        uint256 inputUnit=_unit(tokenIn);
+        uint256 outputUnit=_unit(hop.tokenOut);
+        output=RouterFullMath.mulDiv(RouterFullMath.mulDiv(amount,rate,precision),
+                                    outputUnit,inputUnit);
+        require(output>0,"ORACLE_DUST");
+    }
+
     function _replaceRoute(bytes32 key,address tokenIn,address tokenOut,Hop[] calldata pathway) internal {
         require(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut,"BAD_ENDPOINTS");
         require(pathway.length>0 && pathway.length<=MAX_HOPS,"HOP_COUNT");
