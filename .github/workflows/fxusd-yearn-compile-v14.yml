@@ -1,12 +1,12 @@
-name: fxUSD Yearn v18 three-child economic engine compile
+name: fxUSD Yearn v19 timelocked sdFXN migration compile
 on:
   push:
-    branches: [fxusd-yearn-v18-economic-engine]
+    branches: [fxusd-yearn-v19-timelocked-migrate]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
       - 'fxusd-yearn/compile/v17/Accountant.sol'
       - 'fxusd-yearn/compile/v17/IVault.sol'
-      - 'fxusd-yearn/compile/v18/**'
+      - 'fxusd-yearn/compile/v19/**'
 permissions:
   contents: read
 jobs:
@@ -20,7 +20,7 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-      - name: Restore source and overlay v18 FXN zero-NAV child
+      - name: Restore source and overlay v19 FXN zero-NAV child
         shell: bash
         run: |
           set -euo pipefail
@@ -42,8 +42,8 @@ jobs:
           cp fxusd-yearn/compile/v17/IVault.sol .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
           mkdir -p .fxusd-compile/script
           cp fxusd-yearn/compile/v18/FXNYearnMasterAllocator.sol .fxusd-compile/contracts/FXNYearnMasterAllocator.sol
-          cp fxusd-yearn/compile/v18/FXNZeroNAVRewardChild.sol .fxusd-compile/contracts/FXNZeroNAVRewardChild.sol
-          cp fxusd-yearn/compile/v18/DeployFXUSDYearnV18.s.sol .fxusd-compile/script/DeployFXUSDYearnV18.s.sol
+          cp fxusd-yearn/compile/v19/FXNZeroNAVRewardChild.sol .fxusd-compile/contracts/FXNZeroNAVRewardChild.sol
+          cp fxusd-yearn/compile/v19/DeployFXUSDYearnV19.s.sol .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           git clone --depth 1 -q --branch v1.9.7 https://github.com/foundry-rs/forge-std.git .fxusd-compile/node_modules/forge-std
           sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
@@ -56,7 +56,7 @@ jobs:
           cd .fxusd-compile
           sed -i 's/function availableWithdrawLimit(address) public view override/function availableWithdrawLimit(address) public view virtual override/' contracts/FXNYearnChildBase.sol
           forge build --use 0.8.30 --via-ir --sizes 2>&1 | tee compile.log
-          forge build script/DeployFXUSDYearnV18.s.sol --use 0.8.30 --via-ir 2>&1 | tee -a compile.log
+          forge build script/DeployFXUSDYearnV19.s.sol --use 0.8.30 --via-ir 2>&1 | tee -a compile.log
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -76,7 +76,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fxusd-v18-three-child-compile-report
+          name: fxusd-v19-sdfxn-timelocked-migration-compile-report
           path: |
             .fxusd-compile/compile.log
             .fxusd-compile/size-report.json
