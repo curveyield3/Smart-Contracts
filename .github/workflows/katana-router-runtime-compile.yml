@@ -76,31 +76,31 @@ jobs:
               if(!item.within_limit)process.exitCode=1;
             }
           }
-          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'omni-router-runtime-size-v9.json'),JSON.stringify(data,null,2)+'\\n');
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'omni-router-runtime-size-v10.json'),JSON.stringify(data,null,2)+'\\n');
           NODE
       - name: Upload runtime-size report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: omni-router-runtime-size-v9
-          path: ${{ runner.temp }}/omni-router-runtime-size-v9.json
+          name: omni-router-runtime-size-v10
+          path: ${{ runner.temp }}/omni-router-runtime-size-v10.json
           if-no-files-found: ignore
-      - name: Assemble router-only source package v9
+      - name: Assemble router-only source package v10
         shell: bash
         run: |
           set -euo pipefail
-          out="${RUNNER_TEMP}/CurveYield_Omni_Router_v9"
+          out="${RUNNER_TEMP}/CurveYield_Omni_Router_v10"
           mkdir -p "$out"
           cp routers/ethereum-fraxtal/CurveYieldOmniRouter.sol "$out/"
           {
-            printf '# CurveYield Omni Router source package v9\n\n'
+            printf '# CurveYield Omni Router source package v10\n\n'
             printf 'Ethereum + Fraxtal. Router-only package. V3 TWAP and pool-fee allowances are implemented in the router; no external fee-reader dependency; consolidated pool execution plus future adapter support. Build results are supplied by the GitHub Actions compile job.\\n\\n'
             cat routers/ethereum-fraxtal/README_v3.md
           } > "$out/README.md"
           cat > "$out/package.json" <<'JSON'
           {
             "name": "curveyield-omni-router",
-            "version": "9.0.0",
+            "version": "10.0.0",
             "private": true,
             "description": "Ethereum/Fraxtal mixed-pool router Solidity sources",
             "dependencies": {
@@ -110,10 +110,10 @@ jobs:
           JSON
           find "$out" -maxdepth 1 -type f -printf '%f\\n' | sort
           test "$(find "$out" -maxdepth 1 -type f | wc -l)" -eq 3
-      - name: Upload clean router-only source package v9
+      - name: Upload clean router-only source package v10
         uses: actions/upload-artifact@v4
         with:
-          name: CurveYield_Omni_Router_v9
-          path: ${{ runner.temp }}/CurveYield_Omni_Router_v9/
+          name: CurveYield_Omni_Router_v10
+          path: ${{ runner.temp }}/CurveYield_Omni_Router_v10/
           if-no-files-found: error
           retention-days: 90
