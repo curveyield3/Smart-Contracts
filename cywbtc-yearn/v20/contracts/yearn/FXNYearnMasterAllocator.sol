@@ -71,8 +71,10 @@ contract FXNYearnMasterAllocator is BaseStrategy {
     uint256 private constant BPS = 10_000;
     uint256 private constant MIGRATION_DUST_BPS = 1;
     // The live FXN/WETH Curve pool cannot quote wei-scale reward dust.
-    // 1 gwei FXN is well above the observed minimum quote quantum.
-    uint256 private constant MIN_ENGINE_FXN_SWAP_WEI = 1e9;
+    // At 1e12 FXN wei, live FXN/WETH/WETH-USDC/USDC-fxUSD quotes
+    // are all nonzero (including 6-decimal USDC); sub-quantum rewards
+    // remain accounted and are not sold at unreliable dust prices.
+    uint256 private constant MIN_ENGINE_FXN_SWAP_WEI = 1e12;
 
     IERC20 public immutable FXUSD;
     IERC20 public immutable FXN;
