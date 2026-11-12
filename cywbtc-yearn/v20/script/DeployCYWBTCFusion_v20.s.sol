@@ -43,12 +43,12 @@ contract DeployCYWBTCFusion_v20 is Script {
     uint256 internal constant FXMINT_MARKET=49;
     uint256 internal constant YEARN_MARKET=100_001;
     address internal constant MAINNET_WBTC=0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599;
-    address internal constant MAINNET_FXUSD=0x085780639cc2cacd35e474e71f4d000e2405d8f6;
-    address internal constant MAINNET_USDC=0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48;
+    address internal constant MAINNET_FXUSD=0x085780639CC2cACd35E474e71f4d000e2405d8f6;
+    address internal constant MAINNET_USDC=0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address internal constant MAINNET_FACTORY=0xcd05909C4A1F8E501e4ED554cEF4Ed5E48D9b852;
     address internal constant FXMINT_WBTC_POOL=0xAB709e26Fa6B0A30c119D8c55B887DeD24952473;
     address internal constant FXMINT_POOL_MANAGER=0x250893CA4Ba5d05626C785e8da758026928FCD24;
-    address internal constant CURVE_USDC_FXUSD_POOL=0x5018be882dcce5e3f2f3b0913ae2096b9b3fb61f;
+    address internal constant CURVE_USDC_FXUSD_POOL=0x5018BE882DccE5E3F2f3B0913AE2096B9b3fB61f;
     address internal constant CHAINLINK_USDC_USD=0x8fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6;
 
     error ConfigurationMismatch();
