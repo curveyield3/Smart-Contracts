@@ -9,7 +9,7 @@
 
 There is **one route representation and one swap accounting path**. Earlier v2 had both a full generic ABI executor and a basic built-in pool executor; the duplicate generic execution path has been removed to reduce the router's bytecode. The basic `setRoute` still accepts a pool type, swap contract, pool ID where needed, minimal pool data and historical-oracle configuration for each hop. No custom ABI patch list is required for supported built-in types.
 
-Uniswap V3's `observe()` tick TWAP remains **inside the router**. The external `CurveYieldHistoricalPriceReader` contains the V2 cumulative-price checkpoints and Curve pool EMA rate conversion. Other pool types supply their own independently reviewed historical oracle. Every swap checks the oracle-derived minimum for **each** hop against actual output-token balance increases. The default router fee is taken once on the final output.
+Uniswap V3's `observe()` tick TWAP remains **inside the router**. The external `CurveYieldHistoricalPriceReader` contains the V2 cumulative-price checkpoints and Curve pool EMA rate conversion. Other pool types supply their own independently reviewed historical oracle. Every swap enforces one **aggregate route-wide oracle-derived minimum** on final output while continuing to verify actual token balance changes and full input consumption at every hop. The default router fee is taken once on the final output.
 
 The original CurveYield branded contract header is preserved in both Solidity files.
 
@@ -41,7 +41,7 @@ struct SimpleHop {
 }
 ```
 
-The token input of hop N+1 is inferred from the output of hop N. Each route supports at most 8 hops. The `price_oracle` read returns a 1e18-scaled historical output-token-per-input-token rate; `estimate_exact_output` estimates the output net of router fee, but **does not simulate market price impact**. `guardedMinOut` composes each hop's worst-case oracle slippage and the final router fee.
+The token input of hop N+1 is inferred from the output of hop N. Each route supports at most 8 hops. The `price_oracle` read returns a 1e18-scaled historical output-token-per-input-token rate; `estimate_exact_output` estimates the output net of router fee, but **does not simulate market price impact**. `guardedMinOut` applies the configured slippage allowance once to the aggregate historical-oracle output, then applies the final router fee.
 
 ## Built-in pool types
 
@@ -115,7 +115,7 @@ executeHop(address pool,address tokenIn,address tokenOut,uint256 amountIn,
            returns (uint256);
 ```
 
-The router approves exactly the hop input amount, makes a normal external call (never `delegatecall`), revokes the approval, and verifies the exact input consumed and output received against its independent historical-price guard. A new pool type does **not** require redeploying the router.
+The router approves exactly the hop input amount, makes a normal external call (never `delegatecall`), revokes the approval, and verifies the exact input consumed and output received against the final route-wide historical-price guard. A new pool type does **not** require redeploying the router.
 
 The former `setRouteAdvanced` ABI-patching engine was deliberately removed from the router to eliminate the duplicated and expensive second execution pipeline. Any future general-purpose arbitrary-ABI capability should live in a bounded external adapter using the same simple route engine.
 
