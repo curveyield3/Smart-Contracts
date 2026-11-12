@@ -1,6 +1,11 @@
 name: Ethereum Fraxtal Omni Router runtime-size compile
 on:
   workflow_dispatch:
+  push:
+    branches: [ethereum-fraxtal-omni-router-v2]
+    paths:
+      - '.github/workflows/katana-router-runtime-compile.yml'
+      - 'routers/ethereum-fraxtal/CurveYieldOmniRouter.sol'
 permissions:
   contents: read
 jobs:
@@ -90,8 +95,8 @@ jobs:
           mkdir -p "$out"
           cp routers/ethereum-fraxtal/CurveYieldOmniRouter.sol "$out/"
           {
-            printf '# CurveYield Omni Router source package v3\\n\\n'
-            printf 'Ethereum + Fraxtal. Router-only package. Built-in V2/V3/V4/Curve/Balancer modules and future adapter registry integrated. No compilation has been performed on this version before the next user authorization.\\n\\n'
+            printf '# CurveYield Omni Router source package v3\n\n'
+            printf 'Ethereum + Fraxtal. Router-only package. Built-in V2/V3/V4/Curve/Balancer modules and future adapter registry integrated. Build results are supplied by the GitHub Actions compile job.\\n\\n'
             cat routers/ethereum-fraxtal/README_v2.md
           } > "$out/README.md"
           cat > "$out/package.json" <<'JSON'
@@ -107,10 +112,10 @@ jobs:
           JSON
           find "$out" -maxdepth 1 -type f -printf '%f\\n' | sort
           test "$(find "$out" -maxdepth 1 -type f | wc -l)" -eq 3
-      - name: Upload clean router-only source package v2
+      - name: Upload clean router-only source package v3
         uses: actions/upload-artifact@v4
         with:
-          name: CurveYield_Omni_Router_v2
-          path: ${{ runner.temp }}/CurveYield_Omni_Router_v2/
+          name: CurveYield_Omni_Router_v3
+          path: ${{ runner.temp }}/CurveYield_Omni_Router_v3/
           if-no-files-found: error
           retention-days: 90
