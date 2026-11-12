@@ -418,19 +418,19 @@ contract CurveYieldOmniRouter {
             for(uint256 j=0;j<i;j++) if(!(pathway[j].tokenOut!=h.tokenOut)) revert ErrRepeatedToken();
             if(!(tokenIn!=h.tokenOut)) revert ErrRouteCycle();
 
-            if(h.poolType==UNISWAP_V2){
+            if(h.poolType==UNISWAP_V2||h.poolType==UNISWAP_V3){
                 IEmbeddedV2Pair pair=IEmbeddedV2Pair(h.swapContract);
-                if(!((pair.token0()==current&&pair.token1()==h.tokenOut)||
-                        (pair.token1()==current&&pair.token0()==h.tokenOut))) revert ErrV2Tokens();
-                if(h.poolData.length!=0){
-                    uint16 fee=abi.decode(h.poolData,(uint16));
-                    if(!(fee<=1000)) revert ErrV2FeeCap();
+                address t0=pair.token0();
+                address t1=pair.token1();
+                if(!((t0==current&&t1==h.tokenOut)||(t1==current&&t0==h.tokenOut))){
+                    if(h.poolType==UNISWAP_V2) revert ErrV2Tokens();
+                    revert ErrV3Tokens();
                 }
-            } else if(h.poolType==UNISWAP_V3){
-                IEmbeddedV3Pool pool=IEmbeddedV3Pool(h.swapContract);
-                if(!((pool.token0()==current&&pool.token1()==h.tokenOut)||
-                        (pool.token1()==current&&pool.token0()==h.tokenOut))) revert ErrV3Tokens();
-                if(h.poolData.length!=0) if(!(abi.decode(h.poolData,(uint32))>=900)) revert ErrV3TwapWindow();
+                if(h.poolData.length!=0){
+                    if(h.poolType==UNISWAP_V2){
+                        if(!(abi.decode(h.poolData,(uint16))<=1000)) revert ErrV2FeeCap();
+                    } else if(!(abi.decode(h.poolData,(uint32))>=900)) revert ErrV3TwapWindow();
+                }
             } else if(h.poolType==UNISWAP_V4){
                 (IEmbeddedV4Manager.PoolKey memory key4,bytes memory hookData)=
                     abi.decode(h.poolData,(IEmbeddedV4Manager.PoolKey,bytes));
