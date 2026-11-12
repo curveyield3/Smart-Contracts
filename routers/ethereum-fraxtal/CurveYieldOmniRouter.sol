@@ -165,6 +165,7 @@ interface IEmbeddedV2Pair {
 interface IEmbeddedV3Pool {
     function token0() external view returns(address);
     function token1() external view returns(address);
+    function fee() external view returns(uint24);
     function observe(uint32[] calldata) external view returns(int56[] memory,uint160[] memory);
     function swap(address,bool,int256,uint160,bytes calldata) external returns(int256,int256);
 }
@@ -177,6 +178,7 @@ interface IEmbeddedV4Manager {
     function settle() external payable returns(uint256);
     function take(address,address,uint256) external;
 }
+interface IEmbeddedCurveFee { function fee() external view returns(uint256); }
 interface IEmbeddedBalancerV2Vault {
     enum SwapKind { GIVEN_IN, GIVEN_OUT }
     struct SingleSwap {
@@ -348,7 +350,7 @@ contract CurveYieldOmniRouter {
     // Returns the aggregate historical rate over the complete configured route.
     function price_oracle(address tokenIn,address tokenOut) external view returns(uint256){
         uint256 unitIn=_unit(tokenIn);
-        uint256 outputRaw=_estimateRouteGross(tokenIn,tokenOut,unitIn);
+        uint256 outputRaw=_estimateRouteGross(tokenIn,tokenOut,unitIn,false);
         return RouterFullMath.mulDiv(outputRaw,1e18,_unit(tokenOut));
     }
     // Deterministic oracle-derived net estimate. Not an executable spot/price-impact quote.
@@ -356,7 +358,7 @@ contract CurveYieldOmniRouter {
         external view returns(uint256 amount_out)
     {
         Route storage r=_route(tokenIn,tokenOut);
-        uint256 gross=_estimateRouteGross(tokenIn,tokenOut,amountIn);
+        uint256 gross=_estimateRouteGross(tokenIn,tokenOut,amountIn,false);
         return RouterFullMath.mulDiv(gross,10000-_effectiveFee(r),10000);
     }
     // Apply the route-wide historical slippage allowance and fee only once.
@@ -365,7 +367,7 @@ contract CurveYieldOmniRouter {
     {
         Route storage r=_route(tokenIn,tokenOut);
         uint256 guarded=RouterFullMath.mulDiv(
-            _estimateRouteGross(tokenIn,tokenOut,amountIn),10000-_effectiveSlippage(r),10000
+            _estimateRouteGross(tokenIn,tokenOut,amountIn,true),10000-_effectiveSlippage(r),10000
         );
         return RouterFullMath.mulDiv(guarded,10000-_effectiveFee(r),10000);
     }
@@ -456,7 +458,17 @@ contract CurveYieldOmniRouter {
         }
         if(!(current==tokenOut)) revert ErrWrongFinalToken();
         delete simpleRoutes[key];
-        for(uint256 i=0;i<pathway.length;i++) simpleRoutes[key].push(pathway[i]);
+        for(uint256 i=0;i<pathway.length;i++){
+            SimpleHop calldata h=pathway[i];
+            simpleRoutes[key].push(h);
+            if(h.poolType==UNISWAP_V3){
+                uint32 window=h.poolData.length==0?900:abi.decode(h.poolData,(uint32));
+                simpleRoutes[key][i].poolData=abi.encode(window,IEmbeddedV3Pool(h.swapContract).fee());
+            } else if(h.poolType==CURVE_STABLESWAP||h.poolType==CURVE_STABLESWAP_NG){
+                (uint8 ci,uint8 cj)=abi.decode(h.poolData,(uint8,uint8));
+                simpleRoutes[key][i].poolData=abi.encode(ci,cj,IEmbeddedCurveFee(h.swapContract).fee());
+            }
+        }
     }
 
     // Pool implementations disagree on coins(uint256) vs coins(int128).
@@ -486,7 +498,7 @@ contract CurveYieldOmniRouter {
     ) private returns(uint256 net){
         SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
         uint256 minimum=RouterFullMath.mulDiv(
-            _estimateRouteGross(tokenIn,tokenOut,amountIn),10000-_effectiveSlippage(r),10000
+            _estimateRouteGross(tokenIn,tokenOut,amountIn,true),10000-_effectiveSlippage(r),10000
         );
         if(!(minimum>0)) revert ErrDustMinimum();
         uint256 originalBalance=IOmniERC20(tokenIn).balanceOf(address(this));
@@ -733,7 +745,7 @@ contract CurveYieldOmniRouter {
         if(!(output>0)) revert ErrOracleDust();
     }
 
-    function _estimateRouteGross(address tokenIn,address tokenOut,uint256 amount)
+    function _estimateRouteGross(address tokenIn,address tokenOut,uint256 amount,bool adjustPoolFees)
         private view returns(uint256)
     {
         SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
@@ -741,8 +753,40 @@ contract CurveYieldOmniRouter {
         for(uint256 i=0;i<hops.length;i++){
             address input=i==0?tokenIn:hops[i-1].tokenOut;
             amount=_simpleOracleQuote(hops[i],input,amount);
+            if(adjustPoolFees){
+                uint256 poolFee=_poolFee(hops[i]);
+                amount=RouterFullMath.mulDiv(amount,1e10-poolFee,1e10);
+            }
         }
         return amount;
+    }
+    // Pool trading fees are in parts per 1e10; route slippage is applied separately.
+    function _poolFee(SimpleHop storage h) private view returns(uint256 fee){
+        uint16 t=h.poolType;
+        if(t==UNISWAP_V2){
+            return uint256(h.poolData.length==0?30:abi.decode(h.poolData,(uint16)))*1e6;
+        }
+        if(t==UNISWAP_V3){
+            (,uint24 v3Fee)=abi.decode(h.poolData,(uint32,uint24));
+            return uint256(v3Fee)*1e4;
+        }
+        if(t==UNISWAP_V4){
+            (IEmbeddedV4Manager.PoolKey memory key4,)=abi.decode(h.poolData,(IEmbeddedV4Manager.PoolKey,bytes));
+            return key4.fee==0x800000?0:uint256(key4.fee)*1e4;
+        }
+        if(t==CURVE_CRYPTOSWAP||t==CURVE_TRICRYPTO){
+            return IEmbeddedCurveFee(h.swapContract).fee();
+        }
+        if(t==CURVE_STABLESWAP||t==CURVE_STABLESWAP_NG){
+            (uint8 i,uint8 j,uint256 baseFee)=abi.decode(h.poolData,(uint8,uint8,uint256));
+            (bool ok,bytes memory ret)=h.swapContract.staticcall(
+                abi.encodeWithSignature("dynamic_fee(int128,int128)",int128(uint128(i)),int128(uint128(j)))
+            );
+            if(ok&&ret.length>=32) return abi.decode(ret,(uint256));
+            if(t==CURVE_STABLESWAP_NG) revert ErrBadOracle();
+            return baseFee;
+        }
+        return 0; // No fee credit for unverified Balancer, adapter or dynamic V4 fees.
     }
     function _unit(address token) private view returns(uint256){
         uint8 d=IOmniERC20(token).decimals();
