@@ -1,4 +1,4 @@
-# CurveYield Omni Router — v9 self-contained pool-fee accounting
+# CurveYield Omni Router — v10 self-contained pool-fee accounting
 
 **Networks:** Ethereum (chain ID 1) and Fraxtal (chain ID 252).  
 **Deployable source:** `CurveYieldOmniRouter.sol` only. The previous optional historical reader is not bundled or required.  
@@ -13,7 +13,7 @@ Uniswap V3's `observe()` tick TWAP remains **inside the router**. The router als
 
 The original CurveYield branded contract header is preserved in the router Solidity file.
 
-**v8 bytecode-preserving refactor (retained in v9):** Curve exchange variants share one ABI encoder with their original selectors; V2/V3 routes share endpoint verification but retain distinct fee/TWAP validation and errors; Curve, Balancer V2 and adapter executors share the same reset-exact-allowance / execute / reset allowance sequence; Curve built-in types use a bounded contiguous ID check; and `guardedMinOut()` and swaps share their gross output minimum calculation. V3 TWAP mathematics remain embedded and unchanged. Exact input spend, output balance, route-wide oracle guard, and authenticated callbacks remain enforced.
+**v8 bytecode-preserving refactor (retained in v10):** Curve exchange variants share one ABI encoder with their original selectors; V2/V3 routes share endpoint verification but retain distinct fee/TWAP validation and errors; Curve, Balancer V2 and adapter executors share the same reset-exact-allowance / execute / reset allowance sequence; Curve built-in types use a bounded contiguous ID check; and `guardedMinOut()` and swaps share their gross output minimum calculation. V3 TWAP mathematics remain embedded and unchanged. Exact input spend, output balance, route-wide oracle guard, and authenticated callbacks remain enforced.
 
 ## Simplified route entry points
 
@@ -50,7 +50,7 @@ The token input of hop N+1 is inferred from the output of hop N. Each route supp
 | ID | Pool type | swapContract | poolData | Oracle requirement |
 |---|---|---|---|---|
 | 1 | Uniswap V2 / compatible pair | Pair | `abi.encode(uint16 poolFeeBps)` (default 30) | Independently configured historical oracle |
-| 2 | Uniswap V3 / compatible pool | Pool | `abi.encode(uint32 twapWindow)` (default 900 seconds) | Internal V3 TWAP when oracleAddress=0 |
+| 2 | Uniswap V3 / compatible pool | Pool | `abi.encode(uint32 twapWindow)` (default 300 seconds; minimum 300) | Internal V3 TWAP when oracleAddress=0 |
 | 3 | Uniswap V4 | PoolManager | `abi.encode(PoolKey,bytes hookData)` | External validated historical-price oracle |
 | 4 | Curve two-token CryptoSwap | Pool | `abi.encode(uint8 i,uint8 j)` | Validated external historical oracle |
 | 5 | Curve TriCrypto | Pool | `abi.encode(uint8 i,uint8 j)` | Validated external historical oracle |
@@ -66,11 +66,11 @@ Balancer V3 uses a different protocol architecture and is **not** covered by Bal
 
 **Deployment:** Construct `CurveYieldOmniRouter(owner, feeRecipient)` with **two** arguments. There is no mandatory external fee reader, no `feeReader` immutable, and no extra contract required for pool-fee lookup.
 
-The embedded V3 TWAP remains available by leaving a V3 hop's `oracle.oracleAddress` as zero. All non-V3 hops **still require** a configured, independently validated external historical-rate oracle; removing the discontinued reader does not remove the router's historical-price guard. The owner must provide a compatible oracle and configure `oracleAddress`, `readFunctionID`, `requiredInputs`, `invert`, and `rateDecimals` for each route hop.
+The embedded V3 TWAP remains available by leaving a V3 hop's `oracle.oracleAddress` as zero. An empty V3 `poolData` now uses a 300-second TWAP; configured nonempty V3 TWAP windows must be at least 300 seconds. This change shortens the historical averaging interval and increases sensitivity to recent prices compared with the previous 900-second floor. All non-V3 hops **still require** a configured, independently validated external historical-rate oracle; removing the discontinued reader does not remove the router's historical-price guard. The owner must provide a compatible oracle and configure `oracleAddress`, `readFunctionID`, `requiredInputs`, `invert`, and `rateDecimals` for each route hop.
 
 Each external historical oracle must return a nonzero integer rate for one whole input token in whole output tokens with the declared precision (0–18 decimals). A spot swap quote is not an equivalent historical reference. The router retains the existing external oracle selector/argument interface; integrations using another historical source require no new router code.
 
-The former `CurveYieldHistoricalPriceReader.sol` remains in the repository only as an optional legacy source. It is **not** included in the v9 deployment package or compiled by the v9 router-only size workflow, and its pool-fee lookup has been removed. V3's on-router TWAP computation is unchanged.
+The former `CurveYieldHistoricalPriceReader.sol` remains in the repository only as an optional legacy source. It is **not** included in the v10 deployment package or compiled by the v10 router-only size workflow, and its pool-fee lookup has been removed. V3's on-router TWAP price mathematics are unchanged; the default and minimum observation windows are now 300 seconds.
 
 ## Pool-fee adjustment for route-wide slippage
 
