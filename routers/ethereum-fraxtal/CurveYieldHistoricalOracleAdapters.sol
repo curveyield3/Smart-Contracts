@@ -105,7 +105,7 @@ contract CurveYieldV3TickOracle {
     function quoteRate(address pool,address tokenIn,address tokenOut,uint32 window)
         external view returns(uint256 rateScaled1e18)
     {
-        require(window>=60,"TWAP_TOO_SHORT");
+        require(window>=900,"TWAP_TOO_SHORT");
         IHistoricalV3Pool p=IHistoricalV3Pool(pool);
         address token0=p.token0(); address token1=p.token1();
         require((tokenIn==token0&&tokenOut==token1)||(tokenIn==token1&&tokenOut==token0),"POOL_TOKENS");
