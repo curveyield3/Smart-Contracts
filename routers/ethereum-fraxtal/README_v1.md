@@ -13,10 +13,11 @@
 | `CurveYieldHistoricalOracleAdapters.sol` | V2 cumulative historical TWAP, V3 native tick-history TWAP |
 | `CurveYieldV4ExactInputExecutor.sol` | An ERC20-only v4 PoolManager unlock/swap/settle executor |
 
-The router invokes approved `poolAddress` *execution targets* via their exact ABI function selectors.
-For ordinary Curve pools this can be the pool itself; for Uniswap V2/V3 this is commonly the
-appropriate router contract; for V4, `poolAddress` is the **V4 executor contract**
-(the pool itself is identified by a PoolKey in PoolManager, not a standalone address).
+Each hop records both `poolAddress` (the actual V2/V3/Curve pool or, in V4, its
+PoolManager) and `executionTarget` (the callable swap contract). For ordinary Curve
+pools these can be the same address; for V2/V3 periphery swaps the target is a
+separate router. For V4 the target is the dedicated V4 executor and the specific
+pool is identified by a PoolKey inside PoolManager.
 
 ## Owner functions / caps
 
@@ -41,7 +42,8 @@ appropriate router contract; for V4, `poolAddress` is the **V4 executor contract
 
 Each `Hop` contains:
 - `tokenIn`, `tokenOut` (ERC20 only)
-- `poolAddress` (actual execution target)
+- `poolAddress` (actual V2/V3/Curve pool, or V4 PoolManager)
+- `executionTarget` (ABI call target; approved periphery router, pool itself, or V4 executor)
 - `writeFunctionID` (bytes4 function selector)
 - `requiredAbiInputs` (**already ABI-encoded arguments, without selector**, including any dynamic tails)
 - `writeFields` (positions in ABI argument bytes to fill/override dynamically)
@@ -70,8 +72,9 @@ Patches can target nested dynamic ABI data as well as ordinary static arguments.
 The contract only supports **32-byte ABI word substitutions**. Full dynamic ABI
 arguments (e.g. `bytes`, `address[]`, `bytes[]`, or tuples) must be encoded into
 `requiredAbiInputs` first, with patches applied to fields in that encoding.
-The write target must pull its input from the router via ERC20 `transferFrom` (with
-a one-transaction exact approval), except when `transferBeforeCall=true`.
+The execution target must pull its input from the router via ERC20 `transferFrom` (with
+a one-transaction exact approval), except when `transferBeforeCall=true` (which is
+permitted only when the execution target equals the actual pool address).
 The entire input amount must be consumed at each hop. Repeated tokens and cycles are rejected.
 
 ### Example ABI templates (illustrative, not production-vetted routes)
@@ -92,7 +95,8 @@ the V2 history adapter; encode pair, input token and output token in its oracle 
 ABI have been independently confirmed. Use the V3 adapter's
 `quoteRate(address,address,address,uint32)` with an initialized pool observation window.
 
-**Uniswap V4:** Use `CurveYieldV4ExactInputExecutor.executeSwap` with an encoded
+**Uniswap V4:** Set `poolAddress` to the chain's PoolManager and `executionTarget`
+to the `CurveYieldV4ExactInputExecutor`. Use its `executeSwap` selector with an encoded
 `PoolKey`, `hookData`, amount and minimum-output patches. Deploy executor only
 after the router, using the correct chain-specific PoolManager address. V4 does
 **not** expose the V3 native observe/TWAP oracle; configure a separately
