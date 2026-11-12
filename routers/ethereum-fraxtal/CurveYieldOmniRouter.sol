@@ -78,7 +78,6 @@ error ErrBadOracle();
 error ErrBadOwner();
 error ErrBadRecipient();
 error ErrBadSwap();
-error ErrBalancerPoolId();
 error ErrBalancerTokenMismatch();
 error ErrBuiltinTypeImmutable();
 error ErrCurveCoinMismatch();
@@ -162,8 +161,6 @@ interface IEmbeddedV2Pair {
     function token0() external view returns(address);
     function token1() external view returns(address);
     function getReserves() external view returns(uint112,uint112,uint32);
-    function price0CumulativeLast() external view returns(uint256);
-    function price1CumulativeLast() external view returns(uint256);
     function swap(uint256,uint256,address,bytes calldata) external;
 }
 interface IEmbeddedV3Pool {
@@ -645,7 +642,7 @@ contract CurveYieldOmniRouter {
         if(!(amount<=uint256(uint128(type(int128).max)))) revert ErrV4InputLimit();
         (IEmbeddedV4Manager.PoolKey memory key4,bytes memory hookData)=
             abi.decode(hop.poolData,(IEmbeddedV4Manager.PoolKey,bytes));
-        if(!(keccak256(abi.encode(key4))==hop.poolId)) revert ErrV4PoolId();
+        // PoolKey/PoolId matching was already validated and stored by setRoute.
         activeV4Manager=hop.swapContract;
         v4CallbackConsumed=false;
         IEmbeddedV4Manager(hop.swapContract).unlock(
@@ -693,7 +690,7 @@ contract CurveYieldOmniRouter {
         private view returns(uint256)
     {
         uint32 window=hop.poolData.length==0?900:abi.decode(hop.poolData,(uint32));
-        if(!(window>=900)) revert ErrV3MinTwap();
+        // The minimum window is validated once when setRoute installs this hop.
         uint32[] memory secondsAgo=new uint32[](2);
         secondsAgo[0]=window;
         (int56[] memory cumulative,)=IEmbeddedV3Pool(hop.swapContract).observe(secondsAgo);
