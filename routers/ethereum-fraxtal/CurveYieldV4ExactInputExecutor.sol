@@ -57,7 +57,7 @@ contract CurveYieldV4ExactInputExecutor {
         require(msg.sender==router,"ONLY_ROUTER");
         require(active==0,"REENTRANCY");
         require(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut,"BAD_TOKENS");
-        require(amountIn>0&&amountIn<=uint256(type(int128).max),"INVALID_INPUT");
+        require(amountIn>0&&amountIn<=uint256(uint128(type(int128).max)),"INVALID_INPUT");
         require(key.currency0!=address(0) && key.currency1!=address(0) && key.currency0<key.currency1,"BAD_POOL_KEY");
         require((tokenIn==key.currency0 && tokenOut==key.currency1) ||
                 (tokenIn==key.currency1 && tokenOut==key.currency0),"KEY_MISMATCH");
