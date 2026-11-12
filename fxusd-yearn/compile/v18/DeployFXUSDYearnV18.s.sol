@@ -77,7 +77,7 @@ contract DeployFXUSDYearnV18 is Script {
         address gauge37 = vm.envAddress("CONVEX_FX_GAUGE_37");
         address gauge8 = vm.envAddress("CONVEX_FX_GAUGE_8");
         address sdFXN = vm.envAddress("SDFXN");
-        address sdFXNCurveLP = vm.envOr("CURVE_SDFXN_FXN_POOL", address(0x28ca243dc0ac075dd012fcf9375c25d18a844d96));
+        address sdFXNCurveLP = vm.envOr("CURVE_SDFXN_FXN_POOL", address(0x28Ca243dc0aC075dD012fCf9375C25D18A844d96));
         address boostHub = vm.envAddress("BOOSTHUB");
         uint256 boostHubPid = vm.envOr("BOOSTHUB_SDFXN_PID", uint256(1));
         address fxBase = vm.envAddress("FXBASE_POOL");
