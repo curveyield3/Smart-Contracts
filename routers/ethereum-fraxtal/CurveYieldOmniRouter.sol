@@ -404,6 +404,7 @@ contract CurveYieldOmniRouter {
     {
         if(!(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut)) revert ErrBadEndpoints();
         if(!(pathway.length>0 && pathway.length<=MAX_HOPS)) revert ErrHopCount();
+        delete simpleRoutes[key];
         address current=tokenIn;
         for(uint256 i=0;i<pathway.length;i++){
             SimpleHop calldata h=pathway[i];
@@ -459,17 +460,13 @@ contract CurveYieldOmniRouter {
             } else {
                 if(!(h.poolType==UNISWAP_V3)) revert ErrExternalHistoricalOracleRequired();
             }
-            current=h.tokenOut;
-        }
-        if(!(current==tokenOut)) revert ErrWrongFinalToken();
-        delete simpleRoutes[key];
-        for(uint256 i=0;i<pathway.length;i++){
-            SimpleHop calldata h=pathway[i];
             simpleRoutes[key].push(h);
             if(h.poolType==UNISWAP_V3||h.poolType==CURVE_STABLESWAP||h.poolType==CURVE_STABLESWAP_NG){
                 simpleRoutes[key][i].poolId=bytes32(IEmbeddedCurveFee(h.swapContract).fee());
             }
+            current=h.tokenOut;
         }
+        if(!(current==tokenOut)) revert ErrWrongFinalToken();
     }
 
     // Pool implementations disagree on coins(uint256) vs coins(int128).
