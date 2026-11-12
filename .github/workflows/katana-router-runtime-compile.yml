@@ -46,7 +46,7 @@ jobs:
             language:'Solidity',
             sources,
             settings:{
-              optimizer:{enabled:true,runs:200},
+              optimizer:{enabled:true,runs:1},
               viaIR:true,
               outputSelection:{'*':{'*':['evm.deployedBytecode.object','evm.bytecode.object']}}
             }
@@ -71,7 +71,7 @@ jobs:
               const item={
                 contract:name,source:filename,
                 source_sha256_trimmed:crypto.createHash('sha256').update(sources[filename].content.trimEnd()).digest('hex'),
-                solc:solc.version(),optimizer_runs:200,viaIR:true,
+                solc:solc.version(),optimizer_runs:1,viaIR:true,
                 runtime_bytes:runtime.length/2,creation_bytes:creation.length/2,
                 eip170_limit:24576,headroom:24576-runtime.length/2,
                 within_limit:runtime.length/2<=24576
