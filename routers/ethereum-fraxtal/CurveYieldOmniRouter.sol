@@ -543,15 +543,16 @@ contract CurveYieldOmniRouter {
         } else if(t==UNISWAP_V4){
             _executeV4(hop,tokenIn,amount);
         } else {
-            bool curve=_isCurve(t);
-            bool balancer=t==BALANCER_WEIGHTED||t==BALANCER_STABLE;
-            address spender=curve||balancer?hop.swapContract:externalAdapters[t];
-            if(!(curve||balancer) && !(spender!=address(0)&&spender.code.length>0)) revert ErrExtensionNotActive();
+            address spender=hop.swapContract;
+            if(t>=EXTERNAL_TYPE_START){
+                spender=externalAdapters[t];
+                if(!(spender!=address(0)&&spender.code.length>0)) revert ErrExtensionNotActive();
+            }
             _safeApprove(tokenIn,spender,0);
             _safeApprove(tokenIn,spender,amount);
-            if(curve){
+            if(_isCurve(t)){
                 _executeCurve(hop,tokenIn,amount);
-            } else if(balancer){
+            } else if(t==BALANCER_WEIGHTED||t==BALANCER_STABLE){
                 _executeBalancerV2(hop,tokenIn,amount);
             } else {
                 IExternalRouterHop(spender).executeHop(
