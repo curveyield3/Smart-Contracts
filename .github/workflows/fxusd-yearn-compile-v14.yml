@@ -8,6 +8,7 @@ on:
       - 'fxusd-yearn/compile/v17/IVault.sol'
       - 'fxusd-yearn/compile/v19/**'
       - 'cywbtc-yearn/v18/**'
+      - 'cywbtc-yearn/v19/**'
 permissions:
   contents: read
 jobs:
@@ -80,8 +81,8 @@ jobs:
           mkdir -p .fxusd-compile/simulation
           cp cywbtc-yearn/v18/script/DeployFXUSDYearnV19.s.sol .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
           sed -i 's|../contracts/yearn/|../contracts/|g' .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
-          cp cywbtc-yearn/v18/simulation/run_ethereum_fork_v18.py .fxusd-compile/simulation/
-          python3 -m py_compile .fxusd-compile/simulation/run_ethereum_fork_v18.py
+          cp cywbtc-yearn/v19/simulation/run_ethereum_fork_v19.py .fxusd-compile/simulation/
+          python3 -m py_compile .fxusd-compile/simulation/run_ethereum_fork_v19.py
           cd .fxusd-compile
           forge build script/DeployFXUSDYearnV19.s.sol --use 0.8.30 --via-ir 2>&1 | tee -a compile.log
       - name: Compile custom v18 fxMINT integrations against pinned official IPOR
@@ -109,13 +110,13 @@ jobs:
         shell: bash
         working-directory: .fxusd-compile
         env:
-          ETHEREUM_FORK_RPC_URL: ${{ secrets.SIM_ARCHIVE_PRIMARY_ETHEREUM_01 || secrets.ETHEREUM_PROVIDER_URL || secrets.ETH_RPC_URL }}
+          ETHEREUM_FORK_RPC_URL: ${{ secrets.SIM_ARCHIVE_PRIMARY_ETHEREUM_01 || secrets.ETHEREUM_PROVIDER_URL || secrets.ETH_RPC_URL || 'https://ethereum-rpc.publicnode.com' }}
           SIM_DEPLOYER_PRIVATE_KEY: ${{ secrets.SIM_LOCAL_FORK_TEST_KEY }}
           SIM_DEPOSITOR: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
           VAULT_OWNER: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
           HARVEST_KEEPER: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
           FXUSD: '0x085780639cc2cacd35e474e71f4d000e2405d8f6'
-          FXN: ${{ vars.FXN_TOKEN }}
+          FXN: '0x365AccFCa291e7D3914637ABf1F7635dB165Bb09'
           WETH: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
           USDC: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
           CONVEX_FX_BOOSTER: '0xAffe966B27ba3E4Ebb8A0eC124C7b7019CC762f8'
@@ -123,14 +124,14 @@ jobs:
           CONVEX_FX_GAUGE_32: '0xf1e141c804ba39b4a031fdf46e8c08dba7a0df60'
           CONVEX_FX_GAUGE_37: '0x215d87bd3c7482e2348338815e059de07daf798a'
           CONVEX_FX_GAUGE_8: '0x5b1d12365bec01b8b672ee45912d1bbc86305dba'
-          SDFXN: ${{ vars.SDFXN_TOKEN }}
+          SDFXN: '0xe19d1c837b8a1c83a56cd9165b2c0256d39653ad'
           BOOSTHUB: '0xFbEF8941Da53EA724385B44E91ae9672061D0263'
           FXBASE_POOL: '0x65c9a641afceb9c0e6034e558a319488fa0fa3be'
           CURVE_USDC_FXUSD_POOL: '0x5018be882dcce5e3f2f3b0913ae2096b9b3fb61f'
-          CURVE_FXN_WETH_POOL: ${{ vars.CURVE_FXN_WETH_POOL }}
-          CURVE_WETH_USDC_POOL: ${{ vars.CURVE_WETH_USDC_POOL }}
-          SIM_FXUSD_FUNDER: ${{ vars.SIM_FXUSD_FUNDER }}
-          SIM_WBTC_FUNDER: ${{ vars.SIM_WBTC_FUNDER }}
+          CURVE_FXN_WETH_POOL: '0xc15f285679a1ef2d25f53d4cbd0265e1d02f2a92'
+          CURVE_WETH_USDC_POOL: '0x7F86Bf177Dd4F3494b841A37e810A34dD56c829B'
+          SIM_FXUSD_FUNDER: '0x5018be882dcce5e3f2f3b0913ae2096b9b3fb61f'
+          SIM_WBTC_FUNDER: '0x7F86Bf177Dd4F3494b841A37e810A34dD56c829B'
           SIM_IPOR_VAULT: ${{ vars.SIM_IPOR_VAULT }}
           SIM_LTV_MANAGER: ${{ vars.SIM_LTV_MANAGER }}
           SIM_FXMINT_COLLATERAL_FUSE: ${{ vars.SIM_FXMINT_COLLATERAL_FUSE }}
@@ -140,7 +141,7 @@ jobs:
           SIM_PRICE_MIDDLEWARE: ${{ vars.SIM_PRICE_MIDDLEWARE }}
         run: |
           set -euo pipefail
-          python3 simulation/run_ethereum_fork_v18.py
+          python3 simulation/run_ethereum_fork_v19.py
       - name: Save compiler output and official source
         if: always()
         uses: actions/upload-artifact@v4
