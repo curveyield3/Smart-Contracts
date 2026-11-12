@@ -186,9 +186,12 @@ contract FXNZeroNAVRewardChild is BaseStrategy {
         if (fxnAmount == 0 && sdFXNAmount == 0) return 0;
         uint256[2] memory amounts = [fxnAmount, sdFXNAmount];
         uint256 quote = CURVE.calc_token_amount(amounts, true);
+        // Tiny reward shares can be below the Curve LP minting quantum.
+        // Buffer them instead of reverting the entire master harvest.
+        if (quote == 0 && minLP == 0) return 0;
         uint256 expectedMin = Math.mulDiv(quote, BPS - curveSlippageBps, BPS);
-        if (minLP < expectedMin || minLP == 0) minLP = expectedMin;
-        if (minLP == 0) revert InsufficientOutput();
+        if (minLP < expectedMin) minLP = expectedMin;
+        if (minLP == 0) minLP = 1;
         if (fxnAmount != 0) FXN.forceApprove(address(CURVE), fxnAmount);
         if (sdFXNAmount != 0) SDFXN.forceApprove(address(CURVE), sdFXNAmount);
         uint256 before = CURVE_LP.balanceOf(address(this));
@@ -211,7 +214,7 @@ contract FXNZeroNAVRewardChild is BaseStrategy {
     /// @dev Master transfers actual FXN before calling; no Yearn vault shares.
     function investFromMaster(uint256 fxnAmount) external onlyMaster locked {
         if (fxnAmount == 0 || FXN.balanceOf(address(this)) < fxnAmount) revert InvalidConfiguration();
-        uint256 lp = _addLiquidity(fxnAmount, 0, 0);
+        uint256 lp = _addLiquidity(FXN.balanceOf(address(this)), 0, 0);
         emit FXNInvested(fxnAmount, lp);
     }
 
