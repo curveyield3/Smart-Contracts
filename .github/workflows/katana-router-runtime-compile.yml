@@ -64,8 +64,9 @@ jobs:
             for(const [name,artifact] of Object.entries(result.contracts?.[filename]||{})){
               const runtime=artifact.evm?.deployedBytecode?.object||'';
               const creation=artifact.evm?.bytecode?.object||'';
+              if(!runtime && !creation) continue; // interfaces and abstract libraries
               if(!runtime || runtime.length%2 || !creation || creation.length%2)
-                throw Error('Missing bytecode: '+filename+':'+name);
+                throw Error('Invalid deployed bytecode: '+filename+':'+name);
               const item={
                 contract:name,source:filename,
                 source_sha256_trimmed:crypto.createHash('sha256').update(sources[filename].content.trimEnd()).digest('hex'),
