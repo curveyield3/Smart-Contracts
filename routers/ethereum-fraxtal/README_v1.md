@@ -46,7 +46,7 @@ Each `Hop` contains:
 - `requiredAbiInputs` (**already ABI-encoded arguments, without selector**, including any dynamic tails)
 - `writeFields` (positions in ABI argument bytes to fill/override dynamically)
 - `transferBeforeCall` (true only for direct pools such as V2 pair.swap that need input transferred first)
-- `oracleAddress`, `oracleReadFunctionName` (full canonical signature, e.g. `price_oracle(uint256)`)
+- `oracleAddress`, `oracleReadFunctionName` (full canonical signature, e.g. `price_oracle(uint256)`; zero-argument names such as `price_oracle` are also accepted)
 - `oracleReadFunctionInputs` (already ABI-encoded oracle arguments, without selector)
 - `oracleFields` (position patches for oracle argument words)
 - `oracleRateDecimals` (precision of the rate returned by the oracle)
@@ -111,7 +111,7 @@ cause loss despite technically successful oracle calls.
 - The built-in V2 adapter provides historical 15-minute to 24-hour cumulative-price
   rates. `checkpoint(pair)` is permissionless, but must run to create usable
   history; swapping without valid history fails closed.
-- The built-in V3 adapter uses `observe([window,0])`, requiring the pool to retain
+- The built-in V3 adapter uses `observe([window,0])`, requires at least a 900-second window, and requires the pool to retain
   enough observations. Its normalized rate is scaled by 1e18.
 - Curve pool EMA sources must be mapped to the correct coin indices and directional
   conventions. Some Curve markets require additional asset-wrapper/rate normalization.
