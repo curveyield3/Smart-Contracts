@@ -1,15 +1,15 @@
-# CurveYield Omni Router — v3 consolidated implementation
+# CurveYield Omni Router — v6 fee-aware implementation
 
 **Networks:** Ethereum (chain ID 1) and Fraxtal (chain ID 252).  
 **Source:** `CurveYieldOmniRouter.sol` and `CurveYieldHistoricalPriceReader.sol` only.  
-**Compiler target:** Solidity 0.8.28, optimizer 200 runs, via IR.  
+**Compiler target:** Solidity 0.8.28, optimizer **1 run**, via IR.  
 **Status:** Compile-only; not audited, deployed or tested.
 
 ## Architecture
 
 There is **one route representation and one swap accounting path**. Earlier v2 had both a full generic ABI executor and a basic built-in pool executor; the duplicate generic execution path has been removed to reduce the router's bytecode. The basic `setRoute` still accepts a pool type, swap contract, pool ID where needed, minimal pool data and historical-oracle configuration for each hop. No custom ABI patch list is required for supported built-in types.
 
-Uniswap V3's `observe()` tick TWAP remains **inside the router**. The external `CurveYieldHistoricalPriceReader` contains the V2 cumulative-price checkpoints and Curve pool EMA rate conversion. Other pool types supply their own independently reviewed historical oracle. Every swap enforces one **aggregate route-wide oracle-derived minimum** on final output while continuing to verify actual token balance changes and full input consumption at every hop. The default router fee is taken once on the final output.
+Uniswap V3's `observe()` tick TWAP remains **inside the router**. The external `CurveYieldHistoricalPriceReader` contains the V2 cumulative-price checkpoints, Curve pool EMA rate conversion, and a read-only pool-fee lookup used by the route guard. Other pool types supply their own independently reviewed historical oracle. Every swap enforces one **aggregate route-wide oracle-derived minimum** on final output while continuing to verify actual token balance changes and full input consumption at every hop. The default router fee is taken once on the final output.
 
 The original CurveYield branded contract header is preserved in both Solidity files.
 
@@ -35,13 +35,13 @@ struct SimpleHop {
     uint16 poolType;
     address tokenOut;
     address swapContract;
-    bytes32 poolId;    // V4 PoolId or Balancer V2 pool ID where applicable
+    bytes32 poolId;    // V4/Balancer PoolId; V3/Curve stable: fee snapshot written by router
     bytes poolData;    // encoded pool-specific parameters
     SimpleOracle oracle;
 }
 ```
 
-The token input of hop N+1 is inferred from the output of hop N. Each route supports at most 8 hops. The `price_oracle` read returns a 1e18-scaled historical output-token-per-input-token rate; `estimate_exact_output` estimates the output net of router fee, but **does not simulate market price impact**. `guardedMinOut` applies the configured slippage allowance once to the aggregate historical-oracle output, then applies the final router fee.
+The token input of hop N+1 is inferred from the output of hop N. Each route supports at most 8 hops. The `price_oracle` read returns a 1e18-scaled historical output-token-per-input-token rate; `estimate_exact_output` estimates the output net of router fee, but **does not simulate market price impact**. `guardedMinOut` first discounts the aggregate historical-oracle output by the estimated trading fee of each supported pool, then applies the route-wide slippage allowance once and the router fee once. `price_oracle` and `estimate_exact_output` remain raw-oracle outputs and do **not** include pool trading-fee discounts.
 
 ## Built-in pool types
 
@@ -62,13 +62,15 @@ Balancer V3 uses a different protocol architecture and is **not** covered by Bal
 
 ## External V2/Curve price reader
 
-Deploy `CurveYieldHistoricalPriceReader` once per supported chain. It exposes:
+**Deployment order:** deploy `CurveYieldHistoricalPriceReader` first, then construct `CurveYieldOmniRouter(owner, feeRecipient, feeReaderAddress)`. The router's immutable fee-reader address must refer to the updated official reader. Deploy one reader per supported chain. The reader exposes:
 
 ```solidity
 checkpointV2(address pair)
 v2Rate(address pair, address tokenIn, address tokenOut) returns (uint256 rate1e18)
 curveRate(address pool, uint16 poolType, uint8 i, uint8 j,
           address tokenIn, address tokenOut) returns (uint256 rate1e18)
+poolFee(uint16 poolType, address pool, bytes32 cachedFee, bytes poolData)
+    returns (uint256 feeRate1e10)
 ```
 
 For V2, call `checkpointV2(pair)` permissionlessly and maintain observations: the historical observation used must be at least **900 seconds** old and no more than **86,400 seconds** old. The reader uses Uniswap V2's counterfactual cumulative prices to compute a historical average. A fresh pool without a valid checkpoint cannot be swapped through under the guarded route.
@@ -99,6 +101,23 @@ For V3 leave oracleAddress=0 to use the embedded `observe([window,0])` historica
 
 For V4 and Balancer, supply a historical oracle that returns one whole input token priced in whole output tokens. V4 lacks V3's native historical observations.
 
+## Pool-fee adjustment for route-wide slippage
+
+All recorded fees are used solely to establish the minimum *gross* route output. The CurveYield router's final 0.10% default fee is still charged separately and once.
+
+- **Uniswap V2:** the fee is configured as optional `abi.encode(uint16 feeBps)` in `poolData`. Empty bytes mean 30 bps (0.30%). The pool fee is assumed, not discovered.
+- **Uniswap V3:** at `setRoute` or nonempty `setRouteConfig`, the router reads the pool's immutable `fee()` (parts per 1e6) once and records it in the stored hop's `poolId` field. `poolData` continues to contain the optional V3 TWAP window.
+- **Uniswap V4 static fee:** `PoolKey.fee` is already inside stored `poolData` (parts per 1e6). There is no additional fee getter or storage. The value `0x800000` signals a dynamic-fee pool, **not** a percentage: dynamic V4 pools receive no fee discount under this implementation. Hook-added charges also do not receive a fee discount.
+- **Curve legacy StableSwap and StableSwap-NG:** at route setup, the router reads `fee()` (parts per 1e10) once and stores the base fee in the hop's otherwise unused `poolId`. Before calculating the guarded swap minimum, the reader calls `dynamic_fee(int128,int128)` on the configured pool. If unavailable for legacy StableSwap, it uses the cached base fee. StableSwap-NG without the expected getter fails closed.
+- **Curve TwoCrypto-NG and TriCrypto-NG:** the reader calls the pool's live `fee()` (parts per 1e10) when calculating the guarded minimum, not the route-setup value.
+- **Balancer V2 and external adapters:** no automatically inferred fee credit is applied. Their normal swap fees still count against the slippage allowance.
+
+`routeHop` returns the stored fee snapshot for V3/Curve stable pools through `poolId`; the router overrides caller-supplied `poolId` for these types. V4 and Balancer `poolId` retain their normal pool-identifier meanings.
+
+**Dynamic-fee limitation:** pre-swap `dynamic_fee(i,j)` and CryptoSwap `fee()` describe current pool state, not an exact guaranteed fee for the eventual amount-specific swap. A trade can alter the fee during its own execution. This approximate allowance can exceed the fee actually charged and therefore weaken the nominal 1% *additional* slippage guarantee. Deployment requires review of the specific Curve implementation and realistic swap sizes. Fee getters are source-bound requirements, not universal interfaces.
+
+The fee-reader is an immutable deployment dependency. The pool-fee adjustment cannot be disabled on a per-route basis after deployment; unsupported or incorrectly formatted fee getters can make a route unusable.
+
 ## Future pool adapters
 
 The owner can call:
@@ -125,10 +144,10 @@ The former `setRouteAdvanced` ABI-patching engine was deliberately removed from 
 - `defaultSlippageGuardBps` defaults to 100 bps (1%); owner default cap 300 bps (3%); routes can override up to 500 bps (5%).
 - `easyswap(tokenIn,tokenOut,amountIn)` uses configured automatic protection, sends final output to caller.
 - `swapExactInput(tokenIn,tokenOut,amountIn,minNetAmountOut,recipient,deadline)` also respects caller floor and deadline.
-- `price_oracle(tokenIn,tokenOut)`, `estimate_exact_output(tokenIn,tokenOut,amountIn)`, and `guardedMinOut(tokenIn,tokenOut,amountIn)` share the same oracle calculation used at execution.
+- `price_oracle` and `estimate_exact_output` use raw historical oracle quotes; `guardedMinOut` and swaps additionally apply supported pool-fee discounts before slippage.
 
 ## Source limitations and production requirements
 
-This is a router-focused source package, **not** an avKAT package. There are no unrelated vault or governance files. The contracts must be configured on each chain with compatible pools, PoolManager addresses, and validated historical-price oracles. Native ETH requires wrapping; the built-in swap paths accept ERC20 tokens only.
+This is a router-focused source package, **not** an avKAT package. There are no unrelated vault or governance files. The reader must be deployed first and passed into the router constructor. Both contracts must be configured on each chain with compatible pools, PoolManager addresses, and validated historical-price oracles. Native ETH requires wrapping; the built-in swap paths accept ERC20 tokens only.
 
 GitHub compilation does not certify financial safety. The programmatic route configuration may be unsafe if the owner sets wrong token indexes, mismatched pool contracts, reversed oracles, incorrectly scaled rates, inaccurate pool fees, or malicious external adapters. Hooked V4 pools, Curve variants, and both Balancer versions require targeted integration analysis before deployment. No tests are introduced or executed under the existing no-tests instruction.
