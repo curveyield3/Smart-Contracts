@@ -165,7 +165,27 @@ class Sim:
               "blockNumber":int(receipt["blockNumber"],16),"from":who,"to":to,
               "logsCount":len(receipt.get("logs",[]))}
         self.report["receipts"].append(item)
-        if item["status"]!=1:raise Failed(f"Transaction reverted (receipt status=0), hash={h}, block={oldblock+1}")
+        if item["status"]!=1:
+            # Capture a bounded, source-bound call trace on the same mutable Anvil
+            # fork, so the first failing internal call can be diagnosed.
+            try:
+                trace=self.rpc.call("debug_traceTransaction",[h,{"tracer":"callTracer"}])
+                failing=[]
+                def walk(node,depth=0):
+                    if not isinstance(node,dict): return
+                    if node.get("error"):
+                        failing.append({"depth":depth,"to":node.get("to"),"selector":str(node.get("input",""))[:10],
+                            "error":str(node.get("error"))[:300],"output":str(node.get("output",""))[:260],
+                            "revertReason":str(node.get("revertReason",""))[:300]})
+                    for call in node.get("calls",[]):walk(call,depth+1)
+                walk(trace)
+                OUT.mkdir(parents=True,exist_ok=True)
+                (OUT/"failure-call-trace-v19.json").write_text(json.dumps(
+                    {"txHash":h,"failureCalls":failing[:50]},indent=2)+"\\n")
+                item["traceFailureCalls"]=failing[:15]
+            except Exception as trace_error:
+                item["traceError"]=str(trace_error)[:500]
+            raise Failed(f"Transaction reverted (receipt status=0), hash={h}, block={oldblock+1}, gasUsed={item['gasUsed']}, failureCalls={item.get('traceFailureCalls',[])[-4:]}")
         return item
     def read_price(self,to,asset):
         d=self.eth_call(to,"getAssetPrice(address)",asset)[2:]
