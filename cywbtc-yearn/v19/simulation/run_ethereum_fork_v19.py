@@ -603,16 +603,16 @@ class Sim:
     def deploy_yearn(self):
         key=os.environ.get("SIM_DEPLOYER_PRIVATE_KEY")
         if not key:
-            # Generate an ephemeral signing key strictly for the disposable Anvil fork.
-            # It is never written to the repository, job logs, or simulation artifact.
-            try:
-                wallets = json.loads(self.tool(["cast","wallet","new","--json"],timeout=30))
-                wallet = wallets[0] if isinstance(wallets,list) else wallets
-                key = wallet.get("private_key") or wallet.get("privateKey")
-                if not key or not re.fullmatch(r"0x[0-9a-fA-F]{64}",key):
-                    raise Blocked("Could not generate a disposable local-fork deployer key")
-            except Exception as e:
-                raise Blocked(f"Local Anvil deployer generation failed: {type(e).__name__}")
+            # Use Anvil's documented public development account on this disposable
+            # loopback fork, as in existing successful project fork rehearsals.
+            # Never use this key for a remote RPC or a real mainnet transaction.
+            if self.rpc is None or not self.rpc.uri.startswith("http://127.0.0.1:"):
+                raise Blocked("Anvil development signer requires a verified loopback fork")
+            key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+            dev_address = self.tool(["cast","wallet","address","--private-key",key],timeout=30).strip()
+            accounts = self.rpc.call("eth_accounts")
+            if not isinstance(accounts,list) or dev_address.lower() not in {a.lower() for a in accounts}:
+                raise Blocked("Expected default Anvil development account is not unlocked locally")
         deployer = self.tool(["cast","wallet","address","--private-key",key],timeout=30).strip()
         if not nonzero_address(deployer):
             raise Blocked("Generated Anvil deployer address was invalid")
