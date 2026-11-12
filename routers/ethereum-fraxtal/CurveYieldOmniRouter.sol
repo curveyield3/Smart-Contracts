@@ -179,6 +179,9 @@ interface IEmbeddedV4Manager {
     function take(address,address,uint256) external;
 }
 interface IEmbeddedCurveFee { function fee() external view returns(uint256); }
+interface IEmbeddedFeeReader {
+    function poolFee(uint16,address,bytes calldata) external view returns(uint256);
+}
 interface IEmbeddedBalancerV2Vault {
     enum SwapKind { GIVEN_IN, GIVEN_OUT }
     struct SingleSwap {
@@ -260,6 +263,7 @@ contract CurveYieldOmniRouter {
 
     address public owner;
     address public feeRecipient;
+    address public immutable feeReader;
     uint16 public feeBps = 10;              // 0.10% default, capped at 0.50%
     uint16 public defaultSlippageGuardBps = DEFAULT_SLIPPAGE_BPS;
     uint256 private reentrancyStatus=1;
@@ -271,11 +275,13 @@ contract CurveYieldOmniRouter {
     modifier onlyOwner(){if(!(msg.sender==owner)) revert ErrNotOwner();_;}
     modifier nonReentrant(){if(!(reentrancyStatus==1)) revert ErrReentrancy();reentrancyStatus=2;_;reentrancyStatus=1;}
 
-    constructor(address owner_,address feeRecipient_){
+    constructor(address owner_,address feeRecipient_,address feeReader_){
         if(!(block.chainid==1 || block.chainid==252)) revert ErrOnlyEthereumFraxtal();
         if(!(owner_!=address(0) && feeRecipient_!=address(0) && feeRecipient_!=address(this))) revert ErrBadAddress();
+        if(!(feeReader_.code.length>0)) revert ErrBadAddress();
         owner=owner_;
         feeRecipient=feeRecipient_;
+        feeReader=feeReader_;
     }
 
     function transferOwnership(address nextOwner) external onlyOwner {
@@ -754,39 +760,13 @@ contract CurveYieldOmniRouter {
             address input=i==0?tokenIn:hops[i-1].tokenOut;
             amount=_simpleOracleQuote(hops[i],input,amount);
             if(adjustPoolFees){
-                uint256 poolFee=_poolFee(hops[i]);
+                uint256 poolFee=IEmbeddedFeeReader(feeReader).poolFee(
+                    hops[i].poolType,hops[i].swapContract,hops[i].poolData
+                );
                 amount=RouterFullMath.mulDiv(amount,1e10-poolFee,1e10);
             }
         }
         return amount;
-    }
-    // Pool trading fees are in parts per 1e10; route slippage is applied separately.
-    function _poolFee(SimpleHop storage h) private view returns(uint256 fee){
-        uint16 t=h.poolType;
-        if(t==UNISWAP_V2){
-            return uint256(h.poolData.length==0?30:abi.decode(h.poolData,(uint16)))*1e6;
-        }
-        if(t==UNISWAP_V3){
-            (,uint24 v3Fee)=abi.decode(h.poolData,(uint32,uint24));
-            return uint256(v3Fee)*1e4;
-        }
-        if(t==UNISWAP_V4){
-            (IEmbeddedV4Manager.PoolKey memory key4,)=abi.decode(h.poolData,(IEmbeddedV4Manager.PoolKey,bytes));
-            return key4.fee==0x800000?0:uint256(key4.fee)*1e4;
-        }
-        if(t==CURVE_CRYPTOSWAP||t==CURVE_TRICRYPTO){
-            return IEmbeddedCurveFee(h.swapContract).fee();
-        }
-        if(t==CURVE_STABLESWAP||t==CURVE_STABLESWAP_NG){
-            (uint8 i,uint8 j,uint256 baseFee)=abi.decode(h.poolData,(uint8,uint8,uint256));
-            (bool ok,bytes memory ret)=h.swapContract.staticcall(
-                abi.encodeWithSignature("dynamic_fee(int128,int128)",int128(uint128(i)),int128(uint128(j)))
-            );
-            if(ok&&ret.length>=32) return abi.decode(ret,(uint256));
-            if(t==CURVE_STABLESWAP_NG) revert ErrBadOracle();
-            return baseFee;
-        }
-        return 0; // No fee credit for unverified Balancer, adapter or dynamic V4 fees.
     }
     function _unit(address token) private view returns(uint256){
         uint8 d=IOmniERC20(token).decimals();
