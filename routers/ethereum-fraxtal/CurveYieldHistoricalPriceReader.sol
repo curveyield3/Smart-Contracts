@@ -71,7 +71,8 @@ contract CurveYieldHistoricalPriceReader {
 
     function v2Rate(address pair,address tokenIn,address tokenOut) external view returns(uint256 rate) {
         IPriceReaderV2Pair p=IPriceReaderV2Pair(pair);
-        address t0=p.token0(),t1=p.token1();
+        address t0=p.token0();
+        address t1=p.token1();
         require((tokenIn==t0&&tokenOut==t1)||(tokenIn==t1&&tokenOut==t0),"V2_TOKENS");
         (uint256 c0,uint256 c1,uint32 nowTs)=_cumulatives(pair);
         Observation storage older=v2Observations[pair][1];
