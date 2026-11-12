@@ -577,14 +577,10 @@ contract CurveYieldOmniRouter {
         (uint8 i,uint8 j)=abi.decode(hop.poolData,(uint8,uint8));
         _safeApprove(tokenIn,hop.swapContract,0);
         _safeApprove(tokenIn,hop.swapContract,amount);
-        bytes memory payload;
-        if(hop.poolType==CURVE_STABLESWAP||hop.poolType==CURVE_STABLESWAP_NG) {
-            payload=abi.encodeWithSignature("exchange(int128,int128,uint256,uint256)",
-                int128(uint128(i)),int128(uint128(j)),amount,0);
-        } else {
-            payload=abi.encodeWithSignature("exchange(uint256,uint256,uint256,uint256)",
-                uint256(i),uint256(j),amount,0);
-        }
+        bytes4 selector=hop.poolType==CURVE_STABLESWAP||hop.poolType==CURVE_STABLESWAP_NG
+            ?bytes4(keccak256("exchange(int128,int128,uint256,uint256)"))
+            :bytes4(keccak256("exchange(uint256,uint256,uint256,uint256)"));
+        bytes memory payload=abi.encodeWithSelector(selector,uint256(i),uint256(j),amount,0);
         (bool ok,bytes memory reason)=hop.swapContract.call(payload);
         if(!ok) _revertWith(reason);
         _safeApprove(tokenIn,hop.swapContract,0);
