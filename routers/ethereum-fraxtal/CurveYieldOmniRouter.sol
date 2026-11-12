@@ -366,14 +366,20 @@ contract CurveYieldOmniRouter {
         uint256 gross=_estimateRouteGross(tokenIn,tokenOut,amountIn,false);
         return RouterFullMath.mulDiv(gross,10000-_effectiveFee(r),10000);
     }
+    // Single aggregate gross-output guard shared by the view and execution paths.
+    function _grossMinOut(address tokenIn,address tokenOut,uint256 amountIn,Route storage r)
+        private view returns(uint256)
+    {
+        return RouterFullMath.mulDiv(
+            _estimateRouteGross(tokenIn,tokenOut,amountIn,true),10000-_effectiveSlippage(r),10000
+        );
+    }
     // Apply the route-wide historical slippage allowance and fee only once.
     function guardedMinOut(address tokenIn,address tokenOut,uint256 amountIn)
         external view returns(uint256 amountOut)
     {
         Route storage r=_route(tokenIn,tokenOut);
-        uint256 guarded=RouterFullMath.mulDiv(
-            _estimateRouteGross(tokenIn,tokenOut,amountIn,true),10000-_effectiveSlippage(r),10000
-        );
+        uint256 guarded=_grossMinOut(tokenIn,tokenOut,amountIn,r);
         return RouterFullMath.mulDiv(guarded,10000-_effectiveFee(r),10000);
     }
     // 3-input swap; owner-selected route always applies its historical-price guard and fee.
@@ -497,9 +503,7 @@ contract CurveYieldOmniRouter {
         uint256 userMin,address recipient,Route storage r
     ) private returns(uint256 net){
         SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
-        uint256 minimum=RouterFullMath.mulDiv(
-            _estimateRouteGross(tokenIn,tokenOut,amountIn,true),10000-_effectiveSlippage(r),10000
-        );
+        uint256 minimum=_grossMinOut(tokenIn,tokenOut,amountIn,r);
         if(!(minimum>0)) revert ErrDustMinimum();
         uint256 originalBalance=IOmniERC20(tokenIn).balanceOf(address(this));
         _safeTransferFrom(tokenIn,msg.sender,address(this),amountIn);
