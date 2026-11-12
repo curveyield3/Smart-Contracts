@@ -1,10 +1,11 @@
-name: cyWBTC Yearn v15 IPOR source compile
+name: cyWBTC Yearn v16 25bps loss-aware source compile
 on:
   push:
-    branches: [cywbtc-yearn-v15-integration]
+    branches: [cywbtc-yearn-v16-loss25]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
-      - 'cywbtc-yearn/v15/FXMintLTVManager.sol'
+      - 'cywbtc-yearn/v16/FXMintLTVManager.sol'
+      - 'cywbtc-yearn/v16/Erc4626SupplyFuse.sol'
 permissions:
   contents: read
 jobs:
@@ -29,7 +30,8 @@ jobs:
           git -C .ipor-source fetch --quiet --depth 1 origin 636bb4c2b78826586a0c0c8c9083c5c285692657
           git -C .ipor-source checkout --detach 636bb4c2b78826586a0c0c8c9083c5c285692657
           mkdir -p .ipor-source/contracts/fuses/fxmint
-          cp cywbtc-yearn/v15/FXMintLTVManager.sol .ipor-source/contracts/fuses/fxmint/FXMintLTVManager.sol
+          cp cywbtc-yearn/v16/FXMintLTVManager.sol .ipor-source/contracts/fuses/fxmint/FXMintLTVManager.sol
+          cp cywbtc-yearn/v16/Erc4626SupplyFuse.sol .ipor-source/contracts/fuses/erc4626/Erc4626SupplyFuse.sol
           cd .ipor-source
           npm ci --ignore-scripts --no-audit --no-fund --silent
           git submodule update --init --depth 1 lib/forge-std
@@ -63,7 +65,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cywbtc-yearn-v15-ipor-official-sources-and-compile
+          name: cywbtc-yearn-v16-loss25-source-and-compile
           path: |
             .ipor-source/contracts/fuses/erc4626/Erc4626SupplyFuse.sol
             .ipor-source/contracts/fuses/erc4626/Erc4626BalanceFuse.sol
