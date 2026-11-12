@@ -136,7 +136,6 @@ error ErrV2NoLiquidity();
 error ErrV2Tokens();
 error ErrV3CallbackMissing();
 error ErrV3InputDelta();
-error ErrV3MinTwap();
 error ErrV3Observations();
 error ErrV3Tokens();
 error ErrV3TwapWindow();
@@ -225,7 +224,7 @@ contract CurveYieldOmniRouter {
     uint16 internal constant EXTERNAL_TYPE_START = 1000;
 
     struct SimpleOracle {
-        address oracleAddress; // zero = router's native V2/V3 or applicable Curve EMA
+        address oracleAddress; // zero invokes only the router's native V3 TWAP reader
         bytes4 readFunctionID; // historical rate for 1 whole input token, NOT spot
         bytes requiredInputs; // ABI-encoded read arguments (without selector)
         bool invert;
