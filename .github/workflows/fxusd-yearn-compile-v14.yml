@@ -54,6 +54,7 @@ jobs:
           PY
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
+          sed -i '/^remappings = \[/,/^\]/d' .fxusd-compile/foundry.toml
           printf '\nremappings = ["forge-std/=node_modules/forge-std/", "@openzeppelin/contracts/=lib/openzeppelin/contracts/", "@tokenized-strategy/=node_modules/@tokenized-strategy/", "@yearn-vaults/=node_modules/@yearn-vaults/"]\n' >> .fxusd-compile/foundry.toml
       - name: Compile contracts only, no tests
         shell: bash
