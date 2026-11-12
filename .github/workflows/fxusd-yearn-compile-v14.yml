@@ -1,10 +1,11 @@
-name: fxUSD Yearn v16 Solidity size compile
+name: fxUSD Yearn v17 capped official Accountant compile
 on:
   push:
-    branches: [fxusd-yearn-v16-refactor]
+    branches: [fxusd-yearn-v17-accountant]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
-      - 'fxusd-yearn/compile/source-v16.b64'
+      - 'fxusd-yearn/compile/v17/Accountant.sol'
+      - 'fxusd-yearn/compile/v17/IVault.sol'
 permissions:
   contents: read
 jobs:
@@ -18,7 +19,7 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-      - name: Restore exact v16 source and pinned dependencies
+      - name: Restore v16 source plus official v17 Accountant
         shell: bash
         run: |
           set -euo pipefail
@@ -27,47 +28,64 @@ jobs:
           const fs=require('fs'),path=require('path'),zlib=require('zlib');
           const src=fs.readFileSync('fxusd-yearn/compile/source-v16.b64','utf8').trim();
           const data=JSON.parse(zlib.brotliDecompressSync(Buffer.from(src,'base64')).toString('utf8'));
-          for(const [relative,contents] of Object.entries(data)){
-            if(relative.startsWith('/')||relative.includes('..'))throw Error('bad source path');
+          for (const [relative,contents] of Object.entries(data)) {
+            if (relative.startsWith('/')||relative.includes('..')) throw Error('bad path');
             const out=path.join('.fxusd-compile',relative);
             fs.mkdirSync(path.dirname(out),{recursive:true});
             fs.writeFileSync(out,contents);
           }
-          console.log('Restored',Object.keys(data).length,'files');
+          console.log('Restored',Object.keys(data).length,'source and dependency files');
           NODE
-          mkdir -p .fxusd-compile/lib
+          mkdir -p .fxusd-compile/lib .fxusd-compile/node_modules/@yearn-vaults/interfaces
+          cp fxusd-yearn/compile/v17/Accountant.sol .fxusd-compile/contracts/Accountant.sol
+          cp fxusd-yearn/compile/v17/IVault.sol .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.fxusd-compile/contracts/FXNYearnMasterAllocator.sol')
+          s=p.read_text()
+          d={'allocationBps[c32] = 9_500;':'allocationBps[c32] = 5_500;',
+             'allocationBps[c37] = 500;':'allocationBps[c37] = 4_500;',
+             'emit StrategyAllocationSet(c32, 0, 9_500);':'emit StrategyAllocationSet(c32, 0, 5_500);',
+             'emit StrategyAllocationSet(c37, 0, 500);':'emit StrategyAllocationSet(c37, 0, 4_500);'}
+          for old,new in d.items():
+              assert s.count(old)==1,old
+              s=s.replace(old,new)
+          p.write_text(s)
+          PY
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
-      - name: Compile all contracts and report byte sizes (no tests)
+          printf '\nremappings = ["forge-std/=node_modules/forge-std/", "@openzeppelin/contracts/=lib/openzeppelin/contracts/", "@tokenized-strategy/=node_modules/@tokenized-strategy/", "@yearn-vaults/=node_modules/@yearn-vaults/"]\n' >> .fxusd-compile/foundry.toml
+      - name: Compile contracts only, no tests
         shell: bash
         run: |
           set -euo pipefail
           cd .fxusd-compile
-          # Apply source-level virtual correction also present in the delivered v16 package.
           sed -i 's/function availableWithdrawLimit(address) public view override/function availableWithdrawLimit(address) public view virtual override/' contracts/FXNYearnChildBase.sol
           forge build --use 0.8.30 --via-ir --sizes 2>&1 | tee compile.log
           python3 - <<'PY'
           import json
           from pathlib import Path
-          names=['FXNYearnMasterAllocator','CurveConvex32YearnStrategy','FxBaseConvex37YearnStrategy','FXNCurveRewardRouter']
-          result={'solc':'0.8.30','optimizer_runs':200,'contracts':{}}
+          names=['Accountant','FXNYearnMasterAllocator','CurveConvex32YearnStrategy','FxBaseConvex37YearnStrategy','FXNCurveRewardRouter']
+          report={'solc':'0.8.30','optimizer_runs':200,'contracts':{}}
           for name in names:
-              matches=list(Path('out').rglob(name+'.json'))
-              if len(matches)!=1: raise RuntimeError(f'expected one artifact for {name}, found {len(matches)}')
-              artifact=json.loads(matches[0].read_text())
-              creation=artifact['bytecode']['object'].removeprefix('0x')
+              found=list(Path('out').rglob(name+'.json'))
+              if len(found)!=1: raise RuntimeError(f'missing/duplicate artifact {name}: {found}')
+              artifact=json.loads(found[0].read_text())
               runtime=artifact['deployedBytecode']['object'].removeprefix('0x')
-              result['contracts'][name]={'creation_bytes':len(creation)//2,'runtime_bytes':len(runtime)//2,'eip170_headroom':24576-len(runtime)//2}
-              print(f'FINAL_SIZE {name}: creation={len(creation)//2}, runtime={len(runtime)//2}, eip170_headroom={24576-len(runtime)//2}')
-          Path('size-report.json').write_text(json.dumps(result,indent=2)+'\n')
+              creation=artifact['bytecode']['object'].removeprefix('0x')
+              report['contracts'][name]={'runtime_bytes':len(runtime)//2,'creation_bytes':len(creation)//2,'eip170_headroom':24576-len(runtime)//2}
+              print(f'FINAL_SIZE {name}: runtime={len(runtime)//2}, creation={len(creation)//2}, eip170_headroom={24576-len(runtime)//2}')
+          Path('size-report.json').write_text(json.dumps(report,indent=2)+'\n')
           PY
-      - name: Store compilation result
+      - name: Save compiler output and official source
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fxusd-yearn-v16-size-report
+          name: fxusd-v17-compile-and-official-accountant
           path: |
             .fxusd-compile/compile.log
             .fxusd-compile/size-report.json
+            .fxusd-compile/contracts/Accountant.sol
+            .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
           if-no-files-found: warn
           retention-days: 14
