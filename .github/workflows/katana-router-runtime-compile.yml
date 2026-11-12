@@ -4,7 +4,7 @@ on:
     branches: [ethereum-fraxtal-omni-router-v1]
     paths:
       - '.github/workflows/katana-router-runtime-compile.yml'
-      - 'routers/ethereum-fraxtal/CurveYieldOmniRouter.sol'
+      - 'routers/ethereum-fraxtal/**'
 permissions:
   contents: read
 jobs:
@@ -23,7 +23,7 @@ jobs:
           mkdir -p /tmp/omni-router-build
           cd /tmp/omni-router-build
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund \
-            solc@0.8.28
+            solc@0.8.28 @uniswap/v4-core@1.0.2
       - name: Compile attached exact router source (no tests, no deployment)
         shell: bash
         run: |
@@ -33,50 +33,52 @@ jobs:
           const path = require('path');
           const crypto = require('crypto');
           const solc = require('/tmp/omni-router-build/node_modules/solc');
-          const sourcePath = 'routers/ethereum-fraxtal/CurveYieldOmniRouter.sol';
-          const source = fs.readFileSync(sourcePath, 'utf8');
-          const sourceSha = crypto.createHash('sha256').update(source.trimEnd()).digest('hex');
-          const input = {
-            language: 'Solidity',
-            sources: { [sourcePath]: { content: source } },
-            settings: {
-              optimizer: { enabled: true, runs: 200 },
-              viaIR: true,
-              outputSelection: { '*': { '*': ['evm.deployedBytecode.object','evm.bytecode.object'] } }
+          const base='routers/ethereum-fraxtal';
+          const paths=[
+            base+'/CurveYieldOmniRouter.sol',
+            base+'/CurveYieldHistoricalOracleAdapters.sol',
+            base+'/CurveYieldV4ExactInputExecutor.sol'
+          ];
+          const sources={};
+          for(const filename of paths) sources[filename]={content:fs.readFileSync(filename,'utf8')};
+          const input={
+            language:'Solidity',
+            sources,
+            settings:{
+              optimizer:{enabled:true,runs:200},
+              viaIR:true,
+              outputSelection:{'*':{'*':['evm.deployedBytecode.object','evm.bytecode.object']}}
             }
           };
-          function findImports(name) {
-            const found = path.resolve('/tmp/omni-router-build/node_modules', name);
-            return fs.existsSync(found) ? { contents: fs.readFileSync(found, 'utf8') } :
-              { error: 'Unresolved import: ' + name + ' (' + found + ')' };
+          function findImports(name){
+            const inRepo=path.resolve(name);
+            const inNpm=path.resolve('/tmp/omni-router-build/node_modules',name);
+            const at=fs.existsSync(inRepo)?inRepo:inNpm;
+            return fs.existsSync(at) ? {contents:fs.readFileSync(at,'utf8')} : {error:'Unresolved import '+name};
           }
-          const result = JSON.parse(solc.compile(JSON.stringify(input), { import: findImports }));
-          for (const diagnostic of result.errors || [])
-            console.log(diagnostic.formattedMessage || diagnostic.message);
-          if ((result.errors || []).some(x => x.severity === 'error'))
-            process.exit(1);
-          const artifact = result.contracts?.[sourcePath]?.CurveYieldOmniRouter;
-          if (!artifact) throw Error('Router compiled artifact absent');
-          const runtime = artifact.evm.deployedBytecode.object;
-          const creation = artifact.evm.bytecode.object;
-          if (!runtime || runtime.length % 2 || !creation || creation.length % 2)
-            throw Error('Invalid compiler bytecode');
-          const data = {
-            contract: 'CurveYieldOmniRouter',
-            source: sourcePath,
-            source_sha256_trimmed: sourceSha,
-            solc: solc.version(),
-            optimizer: true,
-            optimizer_runs: 200,
-            runtime_bytes: runtime.length/2,
-            creation_bytes: creation.length/2,
-            eip170_limit: 24576,
-            headroom: 24576-runtime.length/2,
-            within_limit: runtime.length/2<=24576
-          };
-          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'omni-router-runtime-size-v1.json'), JSON.stringify(data,null,2)+'\n');
-          console.log('OMNI_ROUTER_RUNTIME_COMPILE_RESULT='+JSON.stringify(data));
-          if (!data.within_limit) process.exitCode=1;
+          const result=JSON.parse(solc.compile(JSON.stringify(input),{import:findImports}));
+          for(const e of result.errors||[]) console.log(e.formattedMessage||e.message);
+          if((result.errors||[]).some(e=>e.severity==='error'))process.exit(1);
+          const data=[];
+          for(const filename of paths){
+            for(const [name,artifact] of Object.entries(result.contracts?.[filename]||{})){
+              const runtime=artifact.evm?.deployedBytecode?.object||'';
+              const creation=artifact.evm?.bytecode?.object||'';
+              if(!runtime || runtime.length%2 || !creation || creation.length%2)
+                throw Error('Missing bytecode: '+filename+':'+name);
+              const item={
+                contract:name,source:filename,
+                source_sha256_trimmed:crypto.createHash('sha256').update(sources[filename].content.trimEnd()).digest('hex'),
+                solc:solc.version(),optimizer_runs:200,viaIR:true,
+                runtime_bytes:runtime.length/2,creation_bytes:creation.length/2,
+                eip170_limit:24576,headroom:24576-runtime.length/2,
+                within_limit:runtime.length/2<=24576
+              };
+              data.push(item);console.log('OMNI_ROUTER_RUNTIME_COMPILE_RESULT='+JSON.stringify(item));
+              if(!item.within_limit)process.exitCode=1;
+            }
+          }
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'omni-router-runtime-size-v1.json'),JSON.stringify(data,null,2)+'\\n');
           NODE
       - name: Upload runtime-size report
         if: always()
