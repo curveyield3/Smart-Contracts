@@ -513,39 +513,40 @@ contract CurveYieldOmniRouter {
         address tokenOut=hop.tokenOut;
         uint256 beforeIn=IOmniERC20(tokenIn).balanceOf(address(this));
         uint256 beforeOut=IOmniERC20(tokenOut).balanceOf(address(this));
-        _executeSimpleHop(hop,tokenIn,amount,0);
+        _executeSimpleHop(hop,tokenIn,amount);
         uint256 afterIn=IOmniERC20(tokenIn).balanceOf(address(this));
         uint256 afterOut=IOmniERC20(tokenOut).balanceOf(address(this));
         if(!(afterIn<=beforeIn && beforeIn-afterIn==amount)) revert ErrHopInputNotFullySpent();
         if(!(afterOut>=beforeOut)) revert ErrOutputBalanceDecreased();
         outAmount=afterOut-beforeOut;
+        if(!(outAmount>0)) revert ErrDustMinimum();
     }
 
-    function _executeSimpleHop(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) internal {
+    function _executeSimpleHop(SimpleHop storage hop,address tokenIn,uint256 amount) internal {
         uint16 t=hop.poolType;
         if(t==UNISWAP_V2){
-            _executeV2(hop,tokenIn,amount,minOut);
+            _executeV2(hop,tokenIn,amount);
         } else if(t==UNISWAP_V3){
             _executeV3(hop,tokenIn,amount);
         } else if(t==UNISWAP_V4){
             _executeV4(hop,tokenIn,amount);
         } else if(_isCurve(t)){
-            _executeCurve(hop,tokenIn,amount,minOut);
+            _executeCurve(hop,tokenIn,amount);
         } else if(t==BALANCER_WEIGHTED||t==BALANCER_STABLE){
-            _executeBalancerV2(hop,tokenIn,amount,minOut);
+            _executeBalancerV2(hop,tokenIn,amount);
         } else {
             address adapter=externalAdapters[t];
             if(!(adapter!=address(0)&&adapter.code.length>0)) revert ErrExtensionNotActive();
             _safeApprove(tokenIn,adapter,0);
             _safeApprove(tokenIn,adapter,amount);
             IExternalRouterHop(adapter).executeHop(
-                hop.swapContract,tokenIn,hop.tokenOut,amount,minOut,hop.poolId,hop.poolData
+                hop.swapContract,tokenIn,hop.tokenOut,amount,0,hop.poolId,hop.poolData
             );
             _safeApprove(tokenIn,adapter,0);
         }
     }
 
-    function _executeV2(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) private {
+    function _executeV2(SimpleHop storage hop,address tokenIn,uint256 amount) private {
         IEmbeddedV2Pair pair=IEmbeddedV2Pair(hop.swapContract);
         (uint112 r0,uint112 r1,)=pair.getReserves();
         if(!(r0>0&&r1>0)) revert ErrV2NoLiquidity();
@@ -555,29 +556,29 @@ contract CurveYieldOmniRouter {
         uint16 bps=hop.poolData.length==0?30:abi.decode(hop.poolData,(uint16));
         uint256 netIn=amount*(10000-uint256(bps));
         uint256 output=RouterFullMath.mulDiv(netIn,reserveOut,reserveIn*10000+netIn);
-        if(!(output>=minOut && output!=0)) revert ErrV2InsufficientOutput();
+        if(!(output!=0)) revert ErrV2InsufficientOutput();
         _safeTransfer(tokenIn,hop.swapContract,amount);
         pair.swap(token0In?0:output,token0In?output:0,address(this),"");
     }
 
-    function _executeCurve(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minimum) private {
+    function _executeCurve(SimpleHop storage hop,address tokenIn,uint256 amount) private {
         (uint8 i,uint8 j)=abi.decode(hop.poolData,(uint8,uint8));
         _safeApprove(tokenIn,hop.swapContract,0);
         _safeApprove(tokenIn,hop.swapContract,amount);
         bytes memory payload;
         if(hop.poolType==CURVE_STABLESWAP||hop.poolType==CURVE_STABLESWAP_NG) {
             payload=abi.encodeWithSignature("exchange(int128,int128,uint256,uint256)",
-                int128(uint128(i)),int128(uint128(j)),amount,minimum);
+                int128(uint128(i)),int128(uint128(j)),amount,0);
         } else {
             payload=abi.encodeWithSignature("exchange(uint256,uint256,uint256,uint256)",
-                uint256(i),uint256(j),amount,minimum);
+                uint256(i),uint256(j),amount,0);
         }
         (bool ok,bytes memory reason)=hop.swapContract.call(payload);
         if(!ok) _revertWith(reason);
         _safeApprove(tokenIn,hop.swapContract,0);
     }
 
-    function _executeBalancerV2(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) private {
+    function _executeBalancerV2(SimpleHop storage hop,address tokenIn,uint256 amount) private {
         IEmbeddedBalancerV2Vault vault=IEmbeddedBalancerV2Vault(hop.swapContract);
         _safeApprove(tokenIn,hop.swapContract,0);
         _safeApprove(tokenIn,hop.swapContract,amount);
@@ -588,7 +589,7 @@ contract CurveYieldOmniRouter {
         IEmbeddedBalancerV2Vault.FundManagement memory funds=IEmbeddedBalancerV2Vault.FundManagement({
             sender:address(this),fromInternalBalance:false,recipient:payable(address(this)),toInternalBalance:false
         });
-        vault.swap(single,funds,minOut,block.timestamp);
+        vault.swap(single,funds,0,block.timestamp);
         _safeApprove(tokenIn,hop.swapContract,0);
     }
 
