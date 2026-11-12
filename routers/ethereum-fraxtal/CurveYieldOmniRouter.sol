@@ -380,6 +380,186 @@ contract CurveYieldOmniRouter {
         emit SwapExecuted(msg.sender,tokenIn,tokenOut,amountIn,net);
     }
 
+
+    // Owner-specified simple paths are mapped to built-in execution code, not
+    // user-supplied ABI patch lists. A future pool type uses a separately
+    // registered external adapter with exact input allowance.
+    function _replaceSimple(bytes32 key,address tokenIn,address tokenOut,SimpleHop[] calldata pathway)
+        internal
+    {
+        require(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut,"BAD_ENDPOINTS");
+        require(pathway.length>0 && pathway.length<=MAX_HOPS,"HOP_COUNT");
+        address current=tokenIn;
+        for(uint256 i=0;i<pathway.length;i++){
+            SimpleHop calldata h=pathway[i];
+            require(h.tokenOut!=address(0)&&h.tokenOut!=current&&h.swapContract.code.length>0,"BAD_HOP");
+            require(current.code.length>0 && h.tokenOut.code.length>0,"INVALID_TOKENS");
+            require(h.poolData.length<=MAX_CALL_ARGUMENT_BYTES,"POOL_DATA_LIMIT");
+            require(h.oracle.requiredInputs.length<=MAX_CALL_ARGUMENT_BYTES,"ORACLE_DATA_LIMIT");
+            require(h.oracle.rateDecimals<=18,"ORACLE_DECIMALS");
+            for(uint256 j=0;j<i;j++) require(pathway[j].tokenOut!=h.tokenOut,"REPEATED_TOKEN");
+            require(tokenIn!=h.tokenOut,"ROUTE_CYCLE");
+
+            if(h.poolType==UNISWAP_V2){
+                IEmbeddedV2Pair pair=IEmbeddedV2Pair(h.swapContract);
+                require((pair.token0()==current&&pair.token1()==h.tokenOut)||
+                        (pair.token1()==current&&pair.token0()==h.tokenOut),"V2_TOKENS");
+                if(h.poolData.length!=0){
+                    uint16 fee=abi.decode(h.poolData,(uint16));
+                    require(fee<=1000,"V2_FEE_CAP");
+                }
+            } else if(h.poolType==UNISWAP_V3){
+                IEmbeddedV3Pool pool=IEmbeddedV3Pool(h.swapContract);
+                require((pool.token0()==current&&pool.token1()==h.tokenOut)||
+                        (pool.token1()==current&&pool.token0()==h.tokenOut),"V3_TOKENS");
+                if(h.poolData.length!=0) require(abi.decode(h.poolData,(uint32))>=900,"V3_TWAP_WINDOW");
+            } else if(h.poolType==UNISWAP_V4){
+                (IEmbeddedV4Manager.PoolKey memory key4,bytes memory hookData)=
+                    abi.decode(h.poolData,(IEmbeddedV4Manager.PoolKey,bytes));
+                require((key4.currency0==current&&key4.currency1==h.tokenOut)||
+                        (key4.currency1==current&&key4.currency0==h.tokenOut),"V4_TOKENS");
+                require(key4.currency0<key4.currency1,"V4_SORT");
+                require(keccak256(abi.encode(key4))==h.poolId,"V4_POOL_ID");
+                require(hookData.length<=1024,"V4_HOOK_DATA");
+            } else if(_isCurve(h.poolType)){
+                (uint8 coinIn,uint8 coinOut)=abi.decode(h.poolData,(uint8,uint8));
+                require(coinIn!=coinOut,"CURVE_INDEX");
+                // Curve pools vary in their coins() ABI across generations;
+                // execution still enforces exact token input/output balance changes.
+            } else if(h.poolType==BALANCER_WEIGHTED||h.poolType==BALANCER_STABLE){
+                (address balancerPool,)=IEmbeddedBalancerV2Vault(h.swapContract).getPool(h.poolId);
+                require(balancerPool!=address(0),"BALANCER_POOL_ID");
+            } else {
+                require(h.poolType>=EXTERNAL_TYPE_START,"UNKNOWN_POOL_TYPE");
+                require(externalAdapters[h.poolType]!=address(0),"EXTERNAL_ADAPTER_MISSING");
+            }
+
+            if(h.oracle.oracleAddress!=address(0)){
+                require(h.oracle.oracleAddress.code.length>0&&h.oracle.readFunctionID!=bytes4(0),"BAD_ORACLE");
+            } else {
+                require(h.poolType==UNISWAP_V2||h.poolType==UNISWAP_V3||
+                    h.poolType==CURVE_CRYPTOSWAP||h.poolType==CURVE_TRICRYPTO||
+                    h.poolType==CURVE_STABLESWAP_NG,"EXTERNAL_HISTORICAL_ORACLE_REQUIRED");
+            }
+            current=h.tokenOut;
+        }
+        require(current==tokenOut,"WRONG_FINAL_TOKEN");
+        delete simpleRoutes[key];
+        for(uint256 i=0;i<pathway.length;i++) simpleRoutes[key].push(pathway[i]);
+        delete routes[key].pathway;
+    }
+
+    function _isCurve(uint16 poolType) internal pure returns(bool){
+        return poolType==CURVE_CRYPTOSWAP||poolType==CURVE_TRICRYPTO||
+            poolType==CURVE_STABLESWAP||poolType==CURVE_STABLESWAP_NG;
+    }
+
+    function _swapSimple(
+        address tokenIn,address tokenOut,uint256 amountIn,
+        uint256 userMin,address recipient,Route storage r
+    ) private returns(uint256 net){
+        SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
+        uint256 originalBalance=IOmniERC20(tokenIn).balanceOf(address(this));
+        _safeTransferFrom(tokenIn,msg.sender,address(this),amountIn);
+        require(IOmniERC20(tokenIn).balanceOf(address(this))==originalBalance+amountIn,"NONSTANDARD_INPUT");
+        uint256 amount=amountIn;
+        uint16 slippage=_effectiveSlippage(r);
+        for(uint256 i=0;i<hops.length;i++){
+            SimpleHop storage hop=hops[i];
+            address from=i==0?tokenIn:hops[i-1].tokenOut;
+            uint256 expected=_simpleOracleQuote(hop,from,amount);
+            uint256 minHop=RouterFullMath.mulDiv(expected,10000-slippage,10000);
+            require(minHop>0,"DUST_MINIMUM");
+            uint256 beforeIn=IOmniERC20(from).balanceOf(address(this));
+            uint256 beforeOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
+            _executeSimpleHop(hop,from,amount,minHop);
+            uint256 afterIn=IOmniERC20(from).balanceOf(address(this));
+            uint256 afterOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
+            require(afterIn<=beforeIn && beforeIn-afterIn==amount,"HOP_INPUT_NOT_FULLY_SPENT");
+            require(afterOut>=beforeOut,"OUTPUT_BALANCE_DECREASED");
+            amount=afterOut-beforeOut;
+            require(amount>=minHop,"HOP_SLIPPAGE");
+        }
+        uint256 protocolFee=RouterFullMath.mulDiv(amount,_effectiveFee(r),10000);
+        net=amount-protocolFee;
+        require(net>=userMin,"MIN_NET");
+        if(protocolFee!=0) _safeTransfer(tokenOut,feeRecipient,protocolFee);
+        _safeTransfer(tokenOut,recipient,net);
+        require(IOmniERC20(tokenIn).balanceOf(address(this))>=originalBalance,"INPUT_BALANCE_LOSS");
+        emit SwapExecuted(msg.sender,tokenIn,tokenOut,amountIn,net);
+    }
+
+    function _executeSimpleHop(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) internal {
+        uint16 t=hop.poolType;
+        if(t==UNISWAP_V2){
+            _executeV2(hop,tokenIn,amount,minOut);
+        } else if(t==UNISWAP_V3){
+            _executeV3(hop,tokenIn,amount);
+        } else if(t==UNISWAP_V4){
+            _executeV4(hop,tokenIn,amount);
+        } else if(_isCurve(t)){
+            _executeCurve(hop,tokenIn,amount,minOut);
+        } else if(t==BALANCER_WEIGHTED||t==BALANCER_STABLE){
+            _executeBalancerV2(hop,tokenIn,amount,minOut);
+        } else {
+            address adapter=externalAdapters[t];
+            require(adapter!=address(0)&&adapter.code.length>0,"EXTENSION_NOT_ACTIVE");
+            _safeApprove(tokenIn,adapter,0);
+            _safeApprove(tokenIn,adapter,amount);
+            IExternalRouterHop(adapter).executeHop(
+                hop.swapContract,tokenIn,hop.tokenOut,amount,minOut,hop.poolId,hop.poolData
+            );
+            _safeApprove(tokenIn,adapter,0);
+        }
+    }
+
+    function _executeV2(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) private {
+        IEmbeddedV2Pair pair=IEmbeddedV2Pair(hop.swapContract);
+        (uint112 r0,uint112 r1,)=pair.getReserves();
+        require(r0>0&&r1>0,"V2_NO_LIQUIDITY");
+        bool token0In=tokenIn==pair.token0();
+        uint256 reserveIn=token0In?uint256(r0):uint256(r1);
+        uint256 reserveOut=token0In?uint256(r1):uint256(r0);
+        uint16 bps=hop.poolData.length==0?30:abi.decode(hop.poolData,(uint16));
+        uint256 netIn=amount*(10000-uint256(bps));
+        uint256 output=RouterFullMath.mulDiv(netIn,reserveOut,reserveIn*10000+netIn);
+        require(output>=minOut && output!=0,"V2_INSUFFICIENT_OUTPUT");
+        _safeTransfer(tokenIn,hop.swapContract,amount);
+        pair.swap(token0In?0:output,token0In?output:0,address(this),"");
+    }
+
+    function _executeCurve(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minimum) private {
+        (uint8 i,uint8 j)=abi.decode(hop.poolData,(uint8,uint8));
+        _safeApprove(tokenIn,hop.swapContract,0);
+        _safeApprove(tokenIn,hop.swapContract,amount);
+        bytes memory payload;
+        if(hop.poolType==CURVE_STABLESWAP||hop.poolType==CURVE_STABLESWAP_NG) {
+            payload=abi.encodeWithSignature("exchange(int128,int128,uint256,uint256)",
+                int128(uint128(i)),int128(uint128(j)),amount,minimum);
+        } else {
+            payload=abi.encodeWithSignature("exchange(uint256,uint256,uint256,uint256)",
+                uint256(i),uint256(j),amount,minimum);
+        }
+        (bool ok,bytes memory reason)=hop.swapContract.call(payload);
+        if(!ok) _revertWith(reason);
+        _safeApprove(tokenIn,hop.swapContract,0);
+    }
+
+    function _executeBalancerV2(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) private {
+        IEmbeddedBalancerV2Vault vault=IEmbeddedBalancerV2Vault(hop.swapContract);
+        _safeApprove(tokenIn,hop.swapContract,0);
+        _safeApprove(tokenIn,hop.swapContract,amount);
+        IEmbeddedBalancerV2Vault.SingleSwap memory single=IEmbeddedBalancerV2Vault.SingleSwap({
+            poolId:hop.poolId,kind:IEmbeddedBalancerV2Vault.SwapKind.GIVEN_IN,
+            assetIn:tokenIn,assetOut:hop.tokenOut,amount:amount,userData:hop.poolData
+        });
+        IEmbeddedBalancerV2Vault.FundManagement memory funds=IEmbeddedBalancerV2Vault.FundManagement({
+            sender:address(this),fromInternalBalance:false,recipient:payable(address(this)),toInternalBalance:false
+        });
+        vault.swap(single,funds,minOut,block.timestamp);
+        _safeApprove(tokenIn,hop.swapContract,0);
+    }
+
     function _replaceRoute(bytes32 key,address tokenIn,address tokenOut,Hop[] calldata pathway) internal {
         require(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut,"BAD_ENDPOINTS");
         require(pathway.length>0 && pathway.length<=MAX_HOPS,"HOP_COUNT");
