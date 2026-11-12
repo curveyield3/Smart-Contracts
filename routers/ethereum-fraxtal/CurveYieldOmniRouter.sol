@@ -4,15 +4,32 @@ pragma solidity ^0.8.28;
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 
 /**
- * @title CurveYieldOmniRouter
- * @notice Ethereum/Fraxtal multi-hop ERC20 router with built-in V2, V3, V4, Curve and Balancer V2 execution.
- * @dev Simple routes use built-in protocol code and historical-rate oracle calls.
- *      The advanced ABI path and owner-approved external extension IDs cover future pool types.
- *      In simple V4 routes swapContract is the PoolManager; no V4 helper deployment is needed.
- *      A route oracle MUST quote one whole tokenIn in whole tokenOut, scaled by 10**rateDecimals.
- *      Configuring current spot-price, get_dy or v4 quoter as an oracle is unsafe.
- *      Solidity cannot resolve an ABI method's name alone: a complete signature is required
- *      (e.g. "price_oracle()", "price_oracle(uint256)").
+ * @title CurveYield System Component
+ * @notice CurveYield is a decentralized NGO building optimized DeFi systems for the good of all.
+ *
+ * @dev CurveYield integrates specialized AMM infrastructure, tokenized yield strategies, credit
+ * markets, and protocol-owned liquidity into a unified, capital-efficient liquidity stack governed
+ * by an open, international DAO community.
+ *
+ * Protocol operations are enhanced by cross-chain bridging and messaging, MEV capture systems,
+ * off-chain to on-chain automation, and peer-to-peer data networks.
+ *
+ * This contract is one component of the CurveYield system.
+ *
+ * CurveYield uses proven DeFi primitives where possible and adds targeted coordination and
+ * capital-efficiency-enhancing contracts where needed. Users and integrators must review
+ * CurveYield documentation before use.
+ *
+ * Learn more:
+ * Documentation: https://docs.curveyield.com
+ * dApp: https://curveyield.online
+ * GitHub: https://github.com/curveyield
+ *
+ * Decentralized links may have limited or delayed availability during periods of high network activity:
+ * https://curveyield.eth.limo
+ * https://curveyield.dao
+ *
+ * Note: curveyield.dao may require a Brave Browser or an Unstoppable Domains browser plugin to use.
  */
 library RouterFullMath {
     // Full precision floor(a*b / denominator), adapted from the standard mulDiv identity.
@@ -20,7 +37,7 @@ library RouterFullMath {
         require(denominator != 0,"DIV_ZERO");
         unchecked {
             uint256 p0; uint256 p1;
-            assembly {
+            assembly ("memory-safe") {
                 let mm := mulmod(a,b,not(0))
                 p0 := mul(a,b)
                 p1 := sub(sub(mm,p0),lt(mm,p0))
@@ -28,13 +45,13 @@ library RouterFullMath {
             if(p1 == 0) return p0 / denominator;
             require(denominator > p1,"MULDIV_OVERFLOW");
             uint256 remainder;
-            assembly { remainder := mulmod(a,b,denominator) }
-            assembly {
+            assembly ("memory-safe") { remainder := mulmod(a,b,denominator) }
+            assembly ("memory-safe") {
                 p1 := sub(p1,gt(remainder,p0))
                 p0 := sub(p0,remainder)
             }
             uint256 twos = denominator & (~denominator + 1);
-            assembly {
+            assembly ("memory-safe") {
                 denominator := div(denominator,twos)
                 p0 := div(p0,twos)
                 twos := add(div(sub(0,twos),twos),1)
@@ -492,20 +509,8 @@ contract CurveYieldOmniRouter {
         uint256 amount=amountIn;
         uint16 slippage=_effectiveSlippage(r);
         for(uint256 i=0;i<hops.length;i++){
-            SimpleHop storage hop=hops[i];
             address from=i==0?tokenIn:hops[i-1].tokenOut;
-            uint256 expected=_simpleOracleQuote(hop,from,amount);
-            uint256 minHop=RouterFullMath.mulDiv(expected,10000-slippage,10000);
-            require(minHop>0,"DUST_MINIMUM");
-            uint256 beforeIn=IOmniERC20(from).balanceOf(address(this));
-            uint256 beforeOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
-            _executeSimpleHop(hop,from,amount,minHop);
-            uint256 afterIn=IOmniERC20(from).balanceOf(address(this));
-            uint256 afterOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
-            require(afterIn<=beforeIn && beforeIn-afterIn==amount,"HOP_INPUT_NOT_FULLY_SPENT");
-            require(afterOut>=beforeOut,"OUTPUT_BALANCE_DECREASED");
-            amount=afterOut-beforeOut;
-            require(amount>=minHop,"HOP_SLIPPAGE");
+            amount=_swapSimpleHop(hops[i],from,amount,slippage);
         }
         uint256 protocolFee=RouterFullMath.mulDiv(amount,_effectiveFee(r),10000);
         net=amount-protocolFee;
@@ -514,6 +519,25 @@ contract CurveYieldOmniRouter {
         _safeTransfer(tokenOut,recipient,net);
         require(IOmniERC20(tokenIn).balanceOf(address(this))>=originalBalance,"INPUT_BALANCE_LOSS");
         emit SwapExecuted(msg.sender,tokenIn,tokenOut,amountIn,net);
+    }
+
+    function _swapSimpleHop(
+        SimpleHop storage hop,address tokenIn,uint256 amount,uint16 slippage
+    ) private returns(uint256 outAmount){
+        uint256 minHop=RouterFullMath.mulDiv(
+            _simpleOracleQuote(hop,tokenIn,amount),10000-slippage,10000
+        );
+        require(minHop>0,"DUST_MINIMUM");
+        address tokenOut=hop.tokenOut;
+        uint256 beforeIn=IOmniERC20(tokenIn).balanceOf(address(this));
+        uint256 beforeOut=IOmniERC20(tokenOut).balanceOf(address(this));
+        _executeSimpleHop(hop,tokenIn,amount,minHop);
+        uint256 afterIn=IOmniERC20(tokenIn).balanceOf(address(this));
+        uint256 afterOut=IOmniERC20(tokenOut).balanceOf(address(this));
+        require(afterIn<=beforeIn && beforeIn-afterIn==amount,"HOP_INPUT_NOT_FULLY_SPENT");
+        require(afterOut>=beforeOut,"OUTPUT_BALANCE_DECREASED");
+        outAmount=afterOut-beforeOut;
+        require(outAmount>=minHop,"HOP_SLIPPAGE");
     }
 
     function _executeSimpleHop(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) internal {
@@ -927,7 +951,7 @@ contract CurveYieldOmniRouter {
             else if(p.kind==InputKind.Router) value=uint160(address(this));
             else revert("UNKNOWN_INPUT_KIND");
             uint256 offset=uint256(p.byteOffset);
-            assembly { mstore(add(add(result,32),offset),value) }
+            assembly ("memory-safe") { mstore(add(add(result,32),offset),value) }
         }
     }
     function _effectiveFee(Route storage r) private view returns(uint16){
@@ -957,6 +981,6 @@ contract CurveYieldOmniRouter {
     }
     function _revertWith(bytes memory reason) private pure {
         if(reason.length==0) revert("TARGET_REVERT");
-        assembly { revert(add(reason,32),mload(reason)) }
+        assembly ("memory-safe") { revert(add(reason,32),mload(reason)) }
     }
 }
