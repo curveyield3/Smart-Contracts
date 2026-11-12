@@ -489,8 +489,7 @@ contract CurveYieldOmniRouter {
     }
 
     function _isCurve(uint16 poolType) internal pure returns(bool){
-        return poolType==CURVE_CRYPTOSWAP||poolType==CURVE_TRICRYPTO||
-            poolType==CURVE_STABLESWAP||poolType==CURVE_STABLESWAP_NG;
+        return poolType>=CURVE_CRYPTOSWAP&&poolType<=CURVE_STABLESWAP_NG;
     }
 
     function _swapSimple(
