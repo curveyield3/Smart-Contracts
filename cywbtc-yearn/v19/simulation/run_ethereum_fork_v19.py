@@ -174,9 +174,25 @@ class Sim:
                 def walk(node,depth=0):
                     if not isinstance(node,dict): return
                     if node.get("error"):
-                        failing.append({"depth":depth,"to":node.get("to"),"selector":str(node.get("input",""))[:10],
+                        detail={"depth":depth,"to":node.get("to"),"selector":str(node.get("input",""))[:10],
                             "error":str(node.get("error"))[:300],"output":str(node.get("output",""))[:260],
-                            "revertReason":str(node.get("revertReason",""))[:300]})
+                            "revertReason":str(node.get("revertReason",""))[:300]}
+                        raw=str(node.get("input",""))
+                        # A real Curve exchange has four 32-byte arguments:
+                        # (coinIn, coinOut, exactTokenIn, minimumTokenOut).
+                        # Store only numeric values, not full calldata.
+                        if detail["selector"]=="0x5b41b908" and len(raw)>=10+4*64:
+                            words=[int(raw[10+i*64:10+(i+1)*64],16) for i in range(4)]
+                            detail["curveExchange"]={"coinIn":words[0],"coinOut":words[1],
+                                "amountIn":str(words[2]),"minimumOut":str(words[3])}
+                            if str(node.get("to","")).lower()=="0xc15f285679a1ef2d25f53d4cbd0265e1d02f2a92":
+                                try:
+                                    q=self.eth_call(node["to"],"get_dy(uint256,uint256,uint256)",
+                                        words[0],words[1],words[2])
+                                    detail["curveQuoteOnRevertedState"]=str(int(q,16))
+                                except Exception as ex:
+                                    detail["curveQuoteError"]=str(ex)[:220]
+                        failing.append(detail)
                     for call in node.get("calls",[]):walk(call,depth+1)
                 walk(trace)
                 OUT.mkdir(parents=True,exist_ok=True)
