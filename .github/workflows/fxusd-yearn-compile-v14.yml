@@ -1,12 +1,12 @@
-name: fxUSD Yearn v17 capped official Accountant compile
+name: fxUSD Yearn v18 three-child economic engine compile
 on:
   push:
-    branches: [fxusd-yearn-v17-accountant]
+    branches: [fxusd-yearn-v18-economic-engine]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
       - 'fxusd-yearn/compile/v17/Accountant.sol'
       - 'fxusd-yearn/compile/v17/IVault.sol'
-      - 'fxusd-yearn/compile/v17/DeployFXUSDYearnV17.s.sol'
+      - 'fxusd-yearn/compile/v18/**'
 permissions:
   contents: read
 jobs:
@@ -20,7 +20,7 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-      - name: Restore v16 source plus official v17 Accountant
+      - name: Restore source and overlay v18 FXN zero-NAV child
         shell: bash
         run: |
           set -euo pipefail
@@ -41,37 +41,26 @@ jobs:
           cp fxusd-yearn/compile/v17/Accountant.sol .fxusd-compile/contracts/Accountant.sol
           cp fxusd-yearn/compile/v17/IVault.sol .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
           mkdir -p .fxusd-compile/script
-          cp fxusd-yearn/compile/v17/DeployFXUSDYearnV17.s.sol .fxusd-compile/script/DeployFXUSDYearnV17.s.sol
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('.fxusd-compile/contracts/FXNYearnMasterAllocator.sol')
-          s=p.read_text()
-          d={'allocationBps[c32] = 9_500;':'allocationBps[c32] = 5_500;',
-             'allocationBps[c37] = 500;':'allocationBps[c37] = 4_500;',
-             'emit StrategyAllocationSet(c32, 0, 9_500);':'emit StrategyAllocationSet(c32, 0, 5_500);',
-             'emit StrategyAllocationSet(c37, 0, 500);':'emit StrategyAllocationSet(c37, 0, 4_500);'}
-          for old,new in d.items():
-              assert s.count(old)==1,old
-              s=s.replace(old,new)
-          p.write_text(s)
-          PY
+          cp fxusd-yearn/compile/v18/FXNYearnMasterAllocator.sol .fxusd-compile/contracts/FXNYearnMasterAllocator.sol
+          cp fxusd-yearn/compile/v18/FXNZeroNAVRewardChild.sol .fxusd-compile/contracts/FXNZeroNAVRewardChild.sol
+          cp fxusd-yearn/compile/v18/DeployFXUSDYearnV18.s.sol .fxusd-compile/script/DeployFXUSDYearnV18.s.sol
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           git clone --depth 1 -q --branch v1.9.7 https://github.com/foundry-rs/forge-std.git .fxusd-compile/node_modules/forge-std
           sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
           sed -i '/^remappings = \[/,/^\]/d' .fxusd-compile/foundry.toml
           printf '\nremappings = ["forge-std/=node_modules/forge-std/src/", "@openzeppelin/contracts/=lib/openzeppelin/contracts/", "@tokenized-strategy/=node_modules/@tokenized-strategy/", "@yearn-vaults/=node_modules/@yearn-vaults/"]\n' >> .fxusd-compile/foundry.toml
-      - name: Compile contracts only, no tests
+      - name: Compile contracts and deployment script (no tests)
         shell: bash
         run: |
           set -euo pipefail
           cd .fxusd-compile
           sed -i 's/function availableWithdrawLimit(address) public view override/function availableWithdrawLimit(address) public view virtual override/' contracts/FXNYearnChildBase.sol
           forge build --use 0.8.30 --via-ir --sizes 2>&1 | tee compile.log
-          forge build script/DeployFXUSDYearnV17.s.sol --use 0.8.30 --via-ir 2>&1 | tee -a compile.log
+          forge build script/DeployFXUSDYearnV18.s.sol --use 0.8.30 --via-ir 2>&1 | tee -a compile.log
           python3 - <<'PY'
           import json
           from pathlib import Path
-          names=['Accountant','FXNYearnMasterAllocator','CurveConvex32YearnStrategy','FxBaseConvex37YearnStrategy','FXNCurveRewardRouter']
+          names=['Accountant','FXNYearnMasterAllocator','CurveConvex32YearnStrategy','FxBaseConvex37YearnStrategy','FXNCurveRewardRouter','FXNZeroNAVRewardChild']
           report={'solc':'0.8.30','optimizer_runs':200,'contracts':{}}
           for name in names:
               found=list(Path('out').rglob(name+'.json'))
@@ -87,7 +76,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fxusd-v17-compile-and-official-accountant
+          name: fxusd-v18-three-child-compile-report
           path: |
             .fxusd-compile/compile.log
             .fxusd-compile/size-report.json
