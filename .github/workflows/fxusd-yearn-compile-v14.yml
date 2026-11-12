@@ -79,6 +79,7 @@ jobs:
           set -euo pipefail
           mkdir -p .fxusd-compile/simulation
           cp cywbtc-yearn/v18/script/DeployFXUSDYearnV19.s.sol .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
+          sed -i 's|../contracts/yearn/|../contracts/|g' .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
           cp cywbtc-yearn/v18/simulation/run_ethereum_fork_v18.py .fxusd-compile/simulation/
           python3 -m py_compile .fxusd-compile/simulation/run_ethereum_fork_v18.py
           cd .fxusd-compile
