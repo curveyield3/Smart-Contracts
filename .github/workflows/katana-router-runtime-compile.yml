@@ -1,6 +1,12 @@
 name: Ethereum Fraxtal Omni Router runtime-size compile
 on:
   workflow_dispatch:
+  push:
+    branches: [ethereum-fraxtal-omni-router-v2]
+    paths:
+      - '.github/workflows/katana-router-runtime-compile.yml'
+      - 'routers/ethereum-fraxtal/CurveYieldOmniRouter.sol'
+      - 'routers/ethereum-fraxtal/CurveYieldHistoricalPriceReader.sol'
 permissions:
   contents: read
 jobs:
@@ -31,7 +37,8 @@ jobs:
           const solc = require('/tmp/omni-router-build/node_modules/solc');
           const base='routers/ethereum-fraxtal';
           const paths=[
-            base+'/CurveYieldOmniRouter.sol'
+            base+'/CurveYieldOmniRouter.sol',
+            base+'/CurveYieldHistoricalPriceReader.sol'
           ];
           const sources={};
           for(const filename of paths) sources[filename]={content:fs.readFileSync(filename,'utf8')};
@@ -73,14 +80,14 @@ jobs:
               if(!item.within_limit)process.exitCode=1;
             }
           }
-          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'omni-router-runtime-size-v1.json'),JSON.stringify(data,null,2)+'\\n');
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'omni-router-runtime-size-v3.json'),JSON.stringify(data,null,2)+'\\n');
           NODE
       - name: Upload runtime-size report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: omni-router-runtime-size-v1
-          path: ${{ runner.temp }}/omni-router-runtime-size-v1.json
+          name: omni-router-runtime-size-v3
+          path: ${{ runner.temp }}/omni-router-runtime-size-v3.json
           if-no-files-found: ignore
       - name: Assemble router-only source package v3
         shell: bash
@@ -89,10 +96,11 @@ jobs:
           out="${RUNNER_TEMP}/CurveYield_Omni_Router_v3"
           mkdir -p "$out"
           cp routers/ethereum-fraxtal/CurveYieldOmniRouter.sol "$out/"
+          cp routers/ethereum-fraxtal/CurveYieldHistoricalPriceReader.sol "$out/"
           {
             printf '# CurveYield Omni Router source package v3\n\n'
-            printf 'Ethereum + Fraxtal. Router-only package. Built-in V2/V3/V4/Curve/Balancer modules and future adapter registry integrated. Build results are supplied by the GitHub Actions compile job.\\n\\n'
-            cat routers/ethereum-fraxtal/README_v2.md
+            printf 'Ethereum + Fraxtal. Router-only package. V3 TWAP kept internally; V2/Curve historical pricing moved to separate reader; consolidated pool execution plus future adapter support. Build results are supplied by the GitHub Actions compile job.\\n\\n'
+            cat routers/ethereum-fraxtal/README_v3.md
           } > "$out/README.md"
           cat > "$out/package.json" <<'JSON'
           {
@@ -106,7 +114,7 @@ jobs:
           }
           JSON
           find "$out" -maxdepth 1 -type f -printf '%f\\n' | sort
-          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -eq 3
+          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -eq 4
       - name: Upload clean router-only source package v3
         uses: actions/upload-artifact@v4
         with:
