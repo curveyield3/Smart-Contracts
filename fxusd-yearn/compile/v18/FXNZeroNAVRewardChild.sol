@@ -250,62 +250,74 @@ contract FXNZeroNAVRewardChild is BaseStrategy {
         emit OptimizedToConvex(received, lpMinted);
     }
 
-    /// @notice Converts rewards to FXN, compounds 10-50%, returns rest to master.
-    /// @dev Additional reward tokens can use governance-approved, exact-spend FXN
-    ///      converters. Unsupported reward tokens remain held, never silently sold.
-    function harvestToMaster(
-        address[] calldata conversionTokens, uint256[] calldata minimumFXNOut, uint256 minSdFXNToFXN
-    ) external onlyMaster locked returns (uint256 returnedFXN) {
-        if (conversionTokens.length != minimumFXNOut.length || conversionTokens.length > 16)
-            revert InvalidConfiguration();
-        address proxy = _proxy(false);
-        uint256 fxnBefore = FXN.balanceOf(address(this));
-        uint256 sdBefore = SDFXN.balanceOf(address(this));
-        if (proxy != address(0)) IConvexFXNProxy(proxy).getReward();
-        BOOSTHUB.harvest(BOOSTHUB_PID);
-        BOOSTHUB.claim(BOOSTHUB_PID, address(this));
-        uint256 directFXN = FXN.balanceOf(address(this)) - fxnBefore;
-        uint256 sdRewards = SDFXN.balanceOf(address(this)) - sdBefore;
-        uint256 sdCompound = Math.mulDiv(sdRewards, compoundBps, BPS);
-        if (sdCompound != 0) {
-            uint256 minCredit = Math.mulDiv(sdCompound, BPS - curveSlippageBps, BPS);
-            _stakeBoostHub(sdCompound, minCredit);
+
+    /// @dev SDFXN yield is divided once: 10-50% goes to BoostHub and
+    ///      only the remainder is converted to FXN. The remainder is not
+    ///      subjected to the FXN compounding split a second time.
+    function _handleSDFXNRewards(uint256 amount, uint256 minimumFXN)
+        internal returns (uint256 fxnFromSDFXN)
+    {
+        if (amount == 0) return 0;
+        uint256 stakeAmount = Math.mulDiv(amount, compoundBps, BPS);
+        if (stakeAmount != 0) {
+            _stakeBoostHub(stakeAmount, Math.mulDiv(stakeAmount, BPS - curveSlippageBps, BPS));
         }
-        uint256 sdForFXN = sdRewards - sdCompound;
-        uint256 convertedSdFXNToFXN;
-        if (sdForFXN != 0) {
-            if (minSdFXNToFXN == 0) revert InvalidConfiguration();
+        uint256 swapAmount = amount - stakeAmount;
+        if (swapAmount != 0) {
+            if (minimumFXN == 0) revert InvalidConfiguration();
             uint256 beforeFXN = FXN.balanceOf(address(this));
-            SDFXN.forceApprove(address(CURVE), sdForFXN);
-            CURVE.exchange(1, 0, sdForFXN, minSdFXNToFXN);
+            SDFXN.forceApprove(address(CURVE), swapAmount);
+            CURVE.exchange(1, 0, swapAmount, minimumFXN);
             SDFXN.forceApprove(address(CURVE), 0);
-            convertedSdFXNToFXN = FXN.balanceOf(address(this)) - beforeFXN;
+            fxnFromSDFXN = FXN.balanceOf(address(this)) - beforeFXN;
+            if (fxnFromSDFXN < minimumFXN) revert InsufficientOutput();
         }
-        for (uint256 i; i < conversionTokens.length; ++i) {
-            address token = conversionTokens[i];
+    }
+
+    function _convertOtherRewards(address[] calldata tokens, uint256[] calldata minimumFXNOut)
+        internal returns (uint256 fxnReceived)
+    {
+        if (tokens.length != minimumFXNOut.length || tokens.length > 16)
+            revert InvalidConfiguration();
+        for (uint256 i; i < tokens.length; ++i) {
+            address token = tokens[i];
             address converter = rewardConverter[token];
             if (converter == address(0) || minimumFXNOut[i] == 0) revert InvalidConfiguration();
-            for (uint256 j; j < i; ++j) if (conversionTokens[j] == token) revert InvalidConfiguration();
+            for (uint256 j; j < i; ++j) if (tokens[j] == token) revert InvalidConfiguration();
             uint256 amount = IERC20(token).balanceOf(address(this));
             if (amount == 0) continue;
             uint256 beforeFXN = FXN.balanceOf(address(this));
             IERC20(token).forceApprove(converter, amount);
             IFXNRewardConverter(converter).convert(token, address(FXN), amount, minimumFXNOut[i]);
             IERC20(token).forceApprove(converter, 0);
-            uint256 gained = FXN.balanceOf(address(this)) - beforeFXN;
-            if (gained < minimumFXNOut[i]) revert InsufficientOutput();
-            directFXN += gained;
+            uint256 converted = FXN.balanceOf(address(this)) - beforeFXN;
+            if (converted < minimumFXNOut[i]) revert InsufficientOutput();
+            fxnReceived += converted;
         }
-        if (directFXN != 0) {
-            uint256 compounded = Math.mulDiv(directFXN, compoundBps, BPS);
-            if (compounded != 0) _addLiquidity(compounded, 0, 0);
-            returnedFXN = directFXN - compounded + convertedSdFXNToFXN;
-            if (returnedFXN != 0) FXN.safeTransfer(MASTER, returnedFXN);
-            emit YieldProcessed(directFXN + convertedSdFXNToFXN, compounded, returnedFXN);
-        } else if (convertedSdFXNToFXN != 0) {
-            returnedFXN = convertedSdFXNToFXN;
-            FXN.safeTransfer(MASTER, returnedFXN);
-            emit YieldProcessed(returnedFXN, 0, returnedFXN);
+    }
+
+    /// @notice Compounds 10-50% of new FXN yield once; returns the rest.
+    /// @dev Unconfigured non-FXN and non-SDFXN rewards remain held, not sold.
+    function harvestToMaster(
+        address[] calldata conversionTokens, uint256[] calldata minimumFXNOut, uint256 minSdFXNToFXN
+    ) external onlyMaster locked returns (uint256 returnedFXN) {
+        address proxy = _proxy(false);
+        uint256 fxnBefore = FXN.balanceOf(address(this));
+        uint256 sdBefore = SDFXN.balanceOf(address(this));
+        if (proxy != address(0)) IConvexFXNProxy(proxy).getReward();
+        if (BOOSTHUB.balanceOf(BOOSTHUB_PID, address(this)) != 0) {
+            BOOSTHUB.harvest(BOOSTHUB_PID);
+            BOOSTHUB.claim(BOOSTHUB_PID, address(this));
         }
+        uint256 freshFXN = FXN.balanceOf(address(this)) - fxnBefore;
+        uint256 convertedSD = _handleSDFXNRewards(
+            SDFXN.balanceOf(address(this)) - sdBefore, minSdFXNToFXN
+        );
+        freshFXN += _convertOtherRewards(conversionTokens, minimumFXNOut);
+        uint256 compoundAmount = Math.mulDiv(freshFXN, compoundBps, BPS);
+        if (compoundAmount != 0) _addLiquidity(compoundAmount, 0, 0);
+        returnedFXN = freshFXN - compoundAmount + convertedSD;
+        if (returnedFXN != 0) FXN.safeTransfer(MASTER, returnedFXN);
+        emit YieldProcessed(freshFXN + convertedSD, compoundAmount, returnedFXN);
     }
 }
