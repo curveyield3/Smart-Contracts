@@ -517,9 +517,8 @@ contract CurveYieldOmniRouter {
         uint256 afterIn=IOmniERC20(tokenIn).balanceOf(address(this));
         uint256 afterOut=IOmniERC20(tokenOut).balanceOf(address(this));
         if(!(afterIn<=beforeIn && beforeIn-afterIn==amount)) revert ErrHopInputNotFullySpent();
-        if(!(afterOut>=beforeOut)) revert ErrOutputBalanceDecreased();
+        if(!(afterOut>beforeOut)) revert ErrOutputBalanceDecreased();
         outAmount=afterOut-beforeOut;
-        if(!(outAmount>0)) revert ErrDustMinimum();
     }
 
     function _executeSimpleHop(SimpleHop storage hop,address tokenIn,uint256 amount) internal {
