@@ -303,7 +303,7 @@ contract CurveYieldOmniRouter {
 
     // Ordinary swaps need only a pool type, execution address/ID, hop output token,
     // optional pool-specific data, and optional historical oracle metadata.
-    function setRoute(address tokenIn,address tokenOut,SimpleHop[] calldata pathway) external onlyOwner {
+    function setRoute(address tokenIn,address tokenOut,SimpleHop[] calldata pathway) external onlyOwner nonReentrant {
         bytes32 key=_key(tokenIn,tokenOut);
         _replaceSimple(key,tokenIn,tokenOut,pathway);
         emit RouteSet(tokenIn,tokenOut,pathway.length);
@@ -313,7 +313,7 @@ contract CurveYieldOmniRouter {
     function setRouteConfig(
         address tokenIn,address tokenOut,SimpleHop[] calldata pathway,
         uint16 routeFeeBps,uint16 routeSlippageBps
-    ) external onlyOwner {
+    ) external onlyOwner nonReentrant {
         if(!(routeFeeBps<=MAX_FEE_BPS)) revert ErrRouteFeeCap();
         if(!(routeSlippageBps<=MAX_ROUTE_SLIPPAGE_BPS)) revert ErrRouteSlippageCap();
         bytes32 key=_key(tokenIn,tokenOut);
