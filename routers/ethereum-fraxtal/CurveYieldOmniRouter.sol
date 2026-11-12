@@ -288,7 +288,7 @@ contract CurveYieldOmniRouter {
     // Returns the aggregate historical rate over the complete configured route.
     function price_oracle(address tokenIn,address tokenOut) external view returns(uint256){
         uint256 unitIn=_unit(tokenIn);
-        uint256 outputRaw=_estimateGross(_route(tokenIn,tokenOut),unitIn);
+        uint256 outputRaw=_estimateRouteGross(tokenIn,tokenOut,unitIn);
         return RouterFullMath.mulDiv(outputRaw,1e18,_unit(tokenOut));
     }
     // Deterministic oracle-derived net estimate. Not an executable spot/price-impact quote.
@@ -296,7 +296,7 @@ contract CurveYieldOmniRouter {
         external view returns(uint256 amount_out)
     {
         Route storage r=_route(tokenIn,tokenOut);
-        uint256 gross=_estimateGross(r,amountIn);
+        uint256 gross=_estimateRouteGross(tokenIn,tokenOut,amountIn);
         return RouterFullMath.mulDiv(gross,10000-_effectiveFee(r),10000);
     }
     // Worst-case per-hop slippage guard compounded across a mixed route; net of fee.
@@ -304,7 +304,16 @@ contract CurveYieldOmniRouter {
         external view returns(uint256 amountOut)
     {
         Route storage r=_route(tokenIn,tokenOut);
+        bytes32 key=_key(tokenIn,tokenOut);
         uint256 guarded=amountIn;
+        if(simpleRoutes[key].length!=0){
+            for(uint256 i=0;i<simpleRoutes[key].length;i++){
+                address currentIn=i==0?tokenIn:simpleRoutes[key][i-1].tokenOut;
+                uint256 expected=_simpleOracleQuote(simpleRoutes[key][i],currentIn,guarded);
+                guarded=RouterFullMath.mulDiv(expected,10000-_effectiveSlippage(r),10000);
+            }
+            return RouterFullMath.mulDiv(guarded,10000-_effectiveFee(r),10000);
+        }
         for(uint256 i=0;i<r.pathway.length;i++){
             uint256 expected=_oracleQuote(r.pathway[i],guarded);
             guarded=RouterFullMath.mulDiv(expected,10000-_effectiveSlippage(r),10000);
@@ -331,6 +340,9 @@ contract CurveYieldOmniRouter {
         require(block.timestamp<=deadline,"EXPIRED");
         require(amountIn>0 && recipient!=address(0) && recipient!=address(this),"BAD_SWAP");
         Route storage r=_route(tokenIn,tokenOut);
+        if(simpleRoutes[_key(tokenIn,tokenOut)].length!=0) {
+            return _swapSimple(tokenIn,tokenOut,amountIn,userMin,recipient,r);
+        }
         uint256 originalInputBalance=IOmniERC20(tokenIn).balanceOf(address(this));
         _safeTransferFrom(tokenIn,msg.sender,address(this),amountIn);
         uint256 currentAmount=amountIn;
@@ -404,6 +416,20 @@ contract CurveYieldOmniRouter {
             for(uint256 j=0;j<i;j++) require(fields[j].byteOffset!=fields[i].byteOffset,"PATCH_DUPLICATE");
         }
     }
+    function _estimateRouteGross(address tokenIn,address tokenOut,uint256 amount)
+        private view returns(uint256)
+    {
+        bytes32 key=_key(tokenIn,tokenOut);
+        if(simpleRoutes[key].length==0) return _estimateGross(_route(tokenIn,tokenOut),amount);
+        SimpleHop[] storage hops=simpleRoutes[key];
+        require(amount>0,"ZERO_AMOUNT");
+        for(uint256 i=0;i<hops.length;i++){
+            address currentIn=i==0?tokenIn:hops[i-1].tokenOut;
+            amount=_simpleOracleQuote(hops[i],currentIn,amount);
+        }
+        return amount;
+    }
+
     function _estimateGross(Route storage r,uint256 amount) internal view returns(uint256){
         require(amount>0,"ZERO_AMOUNT");
         for(uint256 i=0;i<r.pathway.length;i++){
@@ -471,7 +497,7 @@ contract CurveYieldOmniRouter {
     }
     function _route(address tokenIn,address tokenOut) private view returns(Route storage r){
         r=routes[_key(tokenIn,tokenOut)];
-        require(r.pathway.length>0,"ROUTE_MISSING");
+        require(r.pathway.length>0||simpleRoutes[_key(tokenIn,tokenOut)].length>0,"ROUTE_MISSING");
     }
     function _key(address a,address b) private pure returns(bytes32){
         return keccak256(abi.encode(a,b));
