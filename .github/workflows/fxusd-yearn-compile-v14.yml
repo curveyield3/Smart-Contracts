@@ -1,12 +1,13 @@
-name: fxUSD Yearn v19 timelocked sdFXN migration compile
+name: cyWBTC IPOR + Yearn v18 compile and isolated Ethereum fork simulation
 on:
   push:
-    branches: [fxusd-yearn-v19-timelocked-migrate]
+    branches: [cywbtc-ipor-v18-fork-simulation]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
       - 'fxusd-yearn/compile/v17/Accountant.sol'
       - 'fxusd-yearn/compile/v17/IVault.sol'
       - 'fxusd-yearn/compile/v19/**'
+      - 'cywbtc-yearn/v18/**'
 permissions:
   contents: read
 jobs:
@@ -72,6 +73,73 @@ jobs:
               print(f'FINAL_SIZE {name}: runtime={len(runtime)//2}, creation={len(creation)//2}, eip170_headroom={24576-len(runtime)//2}')
           Path('size-report.json').write_text(json.dumps(report,indent=2)+'\n')
           PY
+      - name: Stage cyWBTC v18 simulation deployment script
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .fxusd-compile/simulation
+          cp cywbtc-yearn/v18/script/DeployFXUSDYearnV19.s.sol .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
+          cp cywbtc-yearn/v18/simulation/run_ethereum_fork_v18.py .fxusd-compile/simulation/
+          python3 -m py_compile .fxusd-compile/simulation/run_ethereum_fork_v18.py
+          cd .fxusd-compile
+          forge build script/DeployFXUSDYearnV19.s.sol --use 0.8.30 --via-ir 2>&1 | tee -a compile.log
+      - name: Compile custom v18 fxMINT integrations against pinned official IPOR
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/IPOR-Labs/ipor-fusion.git .ipor-source
+          git -C .ipor-source fetch --quiet --depth 1 origin 636bb4c2b78826586a0c0c8c9083c5c285692657
+          git -C .ipor-source checkout --detach 636bb4c2b78826586a0c0c8c9083c5c285692657
+          mkdir -p .ipor-source/contracts/fuses/fxmint
+          cp cywbtc-yearn/v18/contracts/fuses/fxmint/*.sol .ipor-source/contracts/fuses/fxmint/
+          cp cywbtc-yearn/v18/contracts/fuses/erc4626/Erc4626SupplyFuse.sol .ipor-source/contracts/fuses/erc4626/Erc4626SupplyFuse.sol
+          cd .ipor-source
+          npm ci --ignore-scripts --no-audit --no-fund --silent
+          git submodule update --init --depth 1 lib/forge-std
+          echo "OFFICIAL_PIN $(git rev-parse HEAD)"
+          forge build --use 0.8.30 --via-ir --sizes \
+            contracts/fuses/fxmint/FXMintBorrowFuse.sol \
+            contracts/fuses/fxmint/FXMintCollateralFuse.sol \
+            contracts/fuses/fxmint/FXMintAaveV4SpokeAccountingAdapter.sol \
+            contracts/fuses/fxmint/FXMintLTVManager_v17.sol \
+            contracts/fuses/erc4626/Erc4626SupplyFuse.sol \
+            contracts/fuses/erc4626/Erc4626BalanceFuse.sol 2>&1 | tee ipor-v18-compile.log
+      - name: Execute v18 isolated Ethereum mainnet-fork lifecycle and state report
+        shell: bash
+        working-directory: .fxusd-compile
+        env:
+          ETHEREUM_FORK_RPC_URL: ${{ secrets.SIM_ARCHIVE_PRIMARY_ETHEREUM_01 || secrets.ETHEREUM_PROVIDER_URL || secrets.ETH_RPC_URL }}
+          SIM_DEPLOYER_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+          SIM_DEPOSITOR: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
+          VAULT_OWNER: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
+          HARVEST_KEEPER: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
+          FXUSD: '0x085780639cc2cacd35e474e71f4d000e2405d8f6'
+          FXN: ${{ vars.FXN_TOKEN }}
+          WETH: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
+          USDC: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+          CONVEX_FX_BOOSTER: '0xAffe966B27ba3E4Ebb8A0eC124C7b7019CC762f8'
+          CONVEX_FX_POOL_REGISTRY: '0xdb95d646012bb87ac2e6cd63eab2c42323c1f5af'
+          CONVEX_FX_GAUGE_32: '0xf1e141c804ba39b4a031fdf46e8c08dba7a0df60'
+          CONVEX_FX_GAUGE_37: '0x215d87bd3c7482e2348338815e059de07daf798a'
+          CONVEX_FX_GAUGE_8: '0x5b1d12365bec01b8b672ee45912d1bbc86305dba'
+          SDFXN: ${{ vars.SDFXN_TOKEN }}
+          BOOSTHUB: '0xFbEF8941Da53EA724385B44E91ae9672061D0263'
+          FXBASE_POOL: '0x65c9a641afceb9c0e6034e558a319488fa0fa3be'
+          CURVE_USDC_FXUSD_POOL: '0x5018be882dcce5e3f2f3b0913ae2096b9b3fb61f'
+          CURVE_FXN_WETH_POOL: ${{ vars.CURVE_FXN_WETH_POOL }}
+          CURVE_WETH_USDC_POOL: ${{ vars.CURVE_WETH_USDC_POOL }}
+          SIM_FXUSD_FUNDER: ${{ vars.SIM_FXUSD_FUNDER }}
+          SIM_WBTC_FUNDER: ${{ vars.SIM_WBTC_FUNDER }}
+          SIM_IPOR_VAULT: ${{ vars.SIM_IPOR_VAULT }}
+          SIM_LTV_MANAGER: ${{ vars.SIM_LTV_MANAGER }}
+          SIM_FXMINT_COLLATERAL_FUSE: ${{ vars.SIM_FXMINT_COLLATERAL_FUSE }}
+          SIM_FXMINT_ACCOUNTING_ADAPTER: ${{ vars.SIM_FXMINT_ACCOUNTING_ADAPTER }}
+          SIM_IPOR_ALPHA: ${{ vars.SIM_IPOR_ALPHA }}
+          SIM_LTV_MANAGER_OWNER: ${{ vars.SIM_LTV_MANAGER_OWNER }}
+          SIM_PRICE_MIDDLEWARE: ${{ vars.SIM_PRICE_MIDDLEWARE }}
+        run: |
+          set -euo pipefail
+          python3 simulation/run_ethereum_fork_v18.py
       - name: Save compiler output and official source
         if: always()
         uses: actions/upload-artifact@v4
@@ -80,6 +148,8 @@ jobs:
           path: |
             .fxusd-compile/compile.log
             .fxusd-compile/size-report.json
+            .fxusd-compile/simulation-output/
+            .ipor-source/ipor-v18-compile.log
             .fxusd-compile/contracts/Accountant.sol
             .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
           if-no-files-found: warn
