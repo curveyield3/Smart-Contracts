@@ -5,9 +5,10 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 
 /**
  * @title CurveYieldOmniRouter
- * @notice ERC20 exact-input routes across ABI-compatible V2/V3/V4/Curve execution targets.
- * @dev An owner configures explicit ABI argument templates and historical-rate oracle calls.
- *      For v4 poolAddress is the PoolManager and executionTarget is an approved adapter.
+ * @notice Ethereum/Fraxtal multi-hop ERC20 router with built-in V2, V3, V4, Curve and Balancer V2 execution.
+ * @dev Simple routes use built-in protocol code and historical-rate oracle calls.
+ *      The advanced ABI path and owner-approved external extension IDs cover future pool types.
+ *      In simple V4 routes swapContract is the PoolManager; no V4 helper deployment is needed.
  *      A route oracle MUST quote one whole tokenIn in whole tokenOut, scaled by 10**rateDecimals.
  *      Configuring current spot-price, get_dy or v4 quoter as an oracle is unsafe.
  *      Solidity cannot resolve an ABI method's name alone: a complete signature is required
