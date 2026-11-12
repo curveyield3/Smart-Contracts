@@ -429,7 +429,7 @@ contract CurveYieldOmniRouter {
                 if(h.poolData.length!=0){
                     if(h.poolType==UNISWAP_V2){
                         if(!(abi.decode(h.poolData,(uint16))<=1000)) revert ErrV2FeeCap();
-                    } else if(!(abi.decode(h.poolData,(uint32))>=300)) revert ErrV3TwapWindow();
+                    } else if(!(abi.decode(h.poolData,(uint32))>=60)) revert ErrV3TwapWindow();
                 }
             } else if(h.poolType==UNISWAP_V4){
                 (IEmbeddedV4Manager.PoolKey memory key4,bytes memory hookData)=
