@@ -31,10 +31,92 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
  *
  * Note: curveyield.dao may require a Brave Browser or an Unstoppable Domains browser plugin to use.
  */
+error ErrAmountTooLarge();
+error ErrApproveFailed();
+error ErrBadAddress();
+error ErrBadEndpoints();
+error ErrBadHop();
+error ErrBadOracle();
+error ErrBadOwner();
+error ErrBadRecipient();
+error ErrBadSwap();
+error ErrBalancerPoolId();
+error ErrBalancerTokenMismatch();
+error ErrBuiltinTypeImmutable();
+error ErrCurveCoinMismatch();
+error ErrCurveCoinsNotReadable();
+error ErrCurveIndex();
+error ErrCurveZeroCoin();
+error ErrDefaultSlippageCap();
+error ErrDivZero();
+error ErrDustMinimum();
+error ErrExpired();
+error ErrExtensionNotActive();
+error ErrExternalAdapterMissing();
+error ErrExternalHistoricalOracleRequired();
+error ErrFeeCap();
+error ErrHistoricalReaderRequired();
+error ErrHopCount();
+error ErrHopInputNotFullySpent();
+error ErrHopSlippage();
+error ErrInputBalanceLoss();
+error ErrInvalidExtension();
+error ErrInvalidTokens();
+error ErrInvalidV3Deltas();
+error ErrInvalidV4Delta();
+error ErrInvertedRateZero();
+error ErrMinNet();
+error ErrMuldivOverflow();
+error ErrNativeOracleNotInvertible();
+error ErrNestedV3();
+error ErrNestedV4();
+error ErrNonstandardInput();
+error ErrNotOwner();
+error ErrOnlyEthereumFraxtal();
+error ErrOracleDataLimit();
+error ErrOracleDecimals();
+error ErrOracleDust();
+error ErrOracleInvalidOutput();
+error ErrOracleZeroRate();
+error ErrOutputBalanceDecreased();
+error ErrPoolDataLimit();
+error ErrReentrancy();
+error ErrRepeatedToken();
+error ErrRouteCycle();
+error ErrRouteFeeCap();
+error ErrRouteMissing();
+error ErrRouteSlippageCap();
+error ErrTokenDecimals();
+error ErrTransferFailed();
+error ErrTransferFromFailed();
+error ErrUnauthorizedV3Callback();
+error ErrUnauthorizedV4Callback();
+error ErrUnknownPoolType();
+error ErrV2FeeCap();
+error ErrV2InsufficientOutput();
+error ErrV2NoLiquidity();
+error ErrV2Tokens();
+error ErrV3CallbackMissing();
+error ErrV3InputDelta();
+error ErrV3MinTwap();
+error ErrV3Observations();
+error ErrV3Tokens();
+error ErrV3TwapWindow();
+error ErrV4CallbackMissing();
+error ErrV4HookData();
+error ErrV4InputLimit();
+error ErrV4Overspend();
+error ErrV4PoolId();
+error ErrV4Settle();
+error ErrV4Sort();
+error ErrV4Tokens();
+error ErrWrongFinalToken();
+error ErrZeroAmount();
+
 library RouterFullMath {
     // Full precision floor(a*b / denominator), adapted from the standard mulDiv identity.
     function mulDiv(uint256 a,uint256 b,uint256 denominator) internal pure returns(uint256 result) {
-        require(denominator != 0,"DIV_ZERO");
+        if(!(denominator != 0)) revert ErrDivZero();;
         unchecked {
             uint256 p0; uint256 p1;
             assembly ("memory-safe") {
@@ -43,7 +125,7 @@ library RouterFullMath {
                 p1 := sub(sub(mm,p0),lt(mm,p0))
             }
             if(p1 == 0) return p0 / denominator;
-            require(denominator > p1,"MULDIV_OVERFLOW");
+            if(!(denominator > p1)) revert ErrMuldivOverflow();;
             uint256 remainder;
             assembly ("memory-safe") { remainder := mulmod(a,b,denominator) }
             assembly ("memory-safe") {
@@ -191,31 +273,31 @@ contract CurveYieldOmniRouter {
     event SwapExecuted(address indexed sender,address indexed tokenIn,address indexed tokenOut,uint256 amountIn,uint256 amountOut);
     event OwnershipTransferred(address indexed oldOwner,address indexed newOwner);
 
-    modifier onlyOwner(){require(msg.sender==owner,"NOT_OWNER");_;}
-    modifier nonReentrant(){require(reentrancyStatus==1,"REENTRANCY");reentrancyStatus=2;_;reentrancyStatus=1;}
+    modifier onlyOwner(){if(!(msg.sender==owner)) revert ErrNotOwner();;_;}
+    modifier nonReentrant(){if(!(reentrancyStatus==1)) revert ErrReentrancy();;reentrancyStatus=2;_;reentrancyStatus=1;}
 
     constructor(address owner_,address feeRecipient_){
-        require(block.chainid==1 || block.chainid==252,"ONLY_ETHEREUM_FRAXTAL");
-        require(owner_!=address(0) && feeRecipient_!=address(0) && feeRecipient_!=address(this),"BAD_ADDRESS");
+        if(!(block.chainid==1 || block.chainid==252)) revert ErrOnlyEthereumFraxtal();;
+        if(!(owner_!=address(0) && feeRecipient_!=address(0) && feeRecipient_!=address(this))) revert ErrBadAddress();;
         owner=owner_;
         feeRecipient=feeRecipient_;
     }
 
     function transferOwnership(address nextOwner) external onlyOwner {
-        require(nextOwner!=address(0),"BAD_OWNER");
+        if(!(nextOwner!=address(0))) revert ErrBadOwner();;
         emit OwnershipTransferred(owner,nextOwner);
         owner=nextOwner;
     }
     function setFeeRecipient(address to) external onlyOwner {
-        require(to!=address(0) && to!=address(this),"BAD_RECIPIENT");
+        if(!(to!=address(0) && to!=address(this))) revert ErrBadRecipient();;
         feeRecipient=to;
     }
     function setFeeBps(uint16 value) external onlyOwner {
-        require(value<=MAX_FEE_BPS,"FEE_CAP");
+        if(!(value<=MAX_FEE_BPS)) revert ErrFeeCap();;
         feeBps=value;
     }
     function setDefaultSlippageGuardBps(uint16 value) external onlyOwner {
-        require(value<=MAX_DEFAULT_SLIPPAGE_BPS,"DEFAULT_SLIPPAGE_CAP");
+        if(!(value<=MAX_DEFAULT_SLIPPAGE_BPS)) revert ErrDefaultSlippageCap();;
         defaultSlippageGuardBps=value;
     }
 
@@ -232,14 +314,14 @@ contract CurveYieldOmniRouter {
         address tokenIn,address tokenOut,SimpleHop[] calldata pathway,
         uint16 routeFeeBps,uint16 routeSlippageBps
     ) external onlyOwner {
-        require(routeFeeBps<=MAX_FEE_BPS,"ROUTE_FEE_CAP");
-        require(routeSlippageBps<=MAX_ROUTE_SLIPPAGE_BPS,"ROUTE_SLIPPAGE_CAP");
+        if(!(routeFeeBps<=MAX_FEE_BPS)) revert ErrRouteFeeCap();;
+        if(!(routeSlippageBps<=MAX_ROUTE_SLIPPAGE_BPS)) revert ErrRouteSlippageCap();;
         bytes32 key=_key(tokenIn,tokenOut);
         if(pathway.length!=0) {
             _replaceSimple(key,tokenIn,tokenOut,pathway);
             emit RouteSet(tokenIn,tokenOut,pathway.length);
         } else {
-            require(simpleRoutes[key].length>0,"ROUTE_MISSING");
+            if(!(simpleRoutes[key].length>0)) revert ErrRouteMissing();;
         }
         routes[key].feeBps=routeFeeBps;
         routes[key].slippageGuardBps=routeSlippageBps;
@@ -249,8 +331,8 @@ contract CurveYieldOmniRouter {
 
     // Reserve external types for future pools; extensions cannot delegatecall the router.
     function setExternalAdapter(uint16 poolType,address adapter) external onlyOwner {
-        require(poolType>=EXTERNAL_TYPE_START,"BUILTIN_TYPE_IMMUTABLE");
-        require(adapter==address(0)||adapter.code.length>0,"INVALID_EXTENSION");
+        if(!(poolType>=EXTERNAL_TYPE_START)) revert ErrBuiltinTypeImmutable();;
+        if(!(adapter==address(0)||adapter.code.length>0)) revert ErrInvalidExtension();;
         externalAdapters[poolType]=adapter;
         emit ExternalAdapterConfigured(poolType,adapter);
     }
@@ -315,8 +397,8 @@ contract CurveYieldOmniRouter {
     function _swap(address tokenIn,address tokenOut,uint256 amountIn,uint256 userMin,address recipient,uint256 deadline)
         internal returns(uint256 net)
     {
-        require(block.timestamp<=deadline,"EXPIRED");
-        require(amountIn>0 && recipient!=address(0) && recipient!=address(this),"BAD_SWAP");
+        if(!(block.timestamp<=deadline)) revert ErrExpired();;
+        if(!(amountIn>0 && recipient!=address(0) && recipient!=address(this))) revert ErrBadSwap();;
         Route storage r=_route(tokenIn,tokenOut);
         return _swapSimple(tokenIn,tokenOut,amountIn,userMin,recipient,r);
     }
@@ -324,68 +406,68 @@ contract CurveYieldOmniRouter {
     function _replaceSimple(bytes32 key,address tokenIn,address tokenOut,SimpleHop[] calldata pathway)
         internal
     {
-        require(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut,"BAD_ENDPOINTS");
-        require(pathway.length>0 && pathway.length<=MAX_HOPS,"HOP_COUNT");
+        if(!(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut)) revert ErrBadEndpoints();;
+        if(!(pathway.length>0 && pathway.length<=MAX_HOPS)) revert ErrHopCount();;
         address current=tokenIn;
         for(uint256 i=0;i<pathway.length;i++){
             SimpleHop calldata h=pathway[i];
-            require(h.tokenOut!=address(0)&&h.tokenOut!=current&&h.swapContract.code.length>0,"BAD_HOP");
-            require(current.code.length>0 && h.tokenOut.code.length>0,"INVALID_TOKENS");
-            require(h.poolData.length<=MAX_CALL_ARGUMENT_BYTES,"POOL_DATA_LIMIT");
-            require(h.oracle.requiredInputs.length<=MAX_CALL_ARGUMENT_BYTES,"ORACLE_DATA_LIMIT");
-            require(h.oracle.rateDecimals<=18,"ORACLE_DECIMALS");
-            for(uint256 j=0;j<i;j++) require(pathway[j].tokenOut!=h.tokenOut,"REPEATED_TOKEN");
-            require(tokenIn!=h.tokenOut,"ROUTE_CYCLE");
+            if(!(h.tokenOut!=address(0)&&h.tokenOut!=current&&h.swapContract.code.length>0)) revert ErrBadHop();;
+            if(!(current.code.length>0 && h.tokenOut.code.length>0)) revert ErrInvalidTokens();;
+            if(!(h.poolData.length<=MAX_CALL_ARGUMENT_BYTES)) revert ErrPoolDataLimit();;
+            if(!(h.oracle.requiredInputs.length<=MAX_CALL_ARGUMENT_BYTES)) revert ErrOracleDataLimit();;
+            if(!(h.oracle.rateDecimals<=18)) revert ErrOracleDecimals();;
+            for(uint256 j=0;j<i;j++) if(!(pathway[j].tokenOut!=h.tokenOut)) revert ErrRepeatedToken();;
+            if(!(tokenIn!=h.tokenOut)) revert ErrRouteCycle();;
 
             if(h.poolType==UNISWAP_V2){
                 IEmbeddedV2Pair pair=IEmbeddedV2Pair(h.swapContract);
-                require((pair.token0()==current&&pair.token1()==h.tokenOut)||
-                        (pair.token1()==current&&pair.token0()==h.tokenOut),"V2_TOKENS");
+                if(!((pair.token0()==current&&pair.token1()==h.tokenOut)||
+                        (pair.token1()==current&&pair.token0()==h.tokenOut))) revert ErrV2Tokens();;
                 if(h.poolData.length!=0){
                     uint16 fee=abi.decode(h.poolData,(uint16));
-                    require(fee<=1000,"V2_FEE_CAP");
+                    if(!(fee<=1000)) revert ErrV2FeeCap();;
                 }
             } else if(h.poolType==UNISWAP_V3){
                 IEmbeddedV3Pool pool=IEmbeddedV3Pool(h.swapContract);
-                require((pool.token0()==current&&pool.token1()==h.tokenOut)||
-                        (pool.token1()==current&&pool.token0()==h.tokenOut),"V3_TOKENS");
-                if(h.poolData.length!=0) require(abi.decode(h.poolData,(uint32))>=900,"V3_TWAP_WINDOW");
+                if(!((pool.token0()==current&&pool.token1()==h.tokenOut)||
+                        (pool.token1()==current&&pool.token0()==h.tokenOut))) revert ErrV3Tokens();;
+                if(h.poolData.length!=0) if(!(abi.decode(h.poolData,(uint32))>=900)) revert ErrV3TwapWindow();;
             } else if(h.poolType==UNISWAP_V4){
                 (IEmbeddedV4Manager.PoolKey memory key4,bytes memory hookData)=
                     abi.decode(h.poolData,(IEmbeddedV4Manager.PoolKey,bytes));
-                require((key4.currency0==current&&key4.currency1==h.tokenOut)||
-                        (key4.currency1==current&&key4.currency0==h.tokenOut),"V4_TOKENS");
-                require(key4.currency0<key4.currency1,"V4_SORT");
-                require(keccak256(abi.encode(key4))==h.poolId,"V4_POOL_ID");
-                require(hookData.length<=1024,"V4_HOOK_DATA");
+                if(!((key4.currency0==current&&key4.currency1==h.tokenOut)||
+                        (key4.currency1==current&&key4.currency0==h.tokenOut))) revert ErrV4Tokens();;
+                if(!(key4.currency0<key4.currency1)) revert ErrV4Sort();;
+                if(!(keccak256(abi.encode(key4))==h.poolId)) revert ErrV4PoolId();;
+                if(!(hookData.length<=1024)) revert ErrV4HookData();;
             } else if(_isCurve(h.poolType)){
                 (uint8 coinIn,uint8 coinOut)=abi.decode(h.poolData,(uint8,uint8));
-                require(coinIn!=coinOut,"CURVE_INDEX");
-                require(_curveCoin(h.swapContract,coinIn)==current &&
-                        _curveCoin(h.swapContract,coinOut)==h.tokenOut,"CURVE_COIN_MISMATCH");
+                if(!(coinIn!=coinOut)) revert ErrCurveIndex();;
+                if(!(_curveCoin(h.swapContract,coinIn)==current &&
+                        _curveCoin(h.swapContract,coinOut)==h.tokenOut)) revert ErrCurveCoinMismatch();;
             } else if(h.poolType==BALANCER_WEIGHTED||h.poolType==BALANCER_STABLE){
                 (address balancerPool,)=IEmbeddedBalancerV2Vault(h.swapContract).getPool(h.poolId);
-                require(balancerPool!=address(0),"BALANCER_POOL_ID");
+                if(!(balancerPool!=address(0))) revert ErrBalancerPoolId();;
                 (address[] memory tokens,,)=IEmbeddedBalancerV2Vault(h.swapContract).getPoolTokens(h.poolId);
                 bool foundInput;bool foundOutput;
                 for(uint256 k=0;k<tokens.length;k++){
                     if(tokens[k]==current) foundInput=true;
                     if(tokens[k]==h.tokenOut) foundOutput=true;
                 }
-                require(foundInput&&foundOutput,"BALANCER_TOKEN_MISMATCH");
+                if(!(foundInput&&foundOutput)) revert ErrBalancerTokenMismatch();;
             } else {
-                require(h.poolType>=EXTERNAL_TYPE_START,"UNKNOWN_POOL_TYPE");
-                require(externalAdapters[h.poolType]!=address(0),"EXTERNAL_ADAPTER_MISSING");
+                if(!(h.poolType>=EXTERNAL_TYPE_START)) revert ErrUnknownPoolType();;
+                if(!(externalAdapters[h.poolType]!=address(0))) revert ErrExternalAdapterMissing();;
             }
 
             if(h.oracle.oracleAddress!=address(0)){
-                require(h.oracle.oracleAddress.code.length>0&&h.oracle.readFunctionID!=bytes4(0),"BAD_ORACLE");
+                if(!(h.oracle.oracleAddress.code.length>0&&h.oracle.readFunctionID!=bytes4(0))) revert ErrBadOracle();;
             } else {
-                require(h.poolType==UNISWAP_V3,"EXTERNAL_HISTORICAL_ORACLE_REQUIRED");
+                if(!(h.poolType==UNISWAP_V3)) revert ErrExternalHistoricalOracleRequired();;
             }
             current=h.tokenOut;
         }
-        require(current==tokenOut,"WRONG_FINAL_TOKEN");
+        if(!(current==tokenOut)) revert ErrWrongFinalToken();;
         delete simpleRoutes[key];
         for(uint256 i=0;i<pathway.length;i++) simpleRoutes[key].push(pathway[i]);
     }
@@ -401,9 +483,9 @@ contract CurveYieldOmniRouter {
                 abi.encodeWithSignature("coins(int128)",int128(uint128(index)))
             );
         }
-        require(ok&&out.length>=32,"CURVE_COINS_NOT_READABLE");
+        if(!(ok&&out.length>=32)) revert ErrCurveCoinsNotReadable();;
         token=abi.decode(out,(address));
-        require(token!=address(0),"CURVE_ZERO_COIN");
+        if(!(token!=address(0))) revert ErrCurveZeroCoin();;
     }
 
     function _isCurve(uint16 poolType) internal pure returns(bool){
@@ -418,7 +500,7 @@ contract CurveYieldOmniRouter {
         SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
         uint256 originalBalance=IOmniERC20(tokenIn).balanceOf(address(this));
         _safeTransferFrom(tokenIn,msg.sender,address(this),amountIn);
-        require(IOmniERC20(tokenIn).balanceOf(address(this))==originalBalance+amountIn,"NONSTANDARD_INPUT");
+        if(!(IOmniERC20(tokenIn).balanceOf(address(this))==originalBalance+amountIn)) revert ErrNonstandardInput();;
         uint256 amount=amountIn;
         uint16 slippage=_effectiveSlippage(r);
         for(uint256 i=0;i<hops.length;i++){
@@ -427,10 +509,10 @@ contract CurveYieldOmniRouter {
         }
         uint256 protocolFee=RouterFullMath.mulDiv(amount,_effectiveFee(r),10000);
         net=amount-protocolFee;
-        require(net>=userMin,"MIN_NET");
+        if(!(net>=userMin)) revert ErrMinNet();;
         if(protocolFee!=0) _safeTransfer(tokenOut,feeRecipient,protocolFee);
         _safeTransfer(tokenOut,recipient,net);
-        require(IOmniERC20(tokenIn).balanceOf(address(this))>=originalBalance,"INPUT_BALANCE_LOSS");
+        if(!(IOmniERC20(tokenIn).balanceOf(address(this))>=originalBalance)) revert ErrInputBalanceLoss();;
         emit SwapExecuted(msg.sender,tokenIn,tokenOut,amountIn,net);
     }
 
@@ -440,17 +522,17 @@ contract CurveYieldOmniRouter {
         uint256 minHop=RouterFullMath.mulDiv(
             _simpleOracleQuote(hop,tokenIn,amount),10000-slippage,10000
         );
-        require(minHop>0,"DUST_MINIMUM");
+        if(!(minHop>0)) revert ErrDustMinimum();;
         address tokenOut=hop.tokenOut;
         uint256 beforeIn=IOmniERC20(tokenIn).balanceOf(address(this));
         uint256 beforeOut=IOmniERC20(tokenOut).balanceOf(address(this));
         _executeSimpleHop(hop,tokenIn,amount,minHop);
         uint256 afterIn=IOmniERC20(tokenIn).balanceOf(address(this));
         uint256 afterOut=IOmniERC20(tokenOut).balanceOf(address(this));
-        require(afterIn<=beforeIn && beforeIn-afterIn==amount,"HOP_INPUT_NOT_FULLY_SPENT");
-        require(afterOut>=beforeOut,"OUTPUT_BALANCE_DECREASED");
+        if(!(afterIn<=beforeIn && beforeIn-afterIn==amount)) revert ErrHopInputNotFullySpent();;
+        if(!(afterOut>=beforeOut)) revert ErrOutputBalanceDecreased();;
         outAmount=afterOut-beforeOut;
-        require(outAmount>=minHop,"HOP_SLIPPAGE");
+        if(!(outAmount>=minHop)) revert ErrHopSlippage();;
     }
 
     function _executeSimpleHop(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) internal {
@@ -467,7 +549,7 @@ contract CurveYieldOmniRouter {
             _executeBalancerV2(hop,tokenIn,amount,minOut);
         } else {
             address adapter=externalAdapters[t];
-            require(adapter!=address(0)&&adapter.code.length>0,"EXTENSION_NOT_ACTIVE");
+            if(!(adapter!=address(0)&&adapter.code.length>0)) revert ErrExtensionNotActive();;
             _safeApprove(tokenIn,adapter,0);
             _safeApprove(tokenIn,adapter,amount);
             IExternalRouterHop(adapter).executeHop(
@@ -480,14 +562,14 @@ contract CurveYieldOmniRouter {
     function _executeV2(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) private {
         IEmbeddedV2Pair pair=IEmbeddedV2Pair(hop.swapContract);
         (uint112 r0,uint112 r1,)=pair.getReserves();
-        require(r0>0&&r1>0,"V2_NO_LIQUIDITY");
+        if(!(r0>0&&r1>0)) revert ErrV2NoLiquidity();;
         bool token0In=tokenIn==pair.token0();
         uint256 reserveIn=token0In?uint256(r0):uint256(r1);
         uint256 reserveOut=token0In?uint256(r1):uint256(r0);
         uint16 bps=hop.poolData.length==0?30:abi.decode(hop.poolData,(uint16));
         uint256 netIn=amount*(10000-uint256(bps));
         uint256 output=RouterFullMath.mulDiv(netIn,reserveOut,reserveIn*10000+netIn);
-        require(output>=minOut && output!=0,"V2_INSUFFICIENT_OUTPUT");
+        if(!(output>=minOut && output!=0)) revert ErrV2InsufficientOutput();;
         _safeTransfer(tokenIn,hop.swapContract,amount);
         pair.swap(token0In?0:output,token0In?output:0,address(this),"");
     }
@@ -528,9 +610,9 @@ contract CurveYieldOmniRouter {
     // Native Uniswap V3 support. Unlike a helper adapter, this router itself
     // authenticates the pool's callback and transfers the actual owed tokens.
     function _executeV3(SimpleHop storage hop,address tokenIn,uint256 amount) private {
-        require(activeV3Pool==address(0),"NESTED_V3");
+        if(!(activeV3Pool==address(0))) revert ErrNestedV3();;
         bool zeroForOne=tokenIn<hop.tokenOut;
-        require(amount<=uint256(type(int256).max),"AMOUNT_TOO_LARGE");
+        if(!(amount<=uint256(type(int256).max))) revert ErrAmountTooLarge();;
         activeV3Pool=hop.swapContract;
         activeV3TokenIn=tokenIn;
         activeV3Amount=amount;
@@ -539,7 +621,7 @@ contract CurveYieldOmniRouter {
             address(this),zeroForOne,int256(amount),
             zeroForOne?uint160(4295128740):uint160(1461446703485210103287273052203988822378723970341),""
         );
-        require(v3CallbackConsumed,"V3_CALLBACK_MISSING");
+        if(!(v3CallbackConsumed)) revert ErrV3CallbackMissing();;
         activeV3Pool=address(0);
         activeV3TokenIn=address(0);
         activeV3Amount=0;
@@ -548,12 +630,12 @@ contract CurveYieldOmniRouter {
     function uniswapV3SwapCallback(int256 amount0Delta,int256 amount1Delta,bytes calldata)
         external
     {
-        require(reentrancyStatus==2 && msg.sender==activeV3Pool&&
-                activeV3Pool!=address(0)&&!v3CallbackConsumed,"UNAUTHORIZED_V3_CALLBACK");
-        require((amount0Delta>0&&amount1Delta<=0)||(amount1Delta>0&&amount0Delta<=0),"INVALID_V3_DELTAS");
+        if(!(reentrancyStatus==2 && msg.sender==activeV3Pool&&
+                activeV3Pool!=address(0)&&!v3CallbackConsumed)) revert ErrUnauthorizedV3Callback();;
+        if(!((amount0Delta>0&&amount1Delta<=0)||(amount1Delta>0&&amount0Delta<=0))) revert ErrInvalidV3Deltas();;
         bool zeroForOne=activeV3TokenIn==IEmbeddedV3Pool(msg.sender).token0();
         int256 owed=zeroForOne?amount0Delta:amount1Delta;
-        require(owed>0&&uint256(owed)<=activeV3Amount,"V3_INPUT_DELTA");
+        if(!(owed>0&&uint256(owed)<=activeV3Amount)) revert ErrV3InputDelta();;
         v3CallbackConsumed=true;
         _safeTransfer(activeV3TokenIn,msg.sender,uint256(owed));
     }
@@ -561,29 +643,29 @@ contract CurveYieldOmniRouter {
     // Uniswap v4 pools live inside a PoolManager, not at individual pool addresses.
     // poolId = keccak256(abi.encode(PoolKey)); poolData = abi.encode(PoolKey,hookData).
     function _executeV4(SimpleHop storage hop,address tokenIn,uint256 amount) private {
-        require(activeV4Manager==address(0),"NESTED_V4");
-        require(amount<=uint256(uint128(type(int128).max)),"V4_INPUT_LIMIT");
+        if(!(activeV4Manager==address(0))) revert ErrNestedV4();;
+        if(!(amount<=uint256(uint128(type(int128).max)))) revert ErrV4InputLimit();;
         (IEmbeddedV4Manager.PoolKey memory key4,bytes memory hookData)=
             abi.decode(hop.poolData,(IEmbeddedV4Manager.PoolKey,bytes));
-        require(keccak256(abi.encode(key4))==hop.poolId,"V4_POOL_ID");
+        if(!(keccak256(abi.encode(key4))==hop.poolId)) revert ErrV4PoolId();;
         activeV4Manager=hop.swapContract;
         v4CallbackConsumed=false;
         IEmbeddedV4Manager(hop.swapContract).unlock(
             abi.encode(key4,tokenIn,hop.tokenOut,amount,hookData)
         );
-        require(v4CallbackConsumed,"V4_CALLBACK_MISSING");
+        if(!(v4CallbackConsumed)) revert ErrV4CallbackMissing();;
         activeV4Manager=address(0);
     }
 
     function unlockCallback(bytes calldata payload) external returns(bytes memory){
-        require(reentrancyStatus==2 && msg.sender==activeV4Manager &&
-                activeV4Manager!=address(0)&&!v4CallbackConsumed,"UNAUTHORIZED_V4_CALLBACK");
+        if(!(reentrancyStatus==2 && msg.sender==activeV4Manager &&
+                activeV4Manager!=address(0)&&!v4CallbackConsumed)) revert ErrUnauthorizedV4Callback();;
         v4CallbackConsumed=true;
         (IEmbeddedV4Manager.PoolKey memory key4,address tokenIn,address tokenOut,
             uint256 amount,bytes memory hookData)=abi.decode(payload,
                 (IEmbeddedV4Manager.PoolKey,address,address,uint256,bytes));
-        require((tokenIn==key4.currency0&&tokenOut==key4.currency1)||
-                (tokenIn==key4.currency1&&tokenOut==key4.currency0),"V4_TOKENS");
+        if(!((tokenIn==key4.currency0&&tokenOut==key4.currency1)||
+                (tokenIn==key4.currency1&&tokenOut==key4.currency0))) revert ErrV4Tokens();;
         bool zeroForOne=tokenIn==key4.currency0;
         IEmbeddedV4Manager manager=IEmbeddedV4Manager(msg.sender);
         IEmbeddedV4Manager.SwapParams memory params=IEmbeddedV4Manager.SwapParams({
@@ -596,13 +678,13 @@ contract CurveYieldOmniRouter {
         int128 amount1=int128(packedDelta);
         int128 inputDelta=zeroForOne?amount0:amount1;
         int128 outputDelta=zeroForOne?amount1:amount0;
-        require(inputDelta<0 && outputDelta>0,"INVALID_V4_DELTA");
+        if(!(inputDelta<0 && outputDelta>0)) revert ErrInvalidV4Delta();;
         uint256 owed=uint256(-int256(inputDelta));
         uint256 out=uint256(int256(outputDelta));
-        require(owed<=amount,"V4_OVERSPEND");
+        if(!(owed<=amount)) revert ErrV4Overspend();;
         manager.sync(tokenIn);
         _safeTransfer(tokenIn,msg.sender,owed);
-        require(manager.settle()==owed,"V4_SETTLE");
+        if(!(manager.settle()==owed)) revert ErrV4Settle();;
         manager.take(tokenOut,address(this),out);
         return abi.encode(out);
     }
@@ -613,11 +695,11 @@ contract CurveYieldOmniRouter {
         private view returns(uint256)
     {
         uint32 window=hop.poolData.length==0?900:abi.decode(hop.poolData,(uint32));
-        require(window>=900,"V3_MIN_TWAP");
+        if(!(window>=900)) revert ErrV3MinTwap();;
         uint32[] memory secondsAgo=new uint32[](2);
         secondsAgo[0]=window;
         (int56[] memory cumulative,)=IEmbeddedV3Pool(hop.swapContract).observe(secondsAgo);
-        require(cumulative.length==2,"V3_OBSERVATIONS");
+        if(!(cumulative.length==2)) revert ErrV3Observations();;
         int56 delta=cumulative[1]-cumulative[0];
         int56 secondsInt=int56(uint56(window));
         int24 tick=int24(delta/secondsInt);
@@ -638,37 +720,37 @@ contract CurveYieldOmniRouter {
     function _simpleOracleQuote(SimpleHop storage hop,address tokenIn,uint256 amount)
         private view returns(uint256 output)
     {
-        require(amount>0,"ZERO_AMOUNT");
+        if(!(amount>0)) revert ErrZeroAmount();;
         if(hop.oracle.oracleAddress==address(0) && hop.poolType==UNISWAP_V3){
-            require(!hop.oracle.invert,"NATIVE_ORACLE_NOT_INVERTIBLE");
+            if(!(!hop.oracle.invert)) revert ErrNativeOracleNotInvertible();;
             return _v3HistoricalQuote(hop,tokenIn,amount);
         }
-        require(hop.oracle.oracleAddress!=address(0),"HISTORICAL_READER_REQUIRED");
+        if(!(hop.oracle.oracleAddress!=address(0))) revert ErrHistoricalReaderRequired();;
         (bool ok,bytes memory out)=hop.oracle.oracleAddress.staticcall(
             abi.encodePacked(hop.oracle.readFunctionID,hop.oracle.requiredInputs)
         );
         if(!ok) _revertWith(out);
-        require(out.length>=32,"ORACLE_INVALID_OUTPUT");
+        if(!(out.length>=32)) revert ErrOracleInvalidOutput();;
         uint256 rate=abi.decode(out,(uint256));
         uint256 precision=10**uint256(hop.oracle.rateDecimals);
-        require(rate>0,"ORACLE_ZERO_RATE");
+        if(!(rate>0)) revert ErrOracleZeroRate();;
         if(hop.oracle.invert){
             rate=RouterFullMath.mulDiv(precision,precision,rate);
-            require(rate>0,"INVERTED_RATE_ZERO");
+            if(!(rate>0)) revert ErrInvertedRateZero();;
         }
         uint256 inputUnit=_unit(tokenIn);
         uint256 outputUnit=_unit(hop.tokenOut);
         output=RouterFullMath.mulDiv(RouterFullMath.mulDiv(amount,rate,precision),
                                     outputUnit,inputUnit);
-        require(output>0,"ORACLE_DUST");
+        if(!(output>0)) revert ErrOracleDust();;
     }
 
     function _estimateRouteGross(address tokenIn,address tokenOut,uint256 amount)
         private view returns(uint256)
     {
         SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
-        require(hops.length!=0,"ROUTE_MISSING");
-        require(amount>0,"ZERO_AMOUNT");
+        if(!(hops.length!=0)) revert ErrRouteMissing();;
+        if(!(amount>0)) revert ErrZeroAmount();;
         for(uint256 i=0;i<hops.length;i++){
             address input=i==0?tokenIn:hops[i-1].tokenOut;
             amount=_simpleOracleQuote(hops[i],input,amount);
@@ -677,7 +759,7 @@ contract CurveYieldOmniRouter {
     }
     function _unit(address token) private view returns(uint256){
         uint8 d=IOmniERC20(token).decimals();
-        require(d<=36,"TOKEN_DECIMALS");
+        if(!(d<=36)) revert ErrTokenDecimals();;
         return 10**uint256(d);
     }
     function _effectiveFee(Route storage r) private view returns(uint16){
@@ -688,22 +770,22 @@ contract CurveYieldOmniRouter {
     }
     function _route(address tokenIn,address tokenOut) private view returns(Route storage r){
         r=routes[_key(tokenIn,tokenOut)];
-        require(simpleRoutes[_key(tokenIn,tokenOut)].length>0,"ROUTE_MISSING");
+        if(!(simpleRoutes[_key(tokenIn,tokenOut)].length>0)) revert ErrRouteMissing();;
     }
     function _key(address a,address b) private pure returns(bytes32){
         return keccak256(abi.encode(a,b));
     }
     function _safeTransfer(address token,address to,uint256 value) private {
         (bool ok,bytes memory ret)=token.call(abi.encodeWithSelector(0xa9059cbb,to,value));
-        require(ok && (ret.length==0 || (ret.length>=32 && abi.decode(ret,(bool)))),"TRANSFER_FAILED");
+        if(!(ok && (ret.length==0 || (ret.length>=32 && abi.decode(ret,(bool)))))) revert ErrTransferFailed();;
     }
     function _safeTransferFrom(address token,address from,address to,uint256 value) private {
         (bool ok,bytes memory ret)=token.call(abi.encodeWithSelector(0x23b872dd,from,to,value));
-        require(ok && (ret.length==0 || (ret.length>=32 && abi.decode(ret,(bool)))),"TRANSFER_FROM_FAILED");
+        if(!(ok && (ret.length==0 || (ret.length>=32 && abi.decode(ret,(bool)))))) revert ErrTransferFromFailed();;
     }
     function _safeApprove(address token,address spender,uint256 value) private {
         (bool ok,bytes memory ret)=token.call(abi.encodeWithSelector(0x095ea7b3,spender,value));
-        require(ok && (ret.length==0 || (ret.length>=32 && abi.decode(ret,(bool)))),"APPROVE_FAILED");
+        if(!(ok && (ret.length==0 || (ret.length>=32 && abi.decode(ret,(bool)))))) revert ErrApproveFailed();;
     }
     function _revertWith(bytes memory reason) private pure {
         if(reason.length==0) revert("TARGET_REVERT");
