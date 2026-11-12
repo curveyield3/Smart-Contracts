@@ -31,6 +31,44 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
  *
  * Note: curveyield.dao may require a Brave Browser or an Unstoppable Domains browser plugin to use.
  */
+library RouterFullMath {
+    // Full precision floor(a*b / denominator), adapted from the standard mulDiv identity.
+    function mulDiv(uint256 a,uint256 b,uint256 denominator) internal pure returns(uint256 result) {
+        if(!(denominator != 0)) revert ErrDivZero();
+        unchecked {
+            uint256 p0; uint256 p1;
+            assembly ("memory-safe") {
+                let mm := mulmod(a,b,not(0))
+                p0 := mul(a,b)
+                p1 := sub(sub(mm,p0),lt(mm,p0))
+            }
+            if(p1 == 0) return p0 / denominator;
+            if(!(denominator > p1)) revert ErrMuldivOverflow();
+            uint256 remainder;
+            assembly ("memory-safe") { remainder := mulmod(a,b,denominator) }
+            assembly ("memory-safe") {
+                p1 := sub(p1,gt(remainder,p0))
+                p0 := sub(p0,remainder)
+            }
+            uint256 twos = denominator & (~denominator + 1);
+            assembly ("memory-safe") {
+                denominator := div(denominator,twos)
+                p0 := div(p0,twos)
+                twos := add(div(sub(0,twos),twos),1)
+            }
+            p0 |= p1 * twos;
+            uint256 inverse = (3 * denominator) ^ 2;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            inverse *= 2 - denominator * inverse;
+            result = p0 * inverse;
+        }
+    }
+}
+
 error ErrAmountTooLarge();
 error ErrApproveFailed();
 error ErrBadAddress();
@@ -112,44 +150,6 @@ error ErrV4Sort();
 error ErrV4Tokens();
 error ErrWrongFinalToken();
 error ErrZeroAmount();
-
-library RouterFullMath {
-    // Full precision floor(a*b / denominator), adapted from the standard mulDiv identity.
-    function mulDiv(uint256 a,uint256 b,uint256 denominator) internal pure returns(uint256 result) {
-        if(!(denominator != 0)) revert ErrDivZero();
-        unchecked {
-            uint256 p0; uint256 p1;
-            assembly ("memory-safe") {
-                let mm := mulmod(a,b,not(0))
-                p0 := mul(a,b)
-                p1 := sub(sub(mm,p0),lt(mm,p0))
-            }
-            if(p1 == 0) return p0 / denominator;
-            if(!(denominator > p1)) revert ErrMuldivOverflow();
-            uint256 remainder;
-            assembly ("memory-safe") { remainder := mulmod(a,b,denominator) }
-            assembly ("memory-safe") {
-                p1 := sub(p1,gt(remainder,p0))
-                p0 := sub(p0,remainder)
-            }
-            uint256 twos = denominator & (~denominator + 1);
-            assembly ("memory-safe") {
-                denominator := div(denominator,twos)
-                p0 := div(p0,twos)
-                twos := add(div(sub(0,twos),twos),1)
-            }
-            p0 |= p1 * twos;
-            uint256 inverse = (3 * denominator) ^ 2;
-            inverse *= 2 - denominator * inverse;
-            inverse *= 2 - denominator * inverse;
-            inverse *= 2 - denominator * inverse;
-            inverse *= 2 - denominator * inverse;
-            inverse *= 2 - denominator * inverse;
-            inverse *= 2 - denominator * inverse;
-            result = p0 * inverse;
-        }
-    }
-}
 
 interface IOmniERC20 {
     function balanceOf(address) external view returns(uint256);
