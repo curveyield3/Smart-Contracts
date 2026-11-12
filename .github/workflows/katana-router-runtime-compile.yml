@@ -1,10 +1,6 @@
 name: Ethereum Fraxtal Omni Router runtime-size compile
 on:
-  push:
-    branches: [ethereum-fraxtal-omni-router-v1]
-    paths:
-      - '.github/workflows/katana-router-runtime-compile.yml'
-      - 'routers/ethereum-fraxtal/**'
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
