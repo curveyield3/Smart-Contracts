@@ -147,6 +147,7 @@ contract FXNYearnMasterAllocator is BaseStrategy {
     event FXNRewardDiverted(uint256 fxnDeposited, uint256 fxnSwapped);
     event FXNRewardEngineHarvest(uint256 fxnConverted, uint256 fxusdReinvested);
     event FXNRewardDustDeferred(uint256 newlyReceived, uint256 totalPending);
+    event FXNChildDustReturned(address indexed child, uint256 amount);
 
 
     error BadConfiguration();
@@ -891,6 +892,18 @@ contract FXNYearnMasterAllocator is BaseStrategy {
             totalFXN += claims[i];
         }
         if (activeCount == 0) revert NoChildren();
+        // Curve's FXN/WETH pool rejects wei-scale swaps. Keep every tiny
+        // reward with its original child so the next claim accumulates it,
+        // preserving child-level attribution without manufactured yield.
+        if (totalFXN != 0 && totalFXN < MIN_ENGINE_FXN_SWAP_WEI) {
+            for (uint256 i; i < n; ++i) {
+                if (claims[i] != 0) {
+                    FXN.safeTransfer(children[i], claims[i]);
+                    emit FXNChildDustReturned(children[i], claims[i]);
+                }
+            }
+            totalFXN = 0;
+        }
         if (totalFXN != 0) {
             uint256 fxnForEngine = Math.mulDiv(totalFXN, fxnRewardAllocationBps, BPS);
             if (fxnForEngine != 0) {
