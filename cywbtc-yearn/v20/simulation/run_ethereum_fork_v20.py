@@ -614,7 +614,7 @@ class Sim:
         # Do not print or persist the private key.
         env=os.environ.copy()
         env["DEPLOYER_PRIVATE_KEY"]=key
-        args=["forge","script","script/DeployFXUSDYearnV20.s.sol:DeployFXUSDYearnV20",
+        args=["forge","script","script/DeployFXUSDYearnV19.s.sol:DeployFXUSDYearnV19",
               "--rpc-url",self.rpc.uri,"--broadcast","-vvvv"]
         cp=subprocess.run(args,cwd=ROOT,env=env,capture_output=True,text=True,timeout=1800)
         if cp.returncode:
