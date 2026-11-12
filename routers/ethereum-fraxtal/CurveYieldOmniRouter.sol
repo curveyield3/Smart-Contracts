@@ -165,7 +165,6 @@ interface IEmbeddedV2Pair {
 interface IEmbeddedV3Pool {
     function token0() external view returns(address);
     function token1() external view returns(address);
-    function fee() external view returns(uint24);
     function observe(uint32[] calldata) external view returns(int56[] memory,uint160[] memory);
     function swap(address,bool,int256,uint160,bytes calldata) external returns(int256,int256);
 }
@@ -467,9 +466,7 @@ contract CurveYieldOmniRouter {
         for(uint256 i=0;i<pathway.length;i++){
             SimpleHop calldata h=pathway[i];
             simpleRoutes[key].push(h);
-            if(h.poolType==UNISWAP_V3){
-                simpleRoutes[key][i].poolId=bytes32(uint256(IEmbeddedV3Pool(h.swapContract).fee()));
-            } else if(h.poolType==CURVE_STABLESWAP||h.poolType==CURVE_STABLESWAP_NG){
+            if(h.poolType==UNISWAP_V3||h.poolType==CURVE_STABLESWAP||h.poolType==CURVE_STABLESWAP_NG){
                 simpleRoutes[key][i].poolId=bytes32(IEmbeddedCurveFee(h.swapContract).fee());
             }
         }
