@@ -109,7 +109,7 @@ jobs:
         working-directory: .fxusd-compile
         env:
           ETHEREUM_FORK_RPC_URL: ${{ secrets.SIM_ARCHIVE_PRIMARY_ETHEREUM_01 || secrets.ETHEREUM_PROVIDER_URL || secrets.ETH_RPC_URL }}
-          SIM_DEPLOYER_PRIVATE_KEY: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+          SIM_DEPLOYER_PRIVATE_KEY: ${{ secrets.SIM_LOCAL_FORK_TEST_KEY }}
           SIM_DEPOSITOR: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
           VAULT_OWNER: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
           HARVEST_KEEPER: '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266'
