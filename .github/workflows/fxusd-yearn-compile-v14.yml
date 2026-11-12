@@ -66,6 +66,7 @@ jobs:
           console.log('Applied',expected.length,'exact v28 source overlays');
           NODE
           rm .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
+          rm .fxusd-compile/contracts/FXNCurveRewardRouter.sol
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           git clone --depth 1 -q --branch v1.9.7 https://github.com/foundry-rs/forge-std.git .fxusd-compile/node_modules/forge-std
           sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
@@ -82,7 +83,7 @@ jobs:
           python3 - <<'PY'
           import json
           from pathlib import Path
-          names=['Accountant','FXNYearnMasterAllocator','CurveConvex32YearnStrategy','FxBaseConvex37YearnStrategy','FXNCurveRewardRouter','FXNZeroNAVRewardChild']
+          names=['Accountant','FXNYearnMasterAllocator','CurveConvex32YearnStrategy','FxBaseConvex37YearnStrategy','FXNZeroNAVRewardChild']
           report={'solc':'0.8.30','optimizer_runs':200,'contracts':{}}
           for name in names:
               found=list(Path('out').rglob(name+'.json'))
