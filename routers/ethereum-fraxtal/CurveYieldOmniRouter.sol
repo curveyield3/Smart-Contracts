@@ -210,25 +210,24 @@ interface IExternalRouterHop {
  */
 contract CurveYieldOmniRouter {
     uint16 public constant DEFAULT_SLIPPAGE_BPS = 100;
-    uint16 public constant MAX_DEFAULT_SLIPPAGE_BPS = 300;
-    uint16 public constant MAX_ROUTE_SLIPPAGE_BPS = 500;
-    uint16 public constant MAX_FEE_BPS = 50;
-    uint8 public constant MAX_HOPS = 8;
-    uint8 public constant MAX_PATCHES_PER_CALL = 24;
-    uint16 public constant MAX_CALL_ARGUMENT_BYTES = 2048;
+    uint16 internal constant MAX_DEFAULT_SLIPPAGE_BPS = 300;
+    uint16 internal constant MAX_ROUTE_SLIPPAGE_BPS = 500;
+    uint16 internal constant MAX_FEE_BPS = 50;
+    uint8 internal constant MAX_HOPS = 8;
+    uint16 internal constant MAX_CALL_ARGUMENT_BYTES = 2048;
 
     // Stable built-in types remain part of this router. IDs >= 1000 are reserved
     // for independently deployed, owner-approved future pool-type extensions.
-    uint16 public constant UNISWAP_V2 = 1;
-    uint16 public constant UNISWAP_V3 = 2;
-    uint16 public constant UNISWAP_V4 = 3;
-    uint16 public constant CURVE_CRYPTOSWAP = 4;
-    uint16 public constant CURVE_TRICRYPTO = 5;
-    uint16 public constant CURVE_STABLESWAP = 6;
-    uint16 public constant CURVE_STABLESWAP_NG = 7;
-    uint16 public constant BALANCER_WEIGHTED = 8;
-    uint16 public constant BALANCER_STABLE = 9;
-    uint16 public constant EXTERNAL_TYPE_START = 1000;
+    uint16 internal constant UNISWAP_V2 = 1;
+    uint16 internal constant UNISWAP_V3 = 2;
+    uint16 internal constant UNISWAP_V4 = 3;
+    uint16 internal constant CURVE_CRYPTOSWAP = 4;
+    uint16 internal constant CURVE_TRICRYPTO = 5;
+    uint16 internal constant CURVE_STABLESWAP = 6;
+    uint16 internal constant CURVE_STABLESWAP_NG = 7;
+    uint16 internal constant BALANCER_WEIGHTED = 8;
+    uint16 internal constant BALANCER_STABLE = 9;
+    uint16 internal constant EXTERNAL_TYPE_START = 1000;
 
     struct SimpleOracle {
         address oracleAddress; // zero = router's native V2/V3 or applicable Curve EMA
@@ -341,8 +340,9 @@ contract CurveYieldOmniRouter {
         bytes32 key=_key(tokenIn,tokenOut);
         return simpleRoutes[key].length;
     }
-    function routeFor(address tokenIn,address tokenOut) external view returns(SimpleHop[] memory){
-        return simpleRoutes[_key(tokenIn,tokenOut)];
+    // Read route hops individually to avoid an expensive nested-array ABI encoder.
+    function routeHop(address tokenIn,address tokenOut,uint256 index) external view returns(SimpleHop memory){
+        return simpleRoutes[_key(tokenIn,tokenOut)][index];
     }
 
     function routeConfig(address tokenIn,address tokenOut) external view returns(uint16 routeFeeBps,uint16 slippageBps,bool configured){
