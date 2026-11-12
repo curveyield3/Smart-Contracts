@@ -191,7 +191,6 @@ interface IEmbeddedBalancerV2Vault {
         address sender;bool fromInternalBalance;address payable recipient;bool toInternalBalance;
     }
     function swap(SingleSwap calldata,FundManagement calldata,uint256,uint256) external payable returns(uint256);
-    function getPool(bytes32) external view returns(address,uint8);
     function getPoolTokens(bytes32) external view returns(address[] memory,uint256[] memory,uint256);
 }
 interface IExternalRouterHop {
@@ -445,8 +444,6 @@ contract CurveYieldOmniRouter {
                 if(!(_curveCoin(h.swapContract,coinIn)==current &&
                         _curveCoin(h.swapContract,coinOut)==h.tokenOut)) revert ErrCurveCoinMismatch();
             } else if(h.poolType==BALANCER_WEIGHTED||h.poolType==BALANCER_STABLE){
-                (address balancerPool,)=IEmbeddedBalancerV2Vault(h.swapContract).getPool(h.poolId);
-                if(!(balancerPool!=address(0))) revert ErrBalancerPoolId();
                 (address[] memory tokens,,)=IEmbeddedBalancerV2Vault(h.swapContract).getPoolTokens(h.poolId);
                 bool foundInput;bool foundOutput;
                 for(uint256 k=0;k<tokens.length;k++){
@@ -751,7 +748,6 @@ contract CurveYieldOmniRouter {
     {
         SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
         if(!(hops.length!=0)) revert ErrRouteMissing();
-        if(!(amount>0)) revert ErrZeroAmount();
         for(uint256 i=0;i<hops.length;i++){
             address input=i==0?tokenIn:hops[i-1].tokenOut;
             amount=_simpleOracleQuote(hops[i],input,amount);
@@ -770,8 +766,9 @@ contract CurveYieldOmniRouter {
         return r.configured?r.slippageGuardBps:defaultSlippageGuardBps;
     }
     function _route(address tokenIn,address tokenOut) private view returns(Route storage r){
-        r=routes[_key(tokenIn,tokenOut)];
-        if(!(simpleRoutes[_key(tokenIn,tokenOut)].length>0)) revert ErrRouteMissing();
+        bytes32 key=_key(tokenIn,tokenOut);
+        r=routes[key];
+        if(simpleRoutes[key].length==0) revert ErrRouteMissing();
     }
     function _key(address a,address b) private pure returns(bytes32){
         return keccak256(abi.encode(a,b));
