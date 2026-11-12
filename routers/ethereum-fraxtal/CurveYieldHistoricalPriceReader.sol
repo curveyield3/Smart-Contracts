@@ -30,7 +30,7 @@ pragma solidity ^0.8.28;
  * Note: curveyield.dao may require a Brave Browser or an Unstoppable Domains browser plugin to use.
  */
 
-import {RouterFullMath,IEmbeddedV4Manager} from "./CurveYieldOmniRouter.sol";
+import {RouterFullMath} from "./CurveYieldOmniRouter.sol";
 
 interface IPriceReaderERC20 {function decimals() external view returns(uint8);}
 interface IPriceReaderV2Pair {
@@ -45,6 +45,8 @@ interface IPriceReaderV2Pair {
  * @dev Shared historical-rate reader for the Omni Router. V3 tick TWAP remains
  * inside the router itself. This contract stores only permissionless V2
  * cumulative observations and computes Curve's pool EMA-to-EMA cross rates.
+ * @notice Legacy optional historical-oracle source; NOT required by Omni Router v9.
+ *         Pool-fee accounting is now implemented entirely inside the router.
  *
  * Both quote functions return a uint256 scaled by 1e18:
  * "whole tokenOut received per one whole tokenIn" at the historical reference price.
@@ -145,38 +147,6 @@ contract CurveYieldHistoricalPriceReader {
         require(ok&&answer.length>=32,"CURVE_EMA_UNAVAILABLE");
         result=abi.decode(answer,(uint256));
         require(result>0,"CURVE_EMA_ZERO");
-    }
-
-    // Returns the credited swap fee in 1e10 precision. Unsupported fees receive no credit.
-    // For V3 and Curve stable pools, cachedFee is held in the hop's unused poolId slot.
-    function poolFee(uint16 poolType,address pool,bytes32 cachedFee,bytes calldata poolData)
-        external view returns(uint256 feeRate)
-    {
-        if(poolType==1){
-            return uint256(poolData.length==0?30:abi.decode(poolData,(uint16)))*1e6;
-        }
-        if(poolType==2){
-            return uint256(cachedFee)*1e4;
-        }
-        if(poolType==3){
-            (IEmbeddedV4Manager.PoolKey memory key4,)=abi.decode(poolData,(IEmbeddedV4Manager.PoolKey,bytes));
-            return key4.fee==0x800000?0:uint256(key4.fee)*1e4;
-        }
-        if(poolType==4||poolType==5){
-            (bool ok,bytes memory out)=pool.staticcall(abi.encodeWithSignature("fee()"));
-            require(ok&&out.length>=32,"CRYPTO_FEE_UNAVAILABLE");
-            return abi.decode(out,(uint256));
-        }
-        if(poolType==6||poolType==7){
-            (uint8 i,uint8 j)=abi.decode(poolData,(uint8,uint8));
-            (bool ok,bytes memory out)=pool.staticcall(abi.encodeWithSignature(
-                "dynamic_fee(int128,int128)",int128(uint128(i)),int128(uint128(j))
-            ));
-            if(ok&&out.length>=32)return abi.decode(out,(uint256));
-            require(poolType==6,"DYNAMIC_FEE_UNAVAILABLE");
-            return uint256(cachedFee);
-        }
-        return 0; // Unverified fee interfaces (Balancer, adapters and dynamic V4).
     }
 
     function _coin(address pool,uint8 index) private view returns(address coin) {
