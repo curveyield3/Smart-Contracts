@@ -1,4 +1,4 @@
-# CurveYield Omni Router — v6 fee-aware implementation
+# CurveYield Omni Router — v7 fee-aware implementation
 
 **Networks:** Ethereum (chain ID 1) and Fraxtal (chain ID 252).  
 **Source:** `CurveYieldOmniRouter.sol` and `CurveYieldHistoricalPriceReader.sol` only.  
@@ -141,7 +141,7 @@ The former `setRouteAdvanced` ABI-patching engine was deliberately removed from 
 ## Owner-controlled rates and swap functions
 
 - `feeBps` defaults to 10 bps (0.10%), owner cap 50 bps (0.50%); routes can override up to 50 bps.
-- `defaultSlippageGuardBps` defaults to 100 bps (1%); owner default cap 300 bps (3%); routes can override up to 500 bps (5%).
+- `defaultSlippageGuardBps` defaults to 150 bps (1.5%); owner default cap 300 bps (3%); routes can override up to 500 bps (5%).
 - `easyswap(tokenIn,tokenOut,amountIn)` uses configured automatic protection, sends final output to caller.
 - `swapExactInput(tokenIn,tokenOut,amountIn,minNetAmountOut,recipient,deadline)` also respects caller floor and deadline.
 - `price_oracle` and `estimate_exact_output` use raw historical oracle quotes; `guardedMinOut` and swaps additionally apply supported pool-fee discounts before slippage.
