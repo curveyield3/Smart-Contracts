@@ -197,11 +197,12 @@ contract CurveYieldOmniRouter {
         external view returns(uint256 amountOut)
     {
         Route storage r=_route(tokenIn,tokenOut);
-        uint256 gross=_estimateGross(r,amountIn);
+        uint256 guarded=amountIn;
         for(uint256 i=0;i<r.pathway.length;i++){
-            gross=RouterFullMath.mulDiv(gross,10000-_effectiveSlippage(r),10000);
+            uint256 expected=_oracleQuote(r.pathway[i],guarded);
+            guarded=RouterFullMath.mulDiv(expected,10000-_effectiveSlippage(r),10000);
         }
-        return RouterFullMath.mulDiv(gross,10000-r.feeBps,10000);
+        return RouterFullMath.mulDiv(guarded,10000-_effectiveFee(r),10000);
     }
     // 3-input swap; owner-selected route always applies its historical-price guard and fee.
     function easyswap(address tokenIn,address tokenOut,uint256 amountIn)
