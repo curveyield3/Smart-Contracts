@@ -80,32 +80,32 @@ jobs:
               if(!item.within_limit)process.exitCode=1;
             }
           }
-          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'omni-router-runtime-size-v7.json'),JSON.stringify(data,null,2)+'\\n');
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'omni-router-runtime-size-v8.json'),JSON.stringify(data,null,2)+'\\n');
           NODE
       - name: Upload runtime-size report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: omni-router-runtime-size-v7
-          path: ${{ runner.temp }}/omni-router-runtime-size-v7.json
+          name: omni-router-runtime-size-v8
+          path: ${{ runner.temp }}/omni-router-runtime-size-v8.json
           if-no-files-found: ignore
-      - name: Assemble router-only source package v7
+      - name: Assemble router-only source package v8
         shell: bash
         run: |
           set -euo pipefail
-          out="${RUNNER_TEMP}/CurveYield_Omni_Router_v7"
+          out="${RUNNER_TEMP}/CurveYield_Omni_Router_v8"
           mkdir -p "$out"
           cp routers/ethereum-fraxtal/CurveYieldOmniRouter.sol "$out/"
           cp routers/ethereum-fraxtal/CurveYieldHistoricalPriceReader.sol "$out/"
           {
-            printf '# CurveYield Omni Router source package v7\n\n'
+            printf '# CurveYield Omni Router source package v8\n\n'
             printf 'Ethereum + Fraxtal. Router-only package. V3 TWAP kept internally; external reader adds fee-aware route minimums; deployed reader address is immutable on router; consolidated pool execution plus future adapter support. Build results are supplied by the GitHub Actions compile job.\\n\\n'
             cat routers/ethereum-fraxtal/README_v3.md
           } > "$out/README.md"
           cat > "$out/package.json" <<'JSON'
           {
             "name": "curveyield-omni-router",
-            "version": "7.0.0",
+            "version": "8.0.0",
             "private": true,
             "description": "Ethereum/Fraxtal mixed-pool router Solidity sources",
             "dependencies": {
@@ -115,10 +115,10 @@ jobs:
           JSON
           find "$out" -maxdepth 1 -type f -printf '%f\\n' | sort
           test "$(find "$out" -maxdepth 1 -type f | wc -l)" -eq 4
-      - name: Upload clean router-only source package v7
+      - name: Upload clean router-only source package v8
         uses: actions/upload-artifact@v4
         with:
-          name: CurveYield_Omni_Router_v7
-          path: ${{ runner.temp }}/CurveYield_Omni_Router_v7/
+          name: CurveYield_Omni_Router_v8
+          path: ${{ runner.temp }}/CurveYield_Omni_Router_v8/
           if-no-files-found: error
           retention-days: 90
