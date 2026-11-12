@@ -135,28 +135,6 @@ contract CurveYieldOmniRouter {
     uint8 public constant MAX_PATCHES_PER_CALL = 24;
     uint16 public constant MAX_CALL_ARGUMENT_BYTES = 2048;
 
-    enum InputKind { Literal, SwapAmount, SlippageGuard, CurrentBlockPlus, CurrentTimestampPlus, TokenIn, TokenOut, Router }
-    struct AbiField {
-        uint16 byteOffset;
-        InputKind kind;
-        uint256 literal;
-    }
-    struct Hop {
-        address tokenIn;
-        address tokenOut;
-        address poolAddress;        // actual pool for V2/V3/Curve, PoolManager for V4
-        address executionTarget;    // target contract called; periphery router or V4 adapter when applicable
-        bytes4 writeFunctionID;
-        bytes requiredAbiInputs;   // full ABI encoding after selector, including dynamic tails
-        AbiField[] writeFields;    // dynamic word substitutions in requiredAbiInputs
-        bool transferBeforeCall;   // direct V2 pair.swap needs tokens sent ahead of call
-        address oracleAddress;     // historic-price source (not an instant swap quoter)
-        string oracleReadFunctionName; // canonical signature, e.g. price_oracle(uint256)
-        bytes oracleReadFunctionInputs;
-        AbiField[] oracleFields;
-        uint8 oracleRateDecimals;  // quote output whole-tokens per one whole input token
-        bool invertOracle;         // invert source rate when tokens are reversed
-    }
     // Stable built-in types remain part of this router. IDs >= 1000 are reserved
     // for independently deployed, owner-approved future pool-type extensions.
     uint16 public constant UNISWAP_V2 = 1;
@@ -197,7 +175,6 @@ contract CurveYieldOmniRouter {
     event ExternalAdapterConfigured(uint16 indexed poolType,address indexed adapter);
 
     struct Route {
-        Hop[] pathway;
         uint16 feeBps;
         uint16 slippageGuardBps;
         bool configured;
@@ -262,20 +239,12 @@ contract CurveYieldOmniRouter {
             _replaceSimple(key,tokenIn,tokenOut,pathway);
             emit RouteSet(tokenIn,tokenOut,pathway.length);
         } else {
-            require(simpleRoutes[key].length>0||routes[key].pathway.length>0,"ROUTE_MISSING");
+            require(simpleRoutes[key].length>0,"ROUTE_MISSING");
         }
         routes[key].feeBps=routeFeeBps;
         routes[key].slippageGuardBps=routeSlippageBps;
         routes[key].configured=true;
         emit RouteConfigSet(tokenIn,tokenOut,routeFeeBps,routeSlippageBps);
-    }
-
-    // Preserve the advanced contract-agnostic ABI route method for exceptional pools.
-    function setRouteAdvanced(address tokenIn,address tokenOut,Hop[] calldata pathway) external onlyOwner {
-        bytes32 key=_key(tokenIn,tokenOut);
-        _replaceRoute(key,tokenIn,tokenOut,pathway);
-        delete simpleRoutes[key];
-        emit RouteSet(tokenIn,tokenOut,pathway.length);
     }
 
     // Reserve external types for future pools; extensions cannot delegatecall the router.
@@ -288,10 +257,7 @@ contract CurveYieldOmniRouter {
 
     function routeLength(address tokenIn,address tokenOut) external view returns(uint256){
         bytes32 key=_key(tokenIn,tokenOut);
-        return simpleRoutes[key].length!=0?simpleRoutes[key].length:routes[key].pathway.length;
-    }
-    function routeForAdvanced(address tokenIn,address tokenOut) external view returns(Hop[] memory){
-        return routes[_key(tokenIn,tokenOut)].pathway;
+        return simpleRoutes[key].length;
     }
     function routeFor(address tokenIn,address tokenOut) external view returns(SimpleHop[] memory){
         return simpleRoutes[_key(tokenIn,tokenOut)];
@@ -317,24 +283,18 @@ contract CurveYieldOmniRouter {
         uint256 gross=_estimateRouteGross(tokenIn,tokenOut,amountIn);
         return RouterFullMath.mulDiv(gross,10000-_effectiveFee(r),10000);
     }
-    // Worst-case per-hop slippage guard compounded across a mixed route; net of fee.
+    // Applies the worst acceptable slippage at every hop and fee only once.
     function guardedMinOut(address tokenIn,address tokenOut,uint256 amountIn)
         external view returns(uint256 amountOut)
     {
         Route storage r=_route(tokenIn,tokenOut);
-        bytes32 key=_key(tokenIn,tokenOut);
+        SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
         uint256 guarded=amountIn;
-        if(simpleRoutes[key].length!=0){
-            for(uint256 i=0;i<simpleRoutes[key].length;i++){
-                address currentIn=i==0?tokenIn:simpleRoutes[key][i-1].tokenOut;
-                uint256 expected=_simpleOracleQuote(simpleRoutes[key][i],currentIn,guarded);
-                guarded=RouterFullMath.mulDiv(expected,10000-_effectiveSlippage(r),10000);
-            }
-            return RouterFullMath.mulDiv(guarded,10000-_effectiveFee(r),10000);
-        }
-        for(uint256 i=0;i<r.pathway.length;i++){
-            uint256 expected=_oracleQuote(r.pathway[i],guarded);
-            guarded=RouterFullMath.mulDiv(expected,10000-_effectiveSlippage(r),10000);
+        uint16 slip=_effectiveSlippage(r);
+        for(uint256 i=0;i<hops.length;i++){
+            address input=i==0?tokenIn:hops[i-1].tokenOut;
+            uint256 estimate=_simpleOracleQuote(hops[i],input,guarded);
+            guarded=RouterFullMath.mulDiv(estimate,10000-slip,10000);
         }
         return RouterFullMath.mulDiv(guarded,10000-_effectiveFee(r),10000);
     }
@@ -358,50 +318,9 @@ contract CurveYieldOmniRouter {
         require(block.timestamp<=deadline,"EXPIRED");
         require(amountIn>0 && recipient!=address(0) && recipient!=address(this),"BAD_SWAP");
         Route storage r=_route(tokenIn,tokenOut);
-        if(simpleRoutes[_key(tokenIn,tokenOut)].length!=0) {
-            return _swapSimple(tokenIn,tokenOut,amountIn,userMin,recipient,r);
-        }
-        uint256 originalInputBalance=IOmniERC20(tokenIn).balanceOf(address(this));
-        _safeTransferFrom(tokenIn,msg.sender,address(this),amountIn);
-        uint256 currentAmount=amountIn;
-        uint16 slip=_effectiveSlippage(r);
-        for(uint256 i=0;i<r.pathway.length;i++) {
-            Hop storage hop=r.pathway[i];
-            uint256 expected=_oracleQuote(hop,currentAmount);
-            uint256 minimum=RouterFullMath.mulDiv(expected,10000-slip,10000);
-            require(minimum>0,"DUST_MINIMUM");
-            uint256 beforeIn=IOmniERC20(hop.tokenIn).balanceOf(address(this));
-            uint256 beforeOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
-            if(hop.transferBeforeCall){
-                _safeTransfer(hop.tokenIn,hop.executionTarget,currentAmount);
-            } else {
-                _safeApprove(hop.tokenIn,hop.executionTarget,0);
-                _safeApprove(hop.tokenIn,hop.executionTarget,currentAmount);
-            }
-            bytes memory args=_fill(hop.requiredAbiInputs,hop.writeFields,currentAmount,minimum,hop.tokenIn,hop.tokenOut);
-            (bool ok,bytes memory ret)=hop.executionTarget.call(abi.encodePacked(hop.writeFunctionID,args));
-            if(!ok) _revertWith(ret);
-            if(!hop.transferBeforeCall) _safeApprove(hop.tokenIn,hop.executionTarget,0);
-            uint256 afterIn=IOmniERC20(hop.tokenIn).balanceOf(address(this));
-            require(afterIn<=beforeIn && beforeIn-afterIn==currentAmount,"HOP_INPUT_NOT_FULLY_SPENT");
-            uint256 afterOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
-            require(afterOut>=beforeOut,"OUTPUT_BALANCE_DECREASED");
-            currentAmount=afterOut-beforeOut;
-            require(currentAmount>=minimum,"HOP_SLIPPAGE");
-        }
-        uint256 fee=RouterFullMath.mulDiv(currentAmount,_effectiveFee(r),10000);
-        net=currentAmount-fee;
-        require(net>=userMin,"MIN_NET");
-        if(fee!=0) _safeTransfer(tokenOut,feeRecipient,fee);
-        _safeTransfer(tokenOut,recipient,net);
-        require(IOmniERC20(tokenIn).balanceOf(address(this))>=originalInputBalance,"INPUT_BALANCE_LOSS");
-        emit SwapExecuted(msg.sender,tokenIn,tokenOut,amountIn,net);
+        return _swapSimple(tokenIn,tokenOut,amountIn,userMin,recipient,r);
     }
 
-
-    // Owner-specified simple paths are mapped to built-in execution code, not
-    // user-supplied ABI patch lists. A future pool type uses a separately
-    // registered external adapter with exact input allowance.
     function _replaceSimple(bytes32 key,address tokenIn,address tokenOut,SimpleHop[] calldata pathway)
         internal
     {
@@ -469,7 +388,6 @@ contract CurveYieldOmniRouter {
         require(current==tokenOut,"WRONG_FINAL_TOKEN");
         delete simpleRoutes[key];
         for(uint256 i=0;i<pathway.length;i++) simpleRoutes[key].push(pathway[i]);
-        delete routes[key].pathway;
     }
 
     // Pool implementations disagree on coins(uint256) vs coins(int128).
@@ -745,114 +663,22 @@ contract CurveYieldOmniRouter {
         require(output>0,"ORACLE_DUST");
     }
 
-    function _replaceRoute(bytes32 key,address tokenIn,address tokenOut,Hop[] calldata pathway) internal {
-        require(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut,"BAD_ENDPOINTS");
-        require(pathway.length>0 && pathway.length<=MAX_HOPS,"HOP_COUNT");
-        address current=tokenIn;
-        for(uint256 i=0;i<pathway.length;i++){
-            Hop calldata h=pathway[i];
-            require(h.tokenIn==current && h.tokenOut!=address(0) && h.tokenIn!=h.tokenOut,"DISCONNECTED");
-            require(h.poolAddress.code.length>0 && h.executionTarget.code.length>0 && h.oracleAddress.code.length>0,"UNDEPLOYED_TARGET");
-            if(h.transferBeforeCall) require(h.executionTarget==h.poolAddress,"DIRECT_TRANSFER_TARGET");
-            require(h.tokenIn.code.length>0 && h.tokenOut.code.length>0,"NOT_TOKEN");
-            require(h.writeFunctionID!=bytes4(0),"MISSING_SWAP_SELECTOR");
-            require(bytes(h.oracleReadFunctionName).length>2,"MISSING_ORACLE_SIG");
-            require(h.oracleRateDecimals<=18,"ORACLE_PRECISION");
-            require(h.requiredAbiInputs.length<=MAX_CALL_ARGUMENT_BYTES,"SWAP_ARGS_LIMIT");
-            require(h.oracleReadFunctionInputs.length<=MAX_CALL_ARGUMENT_BYTES,"ORACLE_ARGS_LIMIT");
-            _validatePatches(h.requiredAbiInputs,h.writeFields);
-            _validatePatches(h.oracleReadFunctionInputs,h.oracleFields);
-            // Prevent returning to any prior token: final input must remain fully consumable.
-            for(uint256 j=0;j<i;j++) require(pathway[j].tokenIn!=h.tokenOut,"REPEATED_TOKEN");
-            require(tokenIn!=h.tokenOut,"REPEATED_START");
-            current=h.tokenOut;
-        }
-        require(current==tokenOut,"WRONG_FINAL_TOKEN");
-        delete routes[key].pathway;
-        for(uint256 i=0;i<pathway.length;i++){
-            routes[key].pathway.push(pathway[i]);
-        }
-    }
-
-    function _validatePatches(bytes calldata data,AbiField[] calldata fields) private pure {
-        require(fields.length<=MAX_PATCHES_PER_CALL,"PATCH_COUNT");
-        for(uint256 i=0;i<fields.length;i++){
-            require(uint256(fields[i].byteOffset)%32==0 && uint256(fields[i].byteOffset)+32<=data.length,"PATCH_OFFSET");
-            for(uint256 j=0;j<i;j++) require(fields[j].byteOffset!=fields[i].byteOffset,"PATCH_DUPLICATE");
-        }
-    }
     function _estimateRouteGross(address tokenIn,address tokenOut,uint256 amount)
         private view returns(uint256)
     {
-        bytes32 key=_key(tokenIn,tokenOut);
-        if(simpleRoutes[key].length==0) return _estimateGross(_route(tokenIn,tokenOut),amount);
-        SimpleHop[] storage hops=simpleRoutes[key];
+        SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
+        require(hops.length!=0,"ROUTE_MISSING");
         require(amount>0,"ZERO_AMOUNT");
         for(uint256 i=0;i<hops.length;i++){
-            address currentIn=i==0?tokenIn:hops[i-1].tokenOut;
-            amount=_simpleOracleQuote(hops[i],currentIn,amount);
+            address input=i==0?tokenIn:hops[i-1].tokenOut;
+            amount=_simpleOracleQuote(hops[i],input,amount);
         }
         return amount;
-    }
-
-    function _estimateGross(Route storage r,uint256 amount) internal view returns(uint256){
-        require(amount>0,"ZERO_AMOUNT");
-        for(uint256 i=0;i<r.pathway.length;i++){
-            amount=_oracleQuote(r.pathway[i],amount);
-            require(amount>0,"ZERO_ORACLE_QUOTE");
-        }
-        return amount;
-    }
-    function _oracleQuote(Hop storage hop,uint256 inputRaw) internal view returns(uint256){
-        bytes memory data=_fill(hop.oracleReadFunctionInputs,hop.oracleFields,inputRaw,0,hop.tokenIn,hop.tokenOut);
-        bytes memory signature=bytes(hop.oracleReadFunctionName);
-        // Accept a plain zero-argument name (e.g. "price_oracle") as well as "price_oracle()".
-        bool hasParen;
-        for(uint256 i=0;i<signature.length;i++){
-            if(signature[i]==bytes1(0x28)){hasParen=true;break;}
-        }
-        if(!hasParen){
-            require(data.length==0,"ORACLE_SIGNATURE_NEEDS_TYPES");
-            signature=abi.encodePacked(signature,"()");
-        }
-        bytes4 selector=bytes4(keccak256(signature));
-        (bool ok,bytes memory out)=hop.oracleAddress.staticcall(abi.encodePacked(selector,data));
-        if(!ok) _revertWith(out);
-        require(out.length>=32,"MALFORMED_ORACLE");
-        uint256 rate=abi.decode(out,(uint256));
-        require(rate>0,"ZERO_ORACLE_RATE");
-        uint256 precision=10**uint256(hop.oracleRateDecimals);
-        if(hop.invertOracle){
-            rate=RouterFullMath.mulDiv(precision,precision,rate);
-            require(rate>0,"INVERT_ORACLE_UNDERFLOW");
-        }
-        uint256 withRate=RouterFullMath.mulDiv(inputRaw,rate,precision);
-        return RouterFullMath.mulDiv(withRate,_unit(hop.tokenOut),_unit(hop.tokenIn));
     }
     function _unit(address token) private view returns(uint256){
         uint8 d=IOmniERC20(token).decimals();
         require(d<=36,"TOKEN_DECIMALS");
         return 10**uint256(d);
-    }
-    function _fill(bytes storage templateData,AbiField[] storage fields,uint256 amount,uint256 guard,address tokenIn,address tokenOut)
-        private view returns(bytes memory result)
-    {
-        result=templateData;
-        for(uint256 i=0;i<fields.length;i++){
-            AbiField storage p=fields[i];
-            uint256 value;
-            if(p.kind==InputKind.Literal) value=p.literal;
-            else if(p.kind==InputKind.SwapAmount) value=amount;
-            else if(p.kind==InputKind.SlippageGuard) value=guard;
-            else if(p.kind==InputKind.CurrentBlockPlus) value=block.number+p.literal;
-            else if(p.kind==InputKind.CurrentTimestampPlus) value=block.timestamp+p.literal;
-            else if(p.kind==InputKind.TokenIn) value=uint160(tokenIn);
-            else if(p.kind==InputKind.TokenOut) value=uint160(tokenOut);
-            else if(p.kind==InputKind.Router) value=uint160(address(this));
-            else revert("UNKNOWN_INPUT_KIND");
-            uint256 offset=uint256(p.byteOffset);
-            assembly ("memory-safe") { mstore(add(add(result,32),offset),value) }
-        }
     }
     function _effectiveFee(Route storage r) private view returns(uint16){
         return r.configured?r.feeBps:feeBps;
@@ -862,7 +688,7 @@ contract CurveYieldOmniRouter {
     }
     function _route(address tokenIn,address tokenOut) private view returns(Route storage r){
         r=routes[_key(tokenIn,tokenOut)];
-        require(r.pathway.length>0||simpleRoutes[_key(tokenIn,tokenOut)].length>0,"ROUTE_MISSING");
+        require(simpleRoutes[_key(tokenIn,tokenOut)].length>0,"ROUTE_MISSING");
     }
     function _key(address a,address b) private pure returns(bytes32){
         return keccak256(abi.encode(a,b));
