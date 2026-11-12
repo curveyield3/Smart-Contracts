@@ -1,12 +1,13 @@
-name: fxUSD Yearn v19 timelocked sdFXN migration compile
+name: fxUSD Yearn v28 compile and runtime sizing
 on:
   push:
-    branches: [fxusd-yearn-v19-timelocked-migrate]
+    branches: [fxusd-yearn-v28-compile]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
       - 'fxusd-yearn/compile/v17/Accountant.sol'
       - 'fxusd-yearn/compile/v17/IVault.sol'
       - 'fxusd-yearn/compile/v19/**'
+      - 'fxusd-yearn/compile/v28/**'
 permissions:
   contents: read
 jobs:
@@ -20,7 +21,7 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-      - name: Restore source and overlay v19 FXN zero-NAV child
+      - name: Restore source and overlay exact v28 contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -44,6 +45,26 @@ jobs:
           cp fxusd-yearn/compile/v18/FXNYearnMasterAllocator.sol .fxusd-compile/contracts/FXNYearnMasterAllocator.sol
           cp fxusd-yearn/compile/v19/FXNZeroNAVRewardChild.sol .fxusd-compile/contracts/FXNZeroNAVRewardChild.sol
           cp fxusd-yearn/compile/v19/DeployFXUSDYearnV19.s.sol .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
+          node <<'NODE'
+          const fs=require('fs'),path=require('path'),zlib=require('zlib');
+          const data=JSON.parse(zlib.brotliDecompressSync(
+            Buffer.from(fs.readFileSync('fxusd-yearn/compile/v28/source-overlay.b64','utf8').trim(),'base64')
+          ).toString('utf8'));
+          const expected=[
+            'contracts/FXNYearnMasterAllocator.sol',
+            'contracts/FXNZeroNAVRewardChild.sol',
+            'contracts/FXNYearnChildBase.sol',
+            'contracts/CurveConvex32YearnStrategy.sol',
+            'contracts/FxBaseConvex37YearnStrategy.sol',
+            'script/DeployFXUSDYearnV26.s.sol'
+          ];
+          if (Object.keys(data).length!==expected.length || expected.some(x=>typeof data[x]!=='string')) throw Error('incomplete v28 overlay');
+          for(const [relative,contents] of Object.entries(data)){
+            if(!expected.includes(relative)) throw Error('unexpected v28 overlay path');
+            fs.writeFileSync(path.join('.fxusd-compile',relative),contents);
+          }
+          console.log('Applied',expected.length,'exact v28 source overlays');
+          NODE
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           git clone --depth 1 -q --branch v1.9.7 https://github.com/foundry-rs/forge-std.git .fxusd-compile/node_modules/forge-std
           sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
@@ -56,7 +77,7 @@ jobs:
           cd .fxusd-compile
           sed -i 's/function availableWithdrawLimit(address) public view override/function availableWithdrawLimit(address) public view virtual override/' contracts/FXNYearnChildBase.sol
           forge build --use 0.8.30 --via-ir --sizes 2>&1 | tee compile.log
-          forge build script/DeployFXUSDYearnV19.s.sol --use 0.8.30 --via-ir 2>&1 | tee -a compile.log
+          forge build script/DeployFXUSDYearnV26.s.sol --use 0.8.30 --via-ir 2>&1 | tee -a compile.log
           python3 - <<'PY'
           import json
           from pathlib import Path
@@ -70,16 +91,16 @@ jobs:
               creation=artifact['bytecode']['object'].removeprefix('0x')
               report['contracts'][name]={'runtime_bytes':len(runtime)//2,'creation_bytes':len(creation)//2,'eip170_headroom':24576-len(runtime)//2}
               print(f'FINAL_SIZE {name}: runtime={len(runtime)//2}, creation={len(creation)//2}, eip170_headroom={24576-len(runtime)//2}')
-          Path('size-report.json').write_text(json.dumps(report,indent=2)+'\n')
+          Path('size-report-v28.json').write_text(json.dumps(report,indent=2)+'\n')
           PY
       - name: Save compiler output and official source
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fxusd-v19-sdfxn-timelocked-migration-compile-report
+          name: fxusd-v28-runtime-size-compile-report
           path: |
             .fxusd-compile/compile.log
-            .fxusd-compile/size-report.json
+            .fxusd-compile/size-report-v28.json
             .fxusd-compile/contracts/Accountant.sol
             .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
           if-no-files-found: warn
