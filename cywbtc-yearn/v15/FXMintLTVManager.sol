@@ -38,6 +38,14 @@ interface IFXMintManagerConfig {
 interface IFXMintManagerVault {
     function executeInternal(FuseAction[] calldata actions) external;
 }
+interface IFXMintFXSPChild {
+    function STAKING_TOKEN() external view returns (address);
+    function REGISTRY() external view returns (address);
+    function GAUGE() external view returns (address);
+}
+interface IFXMintConvexRegistry {
+    function vaultMap(uint256 poolId, address owner) external view returns (address);
+}
 interface IFXMintYearnMaster {
     function YEARN_VAULT() external view returns (address);
     function pool37Child() external view returns (address);
@@ -391,10 +399,16 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             uint256 safeAmount = _feeFreeYearnLiquidity();
             if (shortfall > safeAmount) revert FxSPInstantExitWouldChargeFee(shortfall, safeAmount);
         }
+        uint256 beforeFxSP = protectFromFxSPFee ? _fxSPPositionShares() : 0;
         uint256 beforeAssets = IERC20(FXUSD).balanceOf(address(this));
         _executeOne(ERC4626_SUPPLY_FUSE, abi.encodeWithSignature(
             "exit((address,uint256,uint256))",
             Erc4626SupplyFuseExitData(YEARN_VAULT, shortfall, 0)));
+        if (protectFromFxSPFee && _fxSPPositionShares() < beforeFxSP) {
+            // Even if a child unexpectedly becomes illiquid and the master
+            // falls through to fxSP, revert the entire atomic Yearn exit.
+            revert FxSPInstantExitWouldChargeFee(shortfall, 0);
+        }
         uint256 recovered = IERC20(FXUSD).balanceOf(address(this)) - beforeAssets;
         if (recovered < shortfall) revert InsufficientLiquidity(shortfall, recovered);
     }
@@ -404,6 +418,21 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     ///      unreserved idle master fxUSD. Stop when fee-bearing fxSP would be
     ///      touched. Yearn vault's own idle fxUSD is used before the master.
     ///      This is a *guard*, not a promise that other redemptions succeed.
+    /// @dev Snapshot the actual fxSP units across idle holdings and Convex
+    ///      personal gauge. Any fee-bearing instant redemption consumes fxSP.
+    ///      This after-exit assertion makes the guard enforceable even if a
+    ///      pre-exit Curve child liquidity estimate was optimistic.
+    function _fxSPPositionShares() private view returns (uint256 units) {
+        address child = IFXMintYearnMaster(YEARN_MASTER).pool37Child();
+        if (child == address(0)) revert InvalidConfiguration();
+        IFXMintFXSPChild c = IFXMintFXSPChild(child);
+        address fxsp = c.STAKING_TOKEN();
+        address gauge = c.GAUGE();
+        units = IERC20(fxsp).balanceOf(child);
+        address personal = IFXMintConvexRegistry(c.REGISTRY()).vaultMap(37, child);
+        if (personal != address(0)) units += IERC20(gauge).balanceOf(personal);
+    }
+
     function _feeFreeYearnLiquidity() private view returns (uint256 safe) {
         IFXMintYearnMaster master = IFXMintYearnMaster(YEARN_MASTER);
         address taxedChild = master.pool37Child();
