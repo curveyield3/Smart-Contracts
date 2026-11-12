@@ -148,16 +148,15 @@ contract CurveYieldHistoricalPriceReader {
     }
 
     // Returns the credited swap fee in 1e10 precision. Unsupported fees receive no credit.
-    // Cache V3 and Curve stable base fees in hop.poolData when setting the route.
-    function poolFee(uint16 poolType,address pool,bytes calldata poolData)
+    // For V3 and Curve stable pools, cachedFee is held in the hop's unused poolId slot.
+    function poolFee(uint16 poolType,address pool,bytes32 cachedFee,bytes calldata poolData)
         external view returns(uint256 feeRate)
     {
         if(poolType==1){
             return uint256(poolData.length==0?30:abi.decode(poolData,(uint16)))*1e6;
         }
         if(poolType==2){
-            (,uint24 fee)=abi.decode(poolData,(uint32,uint24));
-            return uint256(fee)*1e4;
+            return uint256(cachedFee)*1e4;
         }
         if(poolType==3){
             (IEmbeddedV4Manager.PoolKey memory key4,)=abi.decode(poolData,(IEmbeddedV4Manager.PoolKey,bytes));
@@ -169,13 +168,13 @@ contract CurveYieldHistoricalPriceReader {
             return abi.decode(out,(uint256));
         }
         if(poolType==6||poolType==7){
-            (uint8 i,uint8 j,uint256 baseFee)=abi.decode(poolData,(uint8,uint8,uint256));
+            (uint8 i,uint8 j)=abi.decode(poolData,(uint8,uint8));
             (bool ok,bytes memory out)=pool.staticcall(abi.encodeWithSignature(
                 "dynamic_fee(int128,int128)",int128(uint128(i)),int128(uint128(j))
             ));
             if(ok&&out.length>=32)return abi.decode(out,(uint256));
             require(poolType==6,"DYNAMIC_FEE_UNAVAILABLE");
-            return baseFee;
+            return uint256(cachedFee);
         }
         return 0; // Unverified fee interfaces (Balancer, adapters and dynamic V4).
     }
