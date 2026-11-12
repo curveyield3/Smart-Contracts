@@ -542,19 +542,23 @@ contract CurveYieldOmniRouter {
             _executeV3(hop,tokenIn,amount);
         } else if(t==UNISWAP_V4){
             _executeV4(hop,tokenIn,amount);
-        } else if(_isCurve(t)){
-            _executeCurve(hop,tokenIn,amount);
-        } else if(t==BALANCER_WEIGHTED||t==BALANCER_STABLE){
-            _executeBalancerV2(hop,tokenIn,amount);
         } else {
-            address adapter=externalAdapters[t];
-            if(!(adapter!=address(0)&&adapter.code.length>0)) revert ErrExtensionNotActive();
-            _safeApprove(tokenIn,adapter,0);
-            _safeApprove(tokenIn,adapter,amount);
-            IExternalRouterHop(adapter).executeHop(
-                hop.swapContract,tokenIn,hop.tokenOut,amount,0,hop.poolId,hop.poolData
-            );
-            _safeApprove(tokenIn,adapter,0);
+            bool curve=_isCurve(t);
+            bool balancer=t==BALANCER_WEIGHTED||t==BALANCER_STABLE;
+            address spender=curve||balancer?hop.swapContract:externalAdapters[t];
+            if(!(curve||balancer) && !(spender!=address(0)&&spender.code.length>0)) revert ErrExtensionNotActive();
+            _safeApprove(tokenIn,spender,0);
+            _safeApprove(tokenIn,spender,amount);
+            if(curve){
+                _executeCurve(hop,tokenIn,amount);
+            } else if(balancer){
+                _executeBalancerV2(hop,tokenIn,amount);
+            } else {
+                IExternalRouterHop(spender).executeHop(
+                    hop.swapContract,tokenIn,hop.tokenOut,amount,0,hop.poolId,hop.poolData
+                );
+            }
+            _safeApprove(tokenIn,spender,0);
         }
     }
 
@@ -575,21 +579,16 @@ contract CurveYieldOmniRouter {
 
     function _executeCurve(SimpleHop storage hop,address tokenIn,uint256 amount) private {
         (uint8 i,uint8 j)=abi.decode(hop.poolData,(uint8,uint8));
-        _safeApprove(tokenIn,hop.swapContract,0);
-        _safeApprove(tokenIn,hop.swapContract,amount);
         bytes4 selector=hop.poolType==CURVE_STABLESWAP||hop.poolType==CURVE_STABLESWAP_NG
             ?bytes4(keccak256("exchange(int128,int128,uint256,uint256)"))
             :bytes4(keccak256("exchange(uint256,uint256,uint256,uint256)"));
         bytes memory payload=abi.encodeWithSelector(selector,uint256(i),uint256(j),amount,0);
         (bool ok,bytes memory reason)=hop.swapContract.call(payload);
         if(!ok) _revertWith(reason);
-        _safeApprove(tokenIn,hop.swapContract,0);
     }
 
     function _executeBalancerV2(SimpleHop storage hop,address tokenIn,uint256 amount) private {
         IEmbeddedBalancerV2Vault vault=IEmbeddedBalancerV2Vault(hop.swapContract);
-        _safeApprove(tokenIn,hop.swapContract,0);
-        _safeApprove(tokenIn,hop.swapContract,amount);
         IEmbeddedBalancerV2Vault.SingleSwap memory single=IEmbeddedBalancerV2Vault.SingleSwap({
             poolId:hop.poolId,kind:IEmbeddedBalancerV2Vault.SwapKind.GIVEN_IN,
             assetIn:tokenIn,assetOut:hop.tokenOut,amount:amount,userData:hop.poolData
@@ -598,7 +597,6 @@ contract CurveYieldOmniRouter {
             sender:address(this),fromInternalBalance:false,recipient:payable(address(this)),toInternalBalance:false
         });
         vault.swap(single,funds,0,block.timestamp);
-        _safeApprove(tokenIn,hop.swapContract,0);
     }
 
 
