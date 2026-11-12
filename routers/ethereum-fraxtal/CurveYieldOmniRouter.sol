@@ -141,11 +141,6 @@ contract CurveYieldOmniRouter {
     function setRoute(address tokenIn,address tokenOut,Hop[] calldata pathway) external onlyOwner {
         bytes32 key=_key(tokenIn,tokenOut);
         _replaceRoute(key,tokenIn,tokenOut,pathway);
-        if(!routes[key].configured) {
-            routes[key].feeBps=feeBps;
-            routes[key].slippageGuardBps=defaultSlippageGuardBps;
-            routes[key].configured=true;
-        }
         emit RouteSet(tokenIn,tokenOut,pathway.length);
     }
 
@@ -179,7 +174,7 @@ contract CurveYieldOmniRouter {
     }
     function routeConfig(address tokenIn,address tokenOut) external view returns(uint16 routeFeeBps,uint16 slippageBps,bool configured){
         Route storage r=routes[_key(tokenIn,tokenOut)];
-        return(r.feeBps,r.slippageGuardBps,r.configured);
+        return(_effectiveFee(r),_effectiveSlippage(r),r.configured);
     }
 
     // An oracle rate is the quantity of tokenOut per one whole tokenIn, scaled by 1e18.
@@ -195,7 +190,7 @@ contract CurveYieldOmniRouter {
     {
         Route storage r=_route(tokenIn,tokenOut);
         uint256 gross=_estimateGross(r,amountIn);
-        return RouterFullMath.mulDiv(gross,10000-r.feeBps,10000);
+        return RouterFullMath.mulDiv(gross,10000-_effectiveFee(r),10000);
     }
     // Worst-case per-hop slippage guard compounded across a mixed route; net of fee.
     function guardedMinOut(address tokenIn,address tokenOut,uint256 amountIn)
@@ -204,7 +199,7 @@ contract CurveYieldOmniRouter {
         Route storage r=_route(tokenIn,tokenOut);
         uint256 gross=_estimateGross(r,amountIn);
         for(uint256 i=0;i<r.pathway.length;i++){
-            gross=RouterFullMath.mulDiv(gross,10000-r.slippageGuardBps,10000);
+            gross=RouterFullMath.mulDiv(gross,10000-_effectiveSlippage(r),10000);
         }
         return RouterFullMath.mulDiv(gross,10000-r.feeBps,10000);
     }
@@ -231,12 +226,13 @@ contract CurveYieldOmniRouter {
         uint256 originalInputBalance=IOmniERC20(tokenIn).balanceOf(address(this));
         _safeTransferFrom(tokenIn,msg.sender,address(this),amountIn);
         uint256 currentAmount=amountIn;
-        uint16 slip=r.slippageGuardBps;
+        uint16 slip=_effectiveSlippage(r);
         for(uint256 i=0;i<r.pathway.length;i++) {
             Hop storage hop=r.pathway[i];
             uint256 expected=_oracleQuote(hop,currentAmount);
             uint256 minimum=RouterFullMath.mulDiv(expected,10000-slip,10000);
             require(minimum>0,"DUST_MINIMUM");
+            uint256 beforeIn=IOmniERC20(hop.tokenIn).balanceOf(address(this));
             uint256 beforeOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
             if(hop.transferBeforeCall){
                 _safeTransfer(hop.tokenIn,hop.poolAddress,currentAmount);
@@ -248,12 +244,14 @@ contract CurveYieldOmniRouter {
             (bool ok,bytes memory ret)=hop.poolAddress.call(abi.encodePacked(hop.writeFunctionID,args));
             if(!ok) _revertWith(ret);
             if(!hop.transferBeforeCall) _safeApprove(hop.tokenIn,hop.poolAddress,0);
+            uint256 afterIn=IOmniERC20(hop.tokenIn).balanceOf(address(this));
+            require(afterIn<=beforeIn && beforeIn-afterIn==currentAmount,"HOP_INPUT_NOT_FULLY_SPENT");
             uint256 afterOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
             require(afterOut>=beforeOut,"OUTPUT_BALANCE_DECREASED");
             currentAmount=afterOut-beforeOut;
             require(currentAmount>=minimum,"HOP_SLIPPAGE");
         }
-        uint256 fee=RouterFullMath.mulDiv(currentAmount,r.feeBps,10000);
+        uint256 fee=RouterFullMath.mulDiv(currentAmount,_effectiveFee(r),10000);
         net=currentAmount-fee;
         require(net>=userMin,"MIN_NET");
         if(fee!=0) _safeTransfer(tokenOut,feeRecipient,fee);
@@ -346,9 +344,15 @@ contract CurveYieldOmniRouter {
             assembly { mstore(add(add(result,32),offset),value) }
         }
     }
+    function _effectiveFee(Route storage r) private view returns(uint16){
+        return r.configured?r.feeBps:feeBps;
+    }
+    function _effectiveSlippage(Route storage r) private view returns(uint16){
+        return r.configured?r.slippageGuardBps:defaultSlippageGuardBps;
+    }
     function _route(address tokenIn,address tokenOut) private view returns(Route storage r){
         r=routes[_key(tokenIn,tokenOut)];
-        require(r.configured&&r.pathway.length>0,"ROUTE_MISSING");
+        require(r.pathway.length>0,"ROUTE_MISSING");
     }
     function _key(address a,address b) private pure returns(bytes32){
         return keccak256(abi.encode(a,b));
