@@ -1,4 +1,4 @@
-# CurveYield Omni Router — v7 fee-aware implementation
+# CurveYield Omni Router — v8 fee-aware compact implementation
 
 **Networks:** Ethereum (chain ID 1) and Fraxtal (chain ID 252).  
 **Source:** `CurveYieldOmniRouter.sol` and `CurveYieldHistoricalPriceReader.sol` only.  
@@ -12,6 +12,8 @@ There is **one route representation and one swap accounting path**. Earlier v2 h
 Uniswap V3's `observe()` tick TWAP remains **inside the router**. The external `CurveYieldHistoricalPriceReader` contains the V2 cumulative-price checkpoints, Curve pool EMA rate conversion, and a read-only pool-fee lookup used by the route guard. Other pool types supply their own independently reviewed historical oracle. Every swap enforces one **aggregate route-wide oracle-derived minimum** on final output while continuing to verify actual token balance changes and full input consumption at every hop. The default router fee is taken once on the final output.
 
 The original CurveYield branded contract header is preserved in both Solidity files.
+
+**v8 bytecode-preserving refactor:** Curve exchange variants share one ABI encoder with their original selectors; V2/V3 routes share endpoint verification but retain distinct fee/TWAP validation and errors; Curve, Balancer V2 and adapter executors share the same reset-exact-allowance / execute / reset allowance sequence; Curve built-in types use a bounded contiguous ID check; and `guardedMinOut()` and swaps share their gross output minimum calculation. V3 TWAP mathematics remain embedded and unchanged. Exact input spend, output balance, route-wide oracle guard, and authenticated callbacks remain enforced.
 
 ## Simplified route entry points
 
@@ -114,7 +116,7 @@ All recorded fees are used solely to establish the minimum *gross* route output.
 
 `routeHop` returns the stored fee snapshot for V3/Curve stable pools through `poolId`; the router overrides caller-supplied `poolId` for these types. V4 and Balancer `poolId` retain their normal pool-identifier meanings.
 
-**Dynamic-fee limitation:** pre-swap `dynamic_fee(i,j)` and CryptoSwap `fee()` describe current pool state, not an exact guaranteed fee for the eventual amount-specific swap. A trade can alter the fee during its own execution. This approximate allowance can exceed the fee actually charged and therefore weaken the nominal 1% *additional* slippage guarantee. Deployment requires review of the specific Curve implementation and realistic swap sizes. Fee getters are source-bound requirements, not universal interfaces.
+**Dynamic-fee limitation:** pre-swap `dynamic_fee(i,j)` and CryptoSwap `fee()` describe current pool state, not an exact guaranteed fee for the eventual amount-specific swap. A trade can alter the fee during its own execution. This approximate allowance can exceed the fee actually charged and therefore weaken the nominal 1.5% default *additional* slippage guarantee. Deployment requires review of the specific Curve implementation and realistic swap sizes. Fee getters are source-bound requirements, not universal interfaces.
 
 The fee-reader is an immutable deployment dependency. The pool-fee adjustment cannot be disabled on a per-route basis after deployment; unsupported or incorrectly formatted fee getters can make a route unusable.
 
