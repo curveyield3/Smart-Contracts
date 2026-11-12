@@ -88,3 +88,37 @@ jobs:
           name: omni-router-runtime-size-v1
           path: ${{ runner.temp }}/omni-router-runtime-size-v1.json
           if-no-files-found: ignore
+      - name: Assemble router-only source package v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/CurveYield_Omni_Router_v2"
+          mkdir -p "$out"
+          cp routers/ethereum-fraxtal/CurveYieldOmniRouter.sol "$out/"
+          cp routers/ethereum-fraxtal/CurveYieldHistoricalOracleAdapters.sol "$out/"
+          cp routers/ethereum-fraxtal/CurveYieldV4ExactInputExecutor.sol "$out/"
+          {
+            printf '# CurveYield Omni Router source package v2\\n\\n'
+            printf 'Ethereum + Fraxtal. Router-only package. Contract source unchanged from GitHub implementation v1.\\n\\n'
+            cat routers/ethereum-fraxtal/README_v1.md
+          } > "$out/README.md"
+          cat > "$out/package.json" <<'JSON'
+          {
+            "name": "curveyield-omni-router",
+            "version": "2.0.0",
+            "private": true,
+            "description": "Ethereum/Fraxtal mixed-pool router Solidity sources",
+            "dependencies": {
+              "@uniswap/v4-core": "1.0.2"
+            }
+          }
+          JSON
+          find "$out" -maxdepth 1 -type f -printf '%f\\n' | sort
+          test "$(find "$out" -maxdepth 1 -type f | wc -l)" -eq 5
+      - name: Upload clean router-only source package v2
+        uses: actions/upload-artifact@v4
+        with:
+          name: CurveYield_Omni_Router_v2
+          path: ${{ runner.temp }}/CurveYield_Omni_Router_v2/
+          if-no-files-found: error
+          retention-days: 90
