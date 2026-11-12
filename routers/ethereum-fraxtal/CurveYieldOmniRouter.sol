@@ -95,7 +95,7 @@ error ErrFeeCap();
 error ErrHistoricalReaderRequired();
 error ErrHopCount();
 error ErrHopInputNotFullySpent();
-error ErrHopSlippage();
+error ErrRouteSlippage();
 error ErrInputBalanceLoss();
 error ErrInvalidExtension();
 error ErrInvalidTokens();
@@ -200,7 +200,7 @@ interface IExternalRouterHop {
 /**
  * @dev Pool-specific execution is embedded. Future pool types may use an
  * external adapter. The token flow and historical-price guard are enforced
- * by this router for every hop.
+ * by this router for the full route.
  */
 contract CurveYieldOmniRouter {
     uint16 public constant DEFAULT_SLIPPAGE_BPS = 100;
@@ -359,19 +359,14 @@ contract CurveYieldOmniRouter {
         uint256 gross=_estimateRouteGross(tokenIn,tokenOut,amountIn);
         return RouterFullMath.mulDiv(gross,10000-_effectiveFee(r),10000);
     }
-    // Applies the worst acceptable slippage at every hop and fee only once.
+    // Apply the route-wide historical slippage allowance and fee only once.
     function guardedMinOut(address tokenIn,address tokenOut,uint256 amountIn)
         external view returns(uint256 amountOut)
     {
         Route storage r=_route(tokenIn,tokenOut);
-        SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
-        uint256 guarded=amountIn;
-        uint16 slip=_effectiveSlippage(r);
-        for(uint256 i=0;i<hops.length;i++){
-            address input=i==0?tokenIn:hops[i-1].tokenOut;
-            uint256 estimate=_simpleOracleQuote(hops[i],input,guarded);
-            guarded=RouterFullMath.mulDiv(estimate,10000-slip,10000);
-        }
+        uint256 guarded=RouterFullMath.mulDiv(
+            _estimateRouteGross(tokenIn,tokenOut,amountIn),10000-_effectiveSlippage(r),10000
+        );
         return RouterFullMath.mulDiv(guarded,10000-_effectiveFee(r),10000);
     }
     // 3-input swap; owner-selected route always applies its historical-price guard and fee.
@@ -490,15 +485,19 @@ contract CurveYieldOmniRouter {
         uint256 userMin,address recipient,Route storage r
     ) private returns(uint256 net){
         SimpleHop[] storage hops=simpleRoutes[_key(tokenIn,tokenOut)];
+        uint256 minimum=RouterFullMath.mulDiv(
+            _estimateRouteGross(tokenIn,tokenOut,amountIn),10000-_effectiveSlippage(r),10000
+        );
+        if(!(minimum>0)) revert ErrDustMinimum();
         uint256 originalBalance=IOmniERC20(tokenIn).balanceOf(address(this));
         _safeTransferFrom(tokenIn,msg.sender,address(this),amountIn);
         if(!(IOmniERC20(tokenIn).balanceOf(address(this))==originalBalance+amountIn)) revert ErrNonstandardInput();
         uint256 amount=amountIn;
-        uint16 slippage=_effectiveSlippage(r);
         for(uint256 i=0;i<hops.length;i++){
             address from=i==0?tokenIn:hops[i-1].tokenOut;
-            amount=_swapSimpleHop(hops[i],from,amount,slippage);
+            amount=_swapSimpleHop(hops[i],from,amount);
         }
+        if(!(amount>=minimum)) revert ErrRouteSlippage();
         uint256 protocolFee=RouterFullMath.mulDiv(amount,_effectiveFee(r),10000);
         net=amount-protocolFee;
         if(!(net>=userMin)) revert ErrMinNet();
@@ -509,22 +508,17 @@ contract CurveYieldOmniRouter {
     }
 
     function _swapSimpleHop(
-        SimpleHop storage hop,address tokenIn,uint256 amount,uint16 slippage
+        SimpleHop storage hop,address tokenIn,uint256 amount
     ) private returns(uint256 outAmount){
-        uint256 minHop=RouterFullMath.mulDiv(
-            _simpleOracleQuote(hop,tokenIn,amount),10000-slippage,10000
-        );
-        if(!(minHop>0)) revert ErrDustMinimum();
         address tokenOut=hop.tokenOut;
         uint256 beforeIn=IOmniERC20(tokenIn).balanceOf(address(this));
         uint256 beforeOut=IOmniERC20(tokenOut).balanceOf(address(this));
-        _executeSimpleHop(hop,tokenIn,amount,minHop);
+        _executeSimpleHop(hop,tokenIn,amount,0);
         uint256 afterIn=IOmniERC20(tokenIn).balanceOf(address(this));
         uint256 afterOut=IOmniERC20(tokenOut).balanceOf(address(this));
         if(!(afterIn<=beforeIn && beforeIn-afterIn==amount)) revert ErrHopInputNotFullySpent();
         if(!(afterOut>=beforeOut)) revert ErrOutputBalanceDecreased();
         outAmount=afterOut-beforeOut;
-        if(!(outAmount>=minHop)) revert ErrHopSlippage();
     }
 
     function _executeSimpleHop(SimpleHop storage hop,address tokenIn,uint256 amount,uint256 minOut) internal {
