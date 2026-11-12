@@ -305,7 +305,17 @@ contract CurveYieldOmniRouter {
     }
     function _oracleQuote(Hop storage hop,uint256 inputRaw) internal view returns(uint256){
         bytes memory data=_fill(hop.oracleReadFunctionInputs,hop.oracleFields,inputRaw,0,hop.tokenIn,hop.tokenOut);
-        bytes4 selector=bytes4(keccak256(bytes(hop.oracleReadFunctionName)));
+        bytes memory signature=bytes(hop.oracleReadFunctionName);
+        // Accept a plain zero-argument name (e.g. "price_oracle") as well as "price_oracle()".
+        bool hasParen;
+        for(uint256 i=0;i<signature.length;i++){
+            if(signature[i]==bytes1(0x28)){hasParen=true;break;}
+        }
+        if(!hasParen){
+            require(data.length==0,"ORACLE_SIGNATURE_NEEDS_TYPES");
+            signature=abi.encodePacked(signature,"()");
+        }
+        bytes4 selector=bytes4(keccak256(signature));
         (bool ok,bytes memory out)=hop.oracleAddress.staticcall(abi.encodePacked(selector,data));
         if(!ok) _revertWith(out);
         require(out.length>=32,"MALFORMED_ORACLE");
