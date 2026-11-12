@@ -46,6 +46,25 @@ jobs:
           cp fxusd-yearn/compile/v18/FXNYearnMasterAllocator.sol .fxusd-compile/contracts/FXNYearnMasterAllocator.sol
           cp fxusd-yearn/compile/v19/FXNZeroNAVRewardChild.sol .fxusd-compile/contracts/FXNZeroNAVRewardChild.sol
           cp fxusd-yearn/compile/v19/DeployFXUSDYearnV19.s.sol .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
+          # v20 source correction: the live Curve USDC/fxUSD pool is StableSwap-NG,
+          # not a legacy fixed-size-array pool. Preserve all other audited code.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.fxusd-compile/contracts/CurveConvex32YearnStrategy.sol')
+          s = p.read_text()
+          replacements = (
+              ('function add_liquidity(uint256[2] calldata, uint256 minLp)',
+               'function add_liquidity(uint256[] calldata, uint256 minLp)'),
+              ('function calc_token_amount(uint256[2] calldata amounts, bool isDeposit)',
+               'function calc_token_amount(uint256[] calldata amounts, bool isDeposit)'),
+              ('uint256[2] memory a;', 'uint256[] memory a = new uint256[](2);'),
+          )
+          for before,after in replacements:
+              if s.count(before) != 1: raise RuntimeError(f'Unexpected original Curve ABI at {before}')
+              s=s.replace(before,after)
+          p.write_text(s)
+          print('Curve StableSwap-NG ABI v20 applied to exact strategy source')
+          PY
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           git clone --depth 1 -q --branch v1.9.7 https://github.com/foundry-rs/forge-std.git .fxusd-compile/node_modules/forge-std
           sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
