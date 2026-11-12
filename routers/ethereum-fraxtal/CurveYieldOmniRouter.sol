@@ -429,7 +429,7 @@ contract CurveYieldOmniRouter {
                 if(h.poolData.length!=0){
                     if(h.poolType==UNISWAP_V2){
                         if(!(abi.decode(h.poolData,(uint16))<=1000)) revert ErrV2FeeCap();
-                    } else if(!(abi.decode(h.poolData,(uint32))>=900)) revert ErrV3TwapWindow();
+                    } else if(!(abi.decode(h.poolData,(uint32))>=300)) revert ErrV3TwapWindow();
                 }
             } else if(h.poolType==UNISWAP_V4){
                 (IEmbeddedV4Manager.PoolKey memory key4,bytes memory hookData)=
@@ -687,7 +687,7 @@ contract CurveYieldOmniRouter {
     function _v3HistoricalQuote(SimpleHop storage hop,address tokenIn,uint256 amount)
         private view returns(uint256)
     {
-        uint32 window=hop.poolData.length==0?900:abi.decode(hop.poolData,(uint32));
+        uint32 window=hop.poolData.length==0?300:abi.decode(hop.poolData,(uint32));
         // The minimum window is validated once when setRoute installs this hop.
         uint32[] memory secondsAgo=new uint32[](2);
         secondsAgo[0]=window;
