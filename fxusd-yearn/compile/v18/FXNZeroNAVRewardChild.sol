@@ -272,13 +272,14 @@ contract FXNZeroNAVRewardChild is BaseStrategy {
             _stakeBoostHub(sdCompound, minCredit);
         }
         uint256 sdForFXN = sdRewards - sdCompound;
+        uint256 convertedSdFXNToFXN;
         if (sdForFXN != 0) {
             if (minSdFXNToFXN == 0) revert InvalidConfiguration();
             uint256 beforeFXN = FXN.balanceOf(address(this));
             SDFXN.forceApprove(address(CURVE), sdForFXN);
             CURVE.exchange(1, 0, sdForFXN, minSdFXNToFXN);
             SDFXN.forceApprove(address(CURVE), 0);
-            directFXN += FXN.balanceOf(address(this)) - beforeFXN;
+            convertedSdFXNToFXN = FXN.balanceOf(address(this)) - beforeFXN;
         }
         for (uint256 i; i < conversionTokens.length; ++i) {
             address token = conversionTokens[i];
@@ -298,9 +299,13 @@ contract FXNZeroNAVRewardChild is BaseStrategy {
         if (directFXN != 0) {
             uint256 compounded = Math.mulDiv(directFXN, compoundBps, BPS);
             if (compounded != 0) _addLiquidity(compounded, 0, 0);
-            returnedFXN = directFXN - compounded;
+            returnedFXN = directFXN - compounded + convertedSdFXNToFXN;
             if (returnedFXN != 0) FXN.safeTransfer(MASTER, returnedFXN);
-            emit YieldProcessed(directFXN, compounded, returnedFXN);
+            emit YieldProcessed(directFXN + convertedSdFXNToFXN, compounded, returnedFXN);
+        } else if (convertedSdFXNToFXN != 0) {
+            returnedFXN = convertedSdFXNToFXN;
+            FXN.safeTransfer(MASTER, returnedFXN);
+            emit YieldProcessed(returnedFXN, 0, returnedFXN);
         }
     }
 }
