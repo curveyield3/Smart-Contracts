@@ -9,6 +9,7 @@ on:
       - 'fxusd-yearn/compile/v19/**'
       - 'cywbtc-yearn/v18/**'
       - 'cywbtc-yearn/v19/**'
+      - 'cywbtc-yearn/v20/**'
 permissions:
   contents: read
 jobs:
@@ -43,7 +44,7 @@ jobs:
           cp fxusd-yearn/compile/v17/Accountant.sol .fxusd-compile/contracts/Accountant.sol
           cp fxusd-yearn/compile/v17/IVault.sol .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
           mkdir -p .fxusd-compile/script
-          cp fxusd-yearn/compile/v18/FXNYearnMasterAllocator.sol .fxusd-compile/contracts/FXNYearnMasterAllocator.sol
+          cp cywbtc-yearn/v20/contracts/yearn/FXNYearnMasterAllocator.sol .fxusd-compile/contracts/FXNYearnMasterAllocator.sol
           cp fxusd-yearn/compile/v19/FXNZeroNAVRewardChild.sol .fxusd-compile/contracts/FXNZeroNAVRewardChild.sol
           cp fxusd-yearn/compile/v19/DeployFXUSDYearnV19.s.sol .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
           # v20 source correction: the live Curve USDC/fxUSD pool is StableSwap-NG,
