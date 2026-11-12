@@ -91,6 +91,7 @@ interface IEmbeddedBalancerV2Vault {
     }
     function swap(SingleSwap calldata,FundManagement calldata,uint256,uint256) external payable returns(uint256);
     function getPool(bytes32) external view returns(address,uint8);
+    function getPoolTokens(bytes32) external view returns(address[] memory,uint256[] memory,uint256);
 }
 interface IExternalRouterHop {
     // An extension receives exact ERC20 allowance only for this hop, never delegatecall.
@@ -175,6 +176,7 @@ contract CurveYieldOmniRouter {
     uint256 private activeV3Amount;
     bool private v3CallbackConsumed;
     address private activeV4Manager;
+    bool private v4CallbackConsumed;
 
     event ExternalAdapterConfigured(uint16 indexed poolType,address indexed adapter);
     event V2PriceCheckpointed(address indexed pair,uint32 timestamp);
@@ -270,7 +272,8 @@ contract CurveYieldOmniRouter {
     }
 
     function routeLength(address tokenIn,address tokenOut) external view returns(uint256){
-        return routes[_key(tokenIn,tokenOut)].pathway.length;
+        bytes32 key=_key(tokenIn,tokenOut);
+        return simpleRoutes[key].length!=0?simpleRoutes[key].length:routes[key].pathway.length;
     }
     function routeForAdvanced(address tokenIn,address tokenOut) external view returns(Hop[] memory){
         return routes[_key(tokenIn,tokenOut)].pathway;
@@ -424,11 +427,18 @@ contract CurveYieldOmniRouter {
             } else if(_isCurve(h.poolType)){
                 (uint8 coinIn,uint8 coinOut)=abi.decode(h.poolData,(uint8,uint8));
                 require(coinIn!=coinOut,"CURVE_INDEX");
-                // Curve pools vary in their coins() ABI across generations;
-                // execution still enforces exact token input/output balance changes.
+                require(_curveCoin(h.swapContract,coinIn)==current &&
+                        _curveCoin(h.swapContract,coinOut)==h.tokenOut,"CURVE_COIN_MISMATCH");
             } else if(h.poolType==BALANCER_WEIGHTED||h.poolType==BALANCER_STABLE){
                 (address balancerPool,)=IEmbeddedBalancerV2Vault(h.swapContract).getPool(h.poolId);
                 require(balancerPool!=address(0),"BALANCER_POOL_ID");
+                (address[] memory tokens,,)=IEmbeddedBalancerV2Vault(h.swapContract).getPoolTokens(h.poolId);
+                bool foundInput;bool foundOutput;
+                for(uint256 k=0;k<tokens.length;k++){
+                    if(tokens[k]==current) foundInput=true;
+                    if(tokens[k]==h.tokenOut) foundOutput=true;
+                }
+                require(foundInput&&foundOutput,"BALANCER_TOKEN_MISMATCH");
             } else {
                 require(h.poolType>=EXTERNAL_TYPE_START,"UNKNOWN_POOL_TYPE");
                 require(externalAdapters[h.poolType]!=address(0),"EXTERNAL_ADAPTER_MISSING");
@@ -447,6 +457,22 @@ contract CurveYieldOmniRouter {
         delete simpleRoutes[key];
         for(uint256 i=0;i<pathway.length;i++) simpleRoutes[key].push(pathway[i]);
         delete routes[key].pathway;
+    }
+
+    // Pool implementations disagree on coins(uint256) vs coins(int128).
+    // Validate actual coin membership before allowing a built-in Curve route.
+    function _curveCoin(address pool,uint8 index) private view returns(address token){
+        (bool ok,bytes memory out)=pool.staticcall(
+            abi.encodeWithSignature("coins(uint256)",uint256(index))
+        );
+        if(!ok || out.length<32) {
+            (ok,out)=pool.staticcall(
+                abi.encodeWithSignature("coins(int128)",int128(uint128(index)))
+            );
+        }
+        require(ok&&out.length>=32,"CURVE_COINS_NOT_READABLE");
+        token=abi.decode(out,(address));
+        require(token!=address(0),"CURVE_ZERO_COIN");
     }
 
     function _isCurve(uint16 poolType) internal pure returns(bool){
@@ -586,6 +612,7 @@ contract CurveYieldOmniRouter {
     {
         require(reentrancyStatus==2 && msg.sender==activeV3Pool&&
                 activeV3Pool!=address(0)&&!v3CallbackConsumed,"UNAUTHORIZED_V3_CALLBACK");
+        require((amount0Delta>0&&amount1Delta<=0)||(amount1Delta>0&&amount0Delta<=0),"INVALID_V3_DELTAS");
         bool zeroForOne=activeV3TokenIn==IEmbeddedV3Pool(msg.sender).token0();
         int256 owed=zeroForOne?amount0Delta:amount1Delta;
         require(owed>0&&uint256(owed)<=activeV3Amount,"V3_INPUT_DELTA");
@@ -602,15 +629,18 @@ contract CurveYieldOmniRouter {
             abi.decode(hop.poolData,(IEmbeddedV4Manager.PoolKey,bytes));
         require(keccak256(abi.encode(key4))==hop.poolId,"V4_POOL_ID");
         activeV4Manager=hop.swapContract;
+        v4CallbackConsumed=false;
         IEmbeddedV4Manager(hop.swapContract).unlock(
             abi.encode(key4,tokenIn,hop.tokenOut,amount,hookData)
         );
+        require(v4CallbackConsumed,"V4_CALLBACK_MISSING");
         activeV4Manager=address(0);
     }
 
     function unlockCallback(bytes calldata payload) external returns(bytes memory){
         require(reentrancyStatus==2 && msg.sender==activeV4Manager &&
-                activeV4Manager!=address(0),"UNAUTHORIZED_V4_CALLBACK");
+                activeV4Manager!=address(0)&&!v4CallbackConsumed,"UNAUTHORIZED_V4_CALLBACK");
+        v4CallbackConsumed=true;
         (IEmbeddedV4Manager.PoolKey memory key4,address tokenIn,address tokenOut,
             uint256 amount,bytes memory hookData)=abi.decode(payload,
                 (IEmbeddedV4Manager.PoolKey,address,address,uint256,bytes));
