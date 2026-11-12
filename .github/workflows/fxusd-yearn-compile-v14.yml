@@ -6,6 +6,7 @@ on:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
       - 'fxusd-yearn/compile/v17/Accountant.sol'
       - 'fxusd-yearn/compile/v17/IVault.sol'
+      - 'fxusd-yearn/compile/v17/DeployFXUSDYearnV17.s.sol'
 permissions:
   contents: read
 jobs:
@@ -39,6 +40,8 @@ jobs:
           mkdir -p .fxusd-compile/lib .fxusd-compile/node_modules/@yearn-vaults/interfaces
           cp fxusd-yearn/compile/v17/Accountant.sol .fxusd-compile/contracts/Accountant.sol
           cp fxusd-yearn/compile/v17/IVault.sol .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
+          mkdir -p .fxusd-compile/script
+          cp fxusd-yearn/compile/v17/DeployFXUSDYearnV17.s.sol .fxusd-compile/script/DeployFXUSDYearnV17.s.sol
           python3 - <<'PY'
           from pathlib import Path
           p=Path('.fxusd-compile/contracts/FXNYearnMasterAllocator.sol')
@@ -53,9 +56,10 @@ jobs:
           p.write_text(s)
           PY
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
+          git clone --depth 1 -q --branch v1.9.7 https://github.com/foundry-rs/forge-std.git .fxusd-compile/node_modules/forge-std
           sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
           sed -i '/^remappings = \[/,/^\]/d' .fxusd-compile/foundry.toml
-          printf '\nremappings = ["forge-std/=node_modules/forge-std/", "@openzeppelin/contracts/=lib/openzeppelin/contracts/", "@tokenized-strategy/=node_modules/@tokenized-strategy/", "@yearn-vaults/=node_modules/@yearn-vaults/"]\n' >> .fxusd-compile/foundry.toml
+          printf '\nremappings = ["forge-std/=node_modules/forge-std/src/", "@openzeppelin/contracts/=lib/openzeppelin/contracts/", "@tokenized-strategy/=node_modules/@tokenized-strategy/", "@yearn-vaults/=node_modules/@yearn-vaults/"]\n' >> .fxusd-compile/foundry.toml
       - name: Compile contracts only, no tests
         shell: bash
         run: |
