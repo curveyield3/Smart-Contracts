@@ -1,10 +1,10 @@
-name: Katana V3 router Solidity runtime-size compile
+name: Ethereum Fraxtal Omni Router runtime-size compile
 on:
   push:
-    branches: [katana-router-runtime-compile-v1]
+    branches: [ethereum-fraxtal-omni-router-v1]
     paths:
       - '.github/workflows/katana-router-runtime-compile.yml'
-      - 'cyavKAT/deployed/phase1-router/CurveYieldSushiV3FeeRouter.sol'
+      - 'routers/ethereum-fraxtal/CurveYieldOmniRouter.sol'
 permissions:
   contents: read
 jobs:
@@ -16,14 +16,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install pinned Solidity compiler and upstream Uniswap V3 libraries
+      - name: Install pinned Solidity 0.8.28 compiler
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/katana-router-build
-          cd /tmp/katana-router-build
+          mkdir -p /tmp/omni-router-build
+          cd /tmp/omni-router-build
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund \
-            solc@0.7.6 @uniswap/v3-core@1.0.1 @uniswap/v3-periphery@1.4.4
+            solc@0.8.28
       - name: Compile attached exact router source (no tests, no deployment)
         shell: bash
         run: |
@@ -32,8 +32,8 @@ jobs:
           const fs = require('fs');
           const path = require('path');
           const crypto = require('crypto');
-          const solc = require('/tmp/katana-router-build/node_modules/solc');
-          const sourcePath = 'cyavKAT/deployed/phase1-router/CurveYieldSushiV3FeeRouter.sol';
+          const solc = require('/tmp/omni-router-build/node_modules/solc');
+          const sourcePath = 'routers/ethereum-fraxtal/CurveYieldOmniRouter.sol';
           const source = fs.readFileSync(sourcePath, 'utf8');
           const sourceSha = crypto.createHash('sha256').update(source.trimEnd()).digest('hex');
           const input = {
@@ -41,11 +41,12 @@ jobs:
             sources: { [sourcePath]: { content: source } },
             settings: {
               optimizer: { enabled: true, runs: 200 },
+              viaIR: true,
               outputSelection: { '*': { '*': ['evm.deployedBytecode.object','evm.bytecode.object'] } }
             }
           };
           function findImports(name) {
-            const found = path.resolve('/tmp/katana-router-build/node_modules', name);
+            const found = path.resolve('/tmp/omni-router-build/node_modules', name);
             return fs.existsSync(found) ? { contents: fs.readFileSync(found, 'utf8') } :
               { error: 'Unresolved import: ' + name + ' (' + found + ')' };
           }
@@ -54,14 +55,14 @@ jobs:
             console.log(diagnostic.formattedMessage || diagnostic.message);
           if ((result.errors || []).some(x => x.severity === 'error'))
             process.exit(1);
-          const artifact = result.contracts?.[sourcePath]?.CurveYieldSushiV3FeeRouter;
+          const artifact = result.contracts?.[sourcePath]?.CurveYieldOmniRouter;
           if (!artifact) throw Error('Router compiled artifact absent');
           const runtime = artifact.evm.deployedBytecode.object;
           const creation = artifact.evm.bytecode.object;
           if (!runtime || runtime.length % 2 || !creation || creation.length % 2)
             throw Error('Invalid compiler bytecode');
           const data = {
-            contract: 'CurveYieldSushiV3FeeRouter',
+            contract: 'CurveYieldOmniRouter',
             source: sourcePath,
             source_sha256_trimmed: sourceSha,
             solc: solc.version(),
@@ -73,14 +74,14 @@ jobs:
             headroom: 24576-runtime.length/2,
             within_limit: runtime.length/2<=24576
           };
-          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'katana-router-runtime-size-v1.json'), JSON.stringify(data,null,2)+'\n');
-          console.log('KATANA_ROUTER_RUNTIME_COMPILE_RESULT='+JSON.stringify(data));
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'omni-router-runtime-size-v1.json'), JSON.stringify(data,null,2)+'\n');
+          console.log('OMNI_ROUTER_RUNTIME_COMPILE_RESULT='+JSON.stringify(data));
           if (!data.within_limit) process.exitCode=1;
           NODE
       - name: Upload runtime-size report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: katana-router-runtime-size-v1
-          path: ${{ runner.temp }}/katana-router-runtime-size-v1.json
+          name: omni-router-runtime-size-v1
+          path: ${{ runner.temp }}/omni-router-runtime-size-v1.json
           if-no-files-found: ignore
