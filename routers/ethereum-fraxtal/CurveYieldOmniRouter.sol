@@ -400,8 +400,10 @@ contract CurveYieldOmniRouter {
     }
 
     function _replaceSimple(bytes32 key,address tokenIn,address tokenOut,SimpleHop[] calldata pathway)
-        internal nonReentrant
+        internal
     {
+        if(!(reentrancyStatus==1)) revert ErrReentrancy();
+        reentrancyStatus=2;
         if(!(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut)) revert ErrBadEndpoints();
         if(!(pathway.length>0 && pathway.length<=MAX_HOPS)) revert ErrHopCount();
         delete simpleRoutes[key];
@@ -467,6 +469,7 @@ contract CurveYieldOmniRouter {
             current=h.tokenOut;
         }
         if(!(current==tokenOut)) revert ErrWrongFinalToken();
+        reentrancyStatus=1;
     }
 
     // Pool implementations disagree on coins(uint256) vs coins(int128).
