@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
+import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
+
 /**
  * @title CurveYieldOmniRouter
  * @notice ERC20 exact-input routes across ABI-compatible V2/V3/V4/Curve execution targets.
@@ -54,6 +56,50 @@ interface IOmniERC20 {
     function decimals() external view returns(uint8);
 }
 
+
+interface IEmbeddedV2Pair {
+    function token0() external view returns(address);
+    function token1() external view returns(address);
+    function getReserves() external view returns(uint112,uint112,uint32);
+    function price0CumulativeLast() external view returns(uint256);
+    function price1CumulativeLast() external view returns(uint256);
+    function swap(uint256,uint256,address,bytes calldata) external;
+}
+interface IEmbeddedV3Pool {
+    function token0() external view returns(address);
+    function token1() external view returns(address);
+    function observe(uint32[] calldata) external view returns(int56[] memory,uint160[] memory);
+    function swap(address,bool,int256,uint160,bytes calldata) external returns(int256,int256);
+}
+interface IEmbeddedV4Manager {
+    struct PoolKey {address currency0;address currency1;uint24 fee;int24 tickSpacing;address hooks;}
+    struct SwapParams {bool zeroForOne;int256 amountSpecified;uint160 sqrtPriceLimitX96;}
+    function unlock(bytes calldata) external returns(bytes memory);
+    function swap(PoolKey calldata,SwapParams calldata,bytes calldata) external returns(int256);
+    function sync(address) external;
+    function settle() external payable returns(uint256);
+    function take(address,address,uint256) external;
+}
+interface IEmbeddedBalancerV2Vault {
+    enum SwapKind { GIVEN_IN, GIVEN_OUT }
+    struct SingleSwap {
+        bytes32 poolId; SwapKind kind; address assetIn; address assetOut;
+        uint256 amount; bytes userData;
+    }
+    struct FundManagement {
+        address sender;bool fromInternalBalance;address payable recipient;bool toInternalBalance;
+    }
+    function swap(SingleSwap calldata,FundManagement calldata,uint256,uint256) external payable returns(uint256);
+    function getPool(bytes32) external view returns(address,uint8);
+}
+interface IExternalRouterHop {
+    // An extension receives exact ERC20 allowance only for this hop, never delegatecall.
+    function executeHop(
+        address pool,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,
+        bytes32 poolId,bytes calldata poolData
+    ) external returns(uint256);
+}
+
 /**
  * @dev ABI templates are pre-encoded argument bytes (NO selector); a patch points to a
  * 32-byte word at byteOffset. This also supports words nested inside dynamic ABI args.
@@ -92,6 +138,47 @@ contract CurveYieldOmniRouter {
         uint8 oracleRateDecimals;  // quote output whole-tokens per one whole input token
         bool invertOracle;         // invert source rate when tokens are reversed
     }
+    // Stable built-in types remain part of this router. IDs >= 1000 are reserved
+    // for independently deployed, owner-approved future pool-type extensions.
+    uint16 public constant UNISWAP_V2 = 1;
+    uint16 public constant UNISWAP_V3 = 2;
+    uint16 public constant UNISWAP_V4 = 3;
+    uint16 public constant CURVE_CRYPTOSWAP = 4;
+    uint16 public constant CURVE_TRICRYPTO = 5;
+    uint16 public constant CURVE_STABLESWAP = 6;
+    uint16 public constant CURVE_STABLESWAP_NG = 7;
+    uint16 public constant BALANCER_WEIGHTED = 8;
+    uint16 public constant BALANCER_STABLE = 9;
+    uint16 public constant EXTERNAL_TYPE_START = 1000;
+
+    struct SimpleOracle {
+        address oracleAddress; // zero = router's native V2/V3 or applicable Curve EMA
+        bytes4 readFunctionID; // historical rate for 1 whole input token, NOT spot
+        bytes requiredInputs; // ABI-encoded read arguments (without selector)
+        bool invert;
+        uint8 rateDecimals; // 0..18; builtin historical prices use 18
+    }
+    struct SimpleHop {
+        uint16 poolType;
+        address tokenOut;
+        address swapContract; // V2/V3/Curve pool, V4 PoolManager, Balancer V2 Vault
+        bytes32 poolId; // required for V4 (keccak PoolKey) and Balancer V2
+        bytes poolData; // V2 feeBps, Curve (i,j), V4 (PoolKey, hookData), Balancer userData
+        SimpleOracle oracle;
+    }
+    struct V2Observation {uint256 cumulative0;uint256 cumulative1;uint32 timestamp;}
+    mapping(bytes32 => SimpleHop[]) private simpleRoutes;
+    mapping(uint16 => address) public externalAdapters;
+    mapping(address => V2Observation[2]) public v2Observations;
+    address private activeV3Pool;
+    address private activeV3TokenIn;
+    uint256 private activeV3Amount;
+    bool private v3CallbackConsumed;
+    address private activeV4Manager;
+
+    event ExternalAdapterConfigured(uint16 indexed poolType,address indexed adapter);
+    event V2PriceCheckpointed(address indexed pair,uint32 timestamp);
+
     struct Route {
         Hop[] pathway;
         uint16 feeBps;
@@ -138,41 +225,60 @@ contract CurveYieldOmniRouter {
         defaultSlippageGuardBps=value;
     }
 
-    // Updates a route in-place; never appends a duplicate for the same endpoint pair.
-    function setRoute(address tokenIn,address tokenOut,Hop[] calldata pathway) external onlyOwner {
+    // Ordinary swaps need only a pool type, execution address/ID, hop output token,
+    // optional pool-specific data, and optional historical oracle metadata.
+    function setRoute(address tokenIn,address tokenOut,SimpleHop[] calldata pathway) external onlyOwner {
         bytes32 key=_key(tokenIn,tokenOut);
-        _replaceRoute(key,tokenIn,tokenOut,pathway);
+        _replaceSimple(key,tokenIn,tokenOut,pathway);
         emit RouteSet(tokenIn,tokenOut,pathway.length);
     }
 
-    // Nonempty pathway = configure a new route/replace existing route.
-    // Empty pathway = reconfigure existing route, without changing its swaps.
+    // An empty pathway updates only fee/slippage without replacing existing hops.
     function setRouteConfig(
-        address tokenIn,address tokenOut,Hop[] calldata pathway,
+        address tokenIn,address tokenOut,SimpleHop[] calldata pathway,
         uint16 routeFeeBps,uint16 routeSlippageBps
     ) external onlyOwner {
         require(routeFeeBps<=MAX_FEE_BPS,"ROUTE_FEE_CAP");
         require(routeSlippageBps<=MAX_ROUTE_SLIPPAGE_BPS,"ROUTE_SLIPPAGE_CAP");
         bytes32 key=_key(tokenIn,tokenOut);
         if(pathway.length!=0) {
-            _replaceRoute(key,tokenIn,tokenOut,pathway);
+            _replaceSimple(key,tokenIn,tokenOut,pathway);
             emit RouteSet(tokenIn,tokenOut,pathway.length);
         } else {
-            require(routes[key].pathway.length>0,"ROUTE_MISSING");
+            require(simpleRoutes[key].length>0||routes[key].pathway.length>0,"ROUTE_MISSING");
         }
-        Route storage r=routes[key];
-        r.feeBps=routeFeeBps;
-        r.slippageGuardBps=routeSlippageBps;
-        r.configured=true;
+        routes[key].feeBps=routeFeeBps;
+        routes[key].slippageGuardBps=routeSlippageBps;
+        routes[key].configured=true;
         emit RouteConfigSet(tokenIn,tokenOut,routeFeeBps,routeSlippageBps);
+    }
+
+    // Preserve the advanced contract-agnostic ABI route method for exceptional pools.
+    function setRouteAdvanced(address tokenIn,address tokenOut,Hop[] calldata pathway) external onlyOwner {
+        bytes32 key=_key(tokenIn,tokenOut);
+        _replaceRoute(key,tokenIn,tokenOut,pathway);
+        delete simpleRoutes[key];
+        emit RouteSet(tokenIn,tokenOut,pathway.length);
+    }
+
+    // Reserve external types for future pools; extensions cannot delegatecall the router.
+    function setExternalAdapter(uint16 poolType,address adapter) external onlyOwner {
+        require(poolType>=EXTERNAL_TYPE_START,"BUILTIN_TYPE_IMMUTABLE");
+        require(adapter==address(0)||adapter.code.length>0,"INVALID_EXTENSION");
+        externalAdapters[poolType]=adapter;
+        emit ExternalAdapterConfigured(poolType,adapter);
     }
 
     function routeLength(address tokenIn,address tokenOut) external view returns(uint256){
         return routes[_key(tokenIn,tokenOut)].pathway.length;
     }
-    function routeFor(address tokenIn,address tokenOut) external view returns(Hop[] memory){
+    function routeForAdvanced(address tokenIn,address tokenOut) external view returns(Hop[] memory){
         return routes[_key(tokenIn,tokenOut)].pathway;
     }
+    function routeFor(address tokenIn,address tokenOut) external view returns(SimpleHop[] memory){
+        return simpleRoutes[_key(tokenIn,tokenOut)];
+    }
+
     function routeConfig(address tokenIn,address tokenOut) external view returns(uint16 routeFeeBps,uint16 slippageBps,bool configured){
         Route storage r=routes[_key(tokenIn,tokenOut)];
         return(_effectiveFee(r),_effectiveSlippage(r),r.configured);
