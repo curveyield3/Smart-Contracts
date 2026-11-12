@@ -560,6 +560,85 @@ contract CurveYieldOmniRouter {
         _safeApprove(tokenIn,hop.swapContract,0);
     }
 
+
+    // Native Uniswap V3 support. Unlike a helper adapter, this router itself
+    // authenticates the pool's callback and transfers the actual owed tokens.
+    function _executeV3(SimpleHop storage hop,address tokenIn,uint256 amount) private {
+        require(activeV3Pool==address(0),"NESTED_V3");
+        bool zeroForOne=tokenIn<hop.tokenOut;
+        require(amount<=uint256(type(int256).max),"AMOUNT_TOO_LARGE");
+        activeV3Pool=hop.swapContract;
+        activeV3TokenIn=tokenIn;
+        activeV3Amount=amount;
+        v3CallbackConsumed=false;
+        IEmbeddedV3Pool(hop.swapContract).swap(
+            address(this),zeroForOne,int256(amount),
+            zeroForOne?uint160(4295128740):uint160(1461446703485210103287273052203988822378723970341),""
+        );
+        require(v3CallbackConsumed,"V3_CALLBACK_MISSING");
+        activeV3Pool=address(0);
+        activeV3TokenIn=address(0);
+        activeV3Amount=0;
+    }
+
+    function uniswapV3SwapCallback(int256 amount0Delta,int256 amount1Delta,bytes calldata)
+        external
+    {
+        require(reentrancyStatus==2 && msg.sender==activeV3Pool&&
+                activeV3Pool!=address(0)&&!v3CallbackConsumed,"UNAUTHORIZED_V3_CALLBACK");
+        bool zeroForOne=activeV3TokenIn==IEmbeddedV3Pool(msg.sender).token0();
+        int256 owed=zeroForOne?amount0Delta:amount1Delta;
+        require(owed>0&&uint256(owed)<=activeV3Amount,"V3_INPUT_DELTA");
+        v3CallbackConsumed=true;
+        _safeTransfer(activeV3TokenIn,msg.sender,uint256(owed));
+    }
+
+    // Uniswap v4 pools live inside a PoolManager, not at individual pool addresses.
+    // poolId = keccak256(abi.encode(PoolKey)); poolData = abi.encode(PoolKey,hookData).
+    function _executeV4(SimpleHop storage hop,address tokenIn,uint256 amount) private {
+        require(activeV4Manager==address(0),"NESTED_V4");
+        require(amount<=uint256(uint128(type(int128).max)),"V4_INPUT_LIMIT");
+        (IEmbeddedV4Manager.PoolKey memory key4,bytes memory hookData)=
+            abi.decode(hop.poolData,(IEmbeddedV4Manager.PoolKey,bytes));
+        require(keccak256(abi.encode(key4))==hop.poolId,"V4_POOL_ID");
+        activeV4Manager=hop.swapContract;
+        IEmbeddedV4Manager(hop.swapContract).unlock(
+            abi.encode(key4,tokenIn,hop.tokenOut,amount,hookData)
+        );
+        activeV4Manager=address(0);
+    }
+
+    function unlockCallback(bytes calldata payload) external returns(bytes memory){
+        require(reentrancyStatus==2 && msg.sender==activeV4Manager &&
+                activeV4Manager!=address(0),"UNAUTHORIZED_V4_CALLBACK");
+        (IEmbeddedV4Manager.PoolKey memory key4,address tokenIn,address tokenOut,
+            uint256 amount,bytes memory hookData)=abi.decode(payload,
+                (IEmbeddedV4Manager.PoolKey,address,address,uint256,bytes));
+        require((tokenIn==key4.currency0&&tokenOut==key4.currency1)||
+                (tokenIn==key4.currency1&&tokenOut==key4.currency0),"V4_TOKENS");
+        bool zeroForOne=tokenIn==key4.currency0;
+        IEmbeddedV4Manager manager=IEmbeddedV4Manager(msg.sender);
+        IEmbeddedV4Manager.SwapParams memory params=IEmbeddedV4Manager.SwapParams({
+            zeroForOne:zeroForOne,amountSpecified:-int256(amount),
+            sqrtPriceLimitX96:zeroForOne?uint160(4295128740):
+                uint160(1461446703485210103287273052203988822378723970341)
+        });
+        int256 packedDelta=manager.swap(key4,params,hookData);
+        int128 amount0=int128(packedDelta>>128);
+        int128 amount1=int128(packedDelta);
+        int128 inputDelta=zeroForOne?amount0:amount1;
+        int128 outputDelta=zeroForOne?amount1:amount0;
+        require(inputDelta<0 && outputDelta>0,"INVALID_V4_DELTA");
+        uint256 owed=uint256(-int256(inputDelta));
+        uint256 out=uint256(int256(outputDelta));
+        require(owed<=amount,"V4_OVERSPEND");
+        manager.sync(tokenIn);
+        _safeTransfer(tokenIn,msg.sender,owed);
+        require(manager.settle()==owed,"V4_SETTLE");
+        manager.take(tokenOut,address(this),out);
+        return abi.encode(out);
+    }
+
     function _replaceRoute(bytes32 key,address tokenIn,address tokenOut,Hop[] calldata pathway) internal {
         require(tokenIn!=address(0)&&tokenOut!=address(0)&&tokenIn!=tokenOut,"BAD_ENDPOINTS");
         require(pathway.length>0 && pathway.length<=MAX_HOPS,"HOP_COUNT");
