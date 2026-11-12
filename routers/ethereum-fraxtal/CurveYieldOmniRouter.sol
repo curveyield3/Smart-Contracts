@@ -207,7 +207,7 @@ interface IExternalRouterHop {
  * by this router for the full route.
  */
 contract CurveYieldOmniRouter {
-    uint16 public constant DEFAULT_SLIPPAGE_BPS = 100;
+    uint16 public constant DEFAULT_SLIPPAGE_BPS = 150;
     uint16 internal constant MAX_DEFAULT_SLIPPAGE_BPS = 300;
     uint16 internal constant MAX_ROUTE_SLIPPAGE_BPS = 500;
     uint16 internal constant MAX_FEE_BPS = 50;
