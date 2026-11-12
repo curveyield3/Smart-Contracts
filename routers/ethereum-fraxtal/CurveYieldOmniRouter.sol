@@ -203,11 +203,9 @@ interface IExternalRouterHop {
 }
 
 /**
- * @dev ABI templates are pre-encoded argument bytes (NO selector); a patch points to a
- * 32-byte word at byteOffset. This also supports words nested inside dynamic ABI args.
- * Modes: 0 literal, 1 swapamount, 2 slippageguard, 3 currentblock+literal,
- * 4 timestamp+literal, 5 tokenIn, 6 tokenOut, 7 routerAddress.
- * Non-patched literal words stay in the provided template.
+ * @dev Pool-specific execution is embedded. Future pool types may use an
+ * external adapter. The token flow and historical-price guard are enforced
+ * by this router for every hop.
  */
 contract CurveYieldOmniRouter {
     uint16 public constant DEFAULT_SLIPPAGE_BPS = 100;
@@ -248,7 +246,7 @@ contract CurveYieldOmniRouter {
     mapping(bytes32 => SimpleHop[]) private simpleRoutes;
     mapping(uint16 => address) public externalAdapters;
     address private activeV3Pool;
-    address private activeV3TokenIn;
+    bool private activeV3ZeroForOne;
     uint256 private activeV3Amount;
     bool private v3CallbackConsumed;
     address private activeV4Manager;
@@ -615,7 +613,7 @@ contract CurveYieldOmniRouter {
         bool zeroForOne=tokenIn<hop.tokenOut;
         if(!(amount<=uint256(type(int256).max))) revert ErrAmountTooLarge();
         activeV3Pool=hop.swapContract;
-        activeV3TokenIn=tokenIn;
+        activeV3ZeroForOne=zeroForOne;
         activeV3Amount=amount;
         v3CallbackConsumed=false;
         IEmbeddedV3Pool(hop.swapContract).swap(
@@ -624,7 +622,6 @@ contract CurveYieldOmniRouter {
         );
         if(!(v3CallbackConsumed)) revert ErrV3CallbackMissing();
         activeV3Pool=address(0);
-        activeV3TokenIn=address(0);
         activeV3Amount=0;
     }
 
@@ -634,11 +631,14 @@ contract CurveYieldOmniRouter {
         if(!(reentrancyStatus==2 && msg.sender==activeV3Pool&&
                 activeV3Pool!=address(0)&&!v3CallbackConsumed)) revert ErrUnauthorizedV3Callback();
         if(!((amount0Delta>0&&amount1Delta<=0)||(amount1Delta>0&&amount0Delta<=0))) revert ErrInvalidV3Deltas();
-        bool zeroForOne=activeV3TokenIn==IEmbeddedV3Pool(msg.sender).token0();
+        bool zeroForOne=activeV3ZeroForOne;
         int256 owed=zeroForOne?amount0Delta:amount1Delta;
         if(!(owed>0&&uint256(owed)<=activeV3Amount)) revert ErrV3InputDelta();
         v3CallbackConsumed=true;
-        _safeTransfer(activeV3TokenIn,msg.sender,uint256(owed));
+        address inputToken=zeroForOne
+            ?IEmbeddedV3Pool(msg.sender).token0()
+            :IEmbeddedV3Pool(msg.sender).token1();
+        _safeTransfer(inputToken,msg.sender,uint256(owed));
     }
 
     // Uniswap v4 pools live inside a PoolManager, not at individual pool addresses.
