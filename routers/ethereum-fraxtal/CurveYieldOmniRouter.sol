@@ -180,7 +180,7 @@ interface IEmbeddedV4Manager {
 }
 interface IEmbeddedCurveFee { function fee() external view returns(uint256); }
 interface IEmbeddedFeeReader {
-    function poolFee(uint16,address,bytes calldata) external view returns(uint256);
+    function poolFee(uint16,address,bytes32,bytes calldata) external view returns(uint256);
 }
 interface IEmbeddedBalancerV2Vault {
     enum SwapKind { GIVEN_IN, GIVEN_OUT }
@@ -468,11 +468,9 @@ contract CurveYieldOmniRouter {
             SimpleHop calldata h=pathway[i];
             simpleRoutes[key].push(h);
             if(h.poolType==UNISWAP_V3){
-                uint32 window=h.poolData.length==0?900:abi.decode(h.poolData,(uint32));
-                simpleRoutes[key][i].poolData=abi.encode(window,IEmbeddedV3Pool(h.swapContract).fee());
+                simpleRoutes[key][i].poolId=bytes32(uint256(IEmbeddedV3Pool(h.swapContract).fee()));
             } else if(h.poolType==CURVE_STABLESWAP||h.poolType==CURVE_STABLESWAP_NG){
-                (uint8 ci,uint8 cj)=abi.decode(h.poolData,(uint8,uint8));
-                simpleRoutes[key][i].poolData=abi.encode(ci,cj,IEmbeddedCurveFee(h.swapContract).fee());
+                simpleRoutes[key][i].poolId=bytes32(IEmbeddedCurveFee(h.swapContract).fee());
             }
         }
     }
@@ -761,7 +759,7 @@ contract CurveYieldOmniRouter {
             amount=_simpleOracleQuote(hops[i],input,amount);
             if(adjustPoolFees){
                 uint256 poolFee=IEmbeddedFeeReader(feeReader).poolFee(
-                    hops[i].poolType,hops[i].swapContract,hops[i].poolData
+                    hops[i].poolType,hops[i].swapContract,hops[i].poolId,hops[i].poolData
                 );
                 amount=RouterFullMath.mulDiv(amount,1e10-poolFee,1e10);
             }
