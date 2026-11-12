@@ -125,6 +125,7 @@ error ErrRouteFeeCap();
 error ErrRouteMissing();
 error ErrRouteSlippageCap();
 error ErrTokenDecimals();
+error ErrTargetRevert();
 error ErrTransferFailed();
 error ErrTransferFromFailed();
 error ErrUnauthorizedV3Callback();
@@ -788,7 +789,7 @@ contract CurveYieldOmniRouter {
         if(!(ok && (ret.length==0 || (ret.length>=32 && abi.decode(ret,(bool)))))) revert ErrApproveFailed();
     }
     function _revertWith(bytes memory reason) private pure {
-        if(reason.length==0) revert("TARGET_REVERT");
+        if(reason.length==0) revert ErrTargetRevert();
         assembly ("memory-safe") { revert(add(reason,32),mload(reason)) }
     }
 }
