@@ -67,6 +67,7 @@ jobs:
           cd .fxusd-compile
           sed -i 's/function availableWithdrawLimit(address) public view override/function availableWithdrawLimit(address) public view virtual override/' contracts/FXNYearnChildBase.sol
           forge build --use 0.8.30 --via-ir --sizes 2>&1 | tee compile.log
+          forge build script/DeployFXUSDYearnV17.s.sol --use 0.8.30 --via-ir 2>&1 | tee -a compile.log
           python3 - <<'PY'
           import json
           from pathlib import Path
