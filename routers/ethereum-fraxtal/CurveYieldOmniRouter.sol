@@ -5,7 +5,7 @@ pragma solidity ^0.8.28;
  * @title CurveYieldOmniRouter
  * @notice ERC20 exact-input routes across ABI-compatible V2/V3/V4/Curve execution targets.
  * @dev An owner configures explicit ABI argument templates and historical-rate oracle calls.
- *      For v4 the execution target is an approved PoolManager adapter, not a pool contract.
+ *      For v4 poolAddress is the PoolManager and executionTarget is an approved adapter.
  *      A route oracle MUST quote one whole tokenIn in whole tokenOut, scaled by 10**rateDecimals.
  *      Configuring current spot-price, get_dy or v4 quoter as an oracle is unsafe.
  *      Solidity cannot resolve an ABI method's name alone: a complete signature is required
@@ -79,7 +79,8 @@ contract CurveYieldOmniRouter {
     struct Hop {
         address tokenIn;
         address tokenOut;
-        address poolAddress;        // swap execution target; v4 points to a v4 adapter
+        address poolAddress;        // actual pool for V2/V3/Curve, PoolManager for V4
+        address executionTarget;    // target contract called; periphery router or V4 adapter when applicable
         bytes4 writeFunctionID;
         bytes requiredAbiInputs;   // full ABI encoding after selector, including dynamic tails
         AbiField[] writeFields;    // dynamic word substitutions in requiredAbiInputs
@@ -236,15 +237,15 @@ contract CurveYieldOmniRouter {
             uint256 beforeIn=IOmniERC20(hop.tokenIn).balanceOf(address(this));
             uint256 beforeOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
             if(hop.transferBeforeCall){
-                _safeTransfer(hop.tokenIn,hop.poolAddress,currentAmount);
+                _safeTransfer(hop.tokenIn,hop.executionTarget,currentAmount);
             } else {
-                _safeApprove(hop.tokenIn,hop.poolAddress,0);
-                _safeApprove(hop.tokenIn,hop.poolAddress,currentAmount);
+                _safeApprove(hop.tokenIn,hop.executionTarget,0);
+                _safeApprove(hop.tokenIn,hop.executionTarget,currentAmount);
             }
             bytes memory args=_fill(hop.requiredAbiInputs,hop.writeFields,currentAmount,minimum,hop.tokenIn,hop.tokenOut);
-            (bool ok,bytes memory ret)=hop.poolAddress.call(abi.encodePacked(hop.writeFunctionID,args));
+            (bool ok,bytes memory ret)=hop.executionTarget.call(abi.encodePacked(hop.writeFunctionID,args));
             if(!ok) _revertWith(ret);
-            if(!hop.transferBeforeCall) _safeApprove(hop.tokenIn,hop.poolAddress,0);
+            if(!hop.transferBeforeCall) _safeApprove(hop.tokenIn,hop.executionTarget,0);
             uint256 afterIn=IOmniERC20(hop.tokenIn).balanceOf(address(this));
             require(afterIn<=beforeIn && beforeIn-afterIn==currentAmount,"HOP_INPUT_NOT_FULLY_SPENT");
             uint256 afterOut=IOmniERC20(hop.tokenOut).balanceOf(address(this));
@@ -268,7 +269,8 @@ contract CurveYieldOmniRouter {
         for(uint256 i=0;i<pathway.length;i++){
             Hop calldata h=pathway[i];
             require(h.tokenIn==current && h.tokenOut!=address(0) && h.tokenIn!=h.tokenOut,"DISCONNECTED");
-            require(h.poolAddress.code.length>0 && h.oracleAddress.code.length>0,"UNDEPLOYED_TARGET");
+            require(h.poolAddress.code.length>0 && h.executionTarget.code.length>0 && h.oracleAddress.code.length>0,"UNDEPLOYED_TARGET");
+            if(h.transferBeforeCall) require(h.executionTarget==h.poolAddress,"DIRECT_TRANSFER_TARGET");
             require(h.tokenIn.code.length>0 && h.tokenOut.code.length>0,"NOT_TOKEN");
             require(h.writeFunctionID!=bytes4(0),"MISSING_SWAP_SELECTOR");
             require(bytes(h.oracleReadFunctionName).length>2,"MISSING_ORACLE_SIG");
