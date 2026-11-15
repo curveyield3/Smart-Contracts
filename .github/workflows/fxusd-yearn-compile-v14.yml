@@ -1,4 +1,4 @@
-name: fxUSD Yearn v31 organic 21-day three-harvest Ethereum fork simulation
+name: fxUSD Yearn v31 organic 6-day three-harvest Ethereum fork simulation
 on:
   push:
     branches: [fxusd-yearn-v31-router-fork-sim]
@@ -79,7 +79,7 @@ jobs:
           s=p.read_text()
           original='uint256 constant DEPOSIT=50e18;'
           assert s.count(original)==1,'unexpected original harness deposit'
-          s=s.replace(original,'uint256 constant DEPOSIT=10000e18;')
+          s=s.replace(original,'uint256 constant DEPOSIT=20000e18;')
           start=s.index('    function _fund() internal {')
           end=s.index('    function _metric(',start)
           s=s[:start]+'''    // Fund only principal; do not seed any FXN principal or backing-child rewards.
@@ -95,7 +95,7 @@ jobs:
                   _metric(stage,"child32_fxn_idle",IERC20(FXN).balanceOf(address(c32)));
                   _metric(stage,"child37_fxn_idle",IERC20(FXN).balanceOf(address(c37)));
                   _metric(stage,"fixture_receipt_fxn_idle",IERC20(FXN).balanceOf(address(receipt)));''')
-          helper='''    // Static seven-day jumps do not publish new Chainlink USDC rounds.
+          helper='''    // Static two-day jumps do not publish new Chainlink USDC rounds.
               // Refresh ONLY the read timestamps, never the original price.
               function _freshUSDCPrice(uint256 epoch) internal {
                   address usdcFeed=address(uint160(0x008fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6));
@@ -108,8 +108,8 @@ jobs:
                   require(answer>0,"invalid USDC price");
                   vm.mockCall(usdcFeed,abi.encodeWithSignature("latestRoundData()"),
                       abi.encode(roundId,answer,block.timestamp,block.timestamp,answeredInRound));
-                  _metric(string.concat("week",_weekName(epoch)),"fork_usdc_oracle_answer",uint256(answer));
-                  _metric(string.concat("week",_weekName(epoch)),"fork_only_oracle_refresh",1);
+                  _metric(string.concat("cycle",_weekName(epoch)),"fork_usdc_oracle_answer",uint256(answer));
+                  _metric(string.concat("cycle",_weekName(epoch)),"fork_only_oracle_refresh",1);
               }
               function _weekName(uint256 week) internal pure returns(string memory) {
                   if(week==1)return "1";
@@ -142,21 +142,21 @@ jobs:
                       IERC20(FXN).balanceOf(address(c37))==0 &&
                       IERC20(FXN).balanceOf(address(receipt))==0,"backing reward injection");
           
-                  // Three master harvests, precisely seven days apart. The FXN child
+                  // Three master harvests, precisely two days apart. The FXN child
                   // deliberately invests its diverted FXN at the NEXT master harvest.
-                  // Model 0.002 FXN/day ONLY during a week with an active Vyper position.
+                  // Model 0.002 FXN/day ONLY during an interval with an active Vyper position.
                   for(uint256 week=1;week<=3;++week) {
-                      string memory prefix=string.concat("week",_weekName(week));
+                      string memory prefix=string.concat("cycle",_weekName(week));
                       bool stakingActiveAtStart=receipt.balanceOf(address(engine))!=0;
                       uint256 convexStakeAtStart=engine.convexLPStaked();
                       _metric(prefix,"fxn_vyper_staked_at_start",stakingActiveAtStart?1:0);
                       _metric(prefix,"fxn_convex_lp_staked_at_start",convexStakeAtStart);
                       _metric(prefix,"staking_reward_rate_fxn_per_day",0.002e18);
-                      _metric(prefix,"full_active_week_reward_target_fxn",0.014e18);
-                      vm.warp(block.timestamp+7 days);
-                      vm.roll(block.number+50400);
+                      _metric(prefix,"full_active_cycle_reward_target_fxn",0.004e18);
+                      vm.warp(block.timestamp+2 days);
+                      vm.roll(block.number+14400);
                       _freshUSDCPrice(week);
-                      uint256 weeklyModeledFXN=stakingActiveAtStart ? 0.014e18 : 0;
+                      uint256 weeklyModeledFXN=stakingActiveAtStart ? 0.004e18 : 0;
                       if(weeklyModeledFXN!=0) {
                           // Explicit fork-only reward model, not organic Convex emissions.
                           // Fund the existing receipt from the live Curve8 FXN balance.
@@ -184,7 +184,7 @@ jobs:
                               assembly {revert(add(reason,32),mload(reason))}
                           }
                           // Failed atomic harvest leaves balances unchanged; preserve that
-                          // state and continue the real fork to the next weekly checkpoint.
+                          // state and continue the real fork to the next two-day checkpoint.
                           _metric(prefix,"threshold_blocked",1);
                       }
                       if(week==1) require(completed,"first-week harvest did not complete");
@@ -196,7 +196,7 @@ jobs:
                       vault.process_report(address(master));
                       uint256 fees=vault.balanceOf(address(accountant));
                       require(vault.totalSupply()==vault.balanceOf(address(this))+fees,
-                          "weekly report share supply conservation");
+                          "cycle report share supply conservation");
                       require(vault.totalAssets()>=DEPOSIT,"unexpected principal loss");
                       _metric(prefix,"accountant_fee_shares",fees);
                       _snapshot(string.concat(prefix,"_postreport"));
@@ -218,12 +218,12 @@ jobs:
                   _snapshot("postwithdraw");
           '''
           s=s[:start]+replacement+s[end:]
-          s=s.replace('AUDIT_COMPLETE_V31','AUDIT_COMPLETE_V31_21D_10K_3HARVEST')
-          assert 'DEPOSIT=10000e18' in s
+          s=s.replace('AUDIT_COMPLETE_V31','AUDIT_COMPLETE_V31_6D_20K_3HARVEST')
+          assert 'DEPOSIT=20000e18' in s
           assert '0.015e18' not in s and '0.08e18' not in s and '0.010e18' not in s
-          assert '0.014e18' in s and 'week<=3' in s and '7 days' in s
+          assert '0.004e18' in s and 'week<=3' in s and '2 days' in s
           p.write_text(s)
-          print("MULTIWEEK_FORK_CONFIG deposit=10000 fxUSD; days=7,14,21; staking rate=0.002 FXN/day after staking activation; no backing FXN injection")
+          print("MULTICYCLE_FORK_CONFIG deposit=20000 fxUSD; harvest days=2,4,6; staking rate=0.002 FXN/day after staking activation; no backing FXN injection")
           PY21D
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           git clone --depth 1 -q --branch v1.9.7 https://github.com/foundry-rs/forge-std.git .fxusd-compile/node_modules/forge-std
@@ -270,7 +270,7 @@ jobs:
           import json,re
           from pathlib import Path
           s=Path('fork-sim.log').read_text() if Path('fork-sim.log').exists() else ''
-          stages=['postdeploy','postdeposit','week1_preharvest','week1_postharvest','week1_postreport','week2_preharvest','week2_postharvest','week2_postreport','week3_preharvest','week3_postharvest','week3_postreport','postwithdraw','week1','week2','week3','withdraw']
+          stages=['postdeploy','postdeposit','cycle1_preharvest','cycle1_postharvest','cycle1_postreport','cycle2_preharvest','cycle2_postharvest','cycle2_postreport','cycle3_preharvest','cycle3_postharvest','cycle3_postreport','postwithdraw','cycle1','cycle2','cycle3','withdraw']
           snapshots={x:{} for x in stages}
           for line in s.splitlines():
               m=re.search(r'AUDIT_(\w+):?\s+(\d+)',line)
@@ -281,26 +281,26 @@ jobs:
                       snapshots[stage][k[len(stage)+1:]]=str(val)
                       break
           meta={'source_revision':'v31','router_revision':'BoostHub v34 exact source',
-           'initial_deposit_fxusd':'10000','elapsed_seconds':1814400,'harvest_days':[7,14,21],
+           'initial_deposit_fxusd':'20000','elapsed_seconds':518400,'harvest_days':[2,4,6],
            'backing_fxn_rewards':'organic Convex only; no injections',
            'economic_child_reward_model':{'token':'FXN','rate_per_day_wei':'2000000000000000',
-              'applies_only_when_vyper_position_existed_at_start_of_week':True},
+              'applies_only_when_vyper_position_existed_at_start_of_cycle':True},
            'network':'ethereum mainnet fork (static state, simulated clock)',
            'simulation_only_substitutes':['Vyper/BoostHub receipt','route tail WETH/USDC and USDC/fxUSD',
-             'USDC Chainlink timestamp refreshed at original price each week',
-             'FXN staking yield model funded into receipt on active weeks'],
+             'USDC Chainlink timestamp refreshed at original price each cycle',
+             'FXN staking yield model funded into receipt on active cycles'],
            'accounting':snapshots,
            'simulator_result':'passed' if '[PASS]' in s else 'failed_or_incomplete'}
           Path('fork-accounting-snapshots-v3.json').write_text(json.dumps(meta,indent=2)+'\n')
           print('ACCOUNTING_SNAPSHOTS',json.dumps({k:len(v) for k,v in snapshots.items()}))
-          if meta['simulator_result']=='passed' and any(not snapshots[x] for x in ['postdeploy','postdeposit','week1_preharvest','week1_postharvest','week1_postreport','week2_preharvest','week2_postharvest','week2_postreport','week3_preharvest','week3_postharvest','week3_postreport','postwithdraw']):
+          if meta['simulator_result']=='passed' and any(not snapshots[x] for x in ['postdeploy','postdeposit','cycle1_preharvest','cycle1_postharvest','cycle1_postreport','cycle2_preharvest','cycle2_postharvest','cycle2_postreport','cycle3_preharvest','cycle3_postharvest','cycle3_postreport','postwithdraw']):
               raise SystemExit('successful sim missing required accounting stages')
           PY
       - name: Save compiler output and official source
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fxusd-v31-v34-21d-3harvest-fork-v1
+          name: fxusd-v31-v34-6d-3harvest-fork-v2
           path: |
             .fxusd-compile/compile.log
             .fxusd-compile/size-report-v31.json
