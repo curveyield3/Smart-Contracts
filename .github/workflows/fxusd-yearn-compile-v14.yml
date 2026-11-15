@@ -1,13 +1,13 @@
-name: fxUSD Yearn v30 mainnet fork lifecycle simulation
+name: fxUSD Yearn v31 v34-router mainnet fork lifecycle simulation
 on:
   push:
-    branches: [fxusd-yearn-v30-fork-sim]
+    branches: [fxusd-yearn-v31-router-fork-sim]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
       - 'fxusd-yearn/compile/v17/Accountant.sol'
       - 'fxusd-yearn/compile/v17/IVault.sol'
       - 'fxusd-yearn/compile/v19/**'
-      - 'fxusd-yearn/compile/v30/**'
+      - 'fxusd-yearn/compile/v31/**'
 permissions:
   contents: read
 jobs:
@@ -21,7 +21,7 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-      - name: Restore source and overlay exact v30 contracts
+      - name: Restore source and overlay exact v31 contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -48,7 +48,7 @@ jobs:
           node <<'NODE'
           const fs=require('fs'),path=require('path'),zlib=require('zlib');
           const data=JSON.parse(zlib.brotliDecompressSync(
-            Buffer.from(fs.readFileSync('fxusd-yearn/compile/v30/source-overlay.b64','utf8').trim(),'base64')
+            Buffer.from(fs.readFileSync('fxusd-yearn/compile/v31/source-overlay.b64','utf8').trim(),'base64')
           ).toString('utf8'));
           const expected=[
             'contracts/FXNYearnMasterAllocator.sol',
@@ -57,17 +57,17 @@ jobs:
             'contracts/CurveConvex32YearnStrategy.sol',
             'contracts/FxBaseConvex37YearnStrategy.sol',
             'script/DeployFXUSDYearnV26.s.sol',
-            'contracts/CurveYieldOmniRouter_v4.sol',
+            'contracts/CurveYieldOmniRouter_v34.sol',
             'test/FXUSDMainnetForkSimulation.t.sol'
           ];
-          if (Object.keys(data).length!==expected.length || expected.some(x=>typeof data[x]!=='string')) throw Error('incomplete v30 fork overlay');
+          if (Object.keys(data).length!==expected.length || expected.some(x=>typeof data[x]!=='string')) throw Error('incomplete v31 fork overlay');
           for(const [relative,contents] of Object.entries(data)){
-            if(!expected.includes(relative)) throw Error('unexpected v30 overlay path');
+            if(!expected.includes(relative)) throw Error('unexpected v31 overlay path');
             const out=path.join('.fxusd-compile',relative);
             fs.mkdirSync(path.dirname(out),{recursive:true});
             fs.writeFileSync(out,contents);
           }
-          console.log('Applied',expected.length,'exact v30 source overlays');
+          console.log('Applied',expected.length,'exact v31 source overlays');
           NODE
           rm .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
           rm .fxusd-compile/contracts/FXNCurveRewardRouter.sol
@@ -98,9 +98,9 @@ jobs:
               creation=artifact['bytecode']['object'].removeprefix('0x')
               report['contracts'][name]={'runtime_bytes':len(runtime)//2,'creation_bytes':len(creation)//2,'eip170_headroom':24576-len(runtime)//2}
               print(f'FINAL_SIZE {name}: runtime={len(runtime)//2}, creation={len(creation)//2}, eip170_headroom={24576-len(runtime)//2}')
-          Path('size-report-v30.json').write_text(json.dumps(report,indent=2)+'\n')
+          Path('size-report-v31.json').write_text(json.dumps(report,indent=2)+'\n')
           PY
-      - name: Execute v30 Ethereum mainnet-fork deposit/timejump/harvest/withdraw simulation
+      - name: Execute v31 Ethereum mainnet-fork deposit/timejump/harvest/withdraw simulation
         shell: bash
         run: |
           set -euo pipefail
@@ -119,31 +119,33 @@ jobs:
           stages=['postdeploy','postdeposit','posttimejump','postharvest','postvaultreport','postwithdraw','harvest','withdraw']
           snapshots={x:{} for x in stages}
           for line in s.splitlines():
-              m=re.search(r'AUDIT_(\w+):\s*(\d+)',line)
+              m=re.search(r'AUDIT_(\w+):?\s+(\d+)',line)
               if not m: continue
               k,val=m.group(1),int(m.group(2))
               for stage in stages:
                   if k.startswith(stage+'_'):
                       snapshots[stage][k[len(stage)+1:]]=str(val)
                       break
-          meta={'source_revision':'v30','network':'ethereum mainnet fork (ephemeral)',
+          meta={'source_revision':'v31', 'router_revision':'BoostHub v34 exact source','network':'ethereum mainnet fork (ephemeral)',
            'real_protocols':['Yearn v3.1.0','Convex F(x)','Curve Pool 8/32','fxSP Pool 37','Uniswap V3'],
-           'simulation_only_substitutes':['Vyper/BoostHub receipt','historical V3 price rate snapshot','seeded FXN yield'],
+           'simulation_only_substitutes':['Vyper/BoostHub receipt','fork-only FXN->fxUSD route tail (V3 WETH/USDC, Curve NG USDC/fxUSD)','seeded FXN yield'],
            'accounting':snapshots,
            'simulator_result':'passed' if '[PASS]' in s else 'failed_or_incomplete'}
-          Path('fork-accounting-snapshots-v1.json').write_text(json.dumps(meta,indent=2)+'\n')
+          Path('fork-accounting-snapshots-v2.json').write_text(json.dumps(meta,indent=2)+'\n')
           print('ACCOUNTING_SNAPSHOTS',json.dumps({k:len(v) for k,v in snapshots.items()}))
+          if meta['simulator_result']=='passed' and any(not snapshots[x] for x in ['postdeploy','postdeposit','posttimejump','postharvest','postvaultreport','postwithdraw']):
+              raise SystemExit('successful sim missing required accounting stages')
           PY
       - name: Save compiler output and official source
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fxusd-v30-runtime-size-compile-report
+          name: fxusd-v31-v34-router-fork-lifecycle-report
           path: |
             .fxusd-compile/compile.log
-            .fxusd-compile/size-report-v30.json
+            .fxusd-compile/size-report-v31.json
             .fxusd-compile/fork-sim.log
-            .fxusd-compile/fork-accounting-snapshots-v1.json
+            .fxusd-compile/fork-accounting-snapshots-v2.json
             .fxusd-compile/test/FXUSDMainnetForkSimulation.t.sol
             .fxusd-compile/contracts/Accountant.sol
             .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
