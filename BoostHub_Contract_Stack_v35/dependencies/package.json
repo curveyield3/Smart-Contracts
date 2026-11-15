@@ -1,0 +1,13 @@
+{
+  "name": "boosthub-contract-dependencies",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned Solidity dependencies, installed only under dependencies/node_modules",
+  "dependencies": {
+    "@openzeppelin/contracts": "5.4.0",
+    "@openzeppelin-4/contracts": "npm:@openzeppelin/contracts@4.9.6",
+    "@uniswap/v4-core": "1.0.2",
+    "@openzeppelin/contracts-upgradeable": "4.9.6",
+    "@openzeppelin-5/contracts": "npm:@openzeppelin/contracts@5.4.0"
+  }
+}

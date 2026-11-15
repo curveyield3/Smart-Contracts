@@ -1,0 +1,24 @@
+[profile.default]
+src = "contracts"
+script = "script"
+out = "build/forge"
+libs = ["dependencies/node_modules"]
+remappings = [
+  "@openzeppelin/contracts/=dependencies/node_modules/@openzeppelin/contracts/",
+  "@openzeppelin-4/contracts/=dependencies/node_modules/@openzeppelin-4/contracts/",
+  "@openzeppelin-5/contracts/=dependencies/node_modules/@openzeppelin-5/contracts/",
+  "@openzeppelin/contracts-upgradeable/=dependencies/node_modules/@openzeppelin/contracts-upgradeable/",
+  "solmate/src/=dependencies/solmate/src/"
+]
+solc_version = "0.8.28"
+auto_detect_solc = false
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+fs_permissions = [
+  { access = "read", path = "./contracts" },
+  { access = "read", path = "./artifacts" }
+]
+
+[fmt]
+line_length = 120
