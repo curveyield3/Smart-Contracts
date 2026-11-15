@@ -1,13 +1,13 @@
-name: fxUSD Yearn v28 compile and runtime sizing
+name: fxUSD Yearn v29 compile and runtime sizing
 on:
   push:
-    branches: [fxusd-yearn-v28-compile]
+    branches: [fxusd-yearn-v29-compile]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
       - 'fxusd-yearn/compile/v17/Accountant.sol'
       - 'fxusd-yearn/compile/v17/IVault.sol'
       - 'fxusd-yearn/compile/v19/**'
-      - 'fxusd-yearn/compile/v28/**'
+      - 'fxusd-yearn/compile/v29/**'
 permissions:
   contents: read
 jobs:
@@ -21,7 +21,7 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-      - name: Restore source and overlay exact v28 contracts
+      - name: Restore source and overlay exact v29 contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -48,7 +48,7 @@ jobs:
           node <<'NODE'
           const fs=require('fs'),path=require('path'),zlib=require('zlib');
           const data=JSON.parse(zlib.brotliDecompressSync(
-            Buffer.from(fs.readFileSync('fxusd-yearn/compile/v28/source-overlay.b64','utf8').trim(),'base64')
+            Buffer.from(fs.readFileSync('fxusd-yearn/compile/v29/source-overlay.b64','utf8').trim(),'base64')
           ).toString('utf8'));
           const expected=[
             'contracts/FXNYearnMasterAllocator.sol',
@@ -58,12 +58,12 @@ jobs:
             'contracts/FxBaseConvex37YearnStrategy.sol',
             'script/DeployFXUSDYearnV26.s.sol'
           ];
-          if (Object.keys(data).length!==expected.length || expected.some(x=>typeof data[x]!=='string')) throw Error('incomplete v28 overlay');
+          if (Object.keys(data).length!==expected.length || expected.some(x=>typeof data[x]!=='string')) throw Error('incomplete v29 overlay');
           for(const [relative,contents] of Object.entries(data)){
-            if(!expected.includes(relative)) throw Error('unexpected v28 overlay path');
+            if(!expected.includes(relative)) throw Error('unexpected v29 overlay path');
             fs.writeFileSync(path.join('.fxusd-compile',relative),contents);
           }
-          console.log('Applied',expected.length,'exact v28 source overlays');
+          console.log('Applied',expected.length,'exact v29 source overlays');
           NODE
           rm .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
           rm .fxusd-compile/contracts/FXNCurveRewardRouter.sol
@@ -93,16 +93,16 @@ jobs:
               creation=artifact['bytecode']['object'].removeprefix('0x')
               report['contracts'][name]={'runtime_bytes':len(runtime)//2,'creation_bytes':len(creation)//2,'eip170_headroom':24576-len(runtime)//2}
               print(f'FINAL_SIZE {name}: runtime={len(runtime)//2}, creation={len(creation)//2}, eip170_headroom={24576-len(runtime)//2}')
-          Path('size-report-v28.json').write_text(json.dumps(report,indent=2)+'\n')
+          Path('size-report-v29.json').write_text(json.dumps(report,indent=2)+'\n')
           PY
       - name: Save compiler output and official source
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fxusd-v28-runtime-size-compile-report
+          name: fxusd-v29-runtime-size-compile-report
           path: |
             .fxusd-compile/compile.log
-            .fxusd-compile/size-report-v28.json
+            .fxusd-compile/size-report-v29.json
             .fxusd-compile/contracts/Accountant.sol
             .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
           if-no-files-found: warn
