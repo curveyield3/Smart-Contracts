@@ -83,31 +83,31 @@ jobs:
           start=s.index('    function _fund() internal {')
           end=s.index('    function _metric(',start)
           s=s[:start]+'''    // Fork-only funding of fxUSD deposit principal, never artificial FXN.
-    function _fund() internal {
-        require(IERC20(FXUSD).balanceOf(CURVE32)>=DEPOSIT,"FXUSD source insufficient");
-        vm.prank(CURVE32);
-        require(IERC20(FXUSD).transfer(address(this),DEPOSIT),"fund FXUSD principal");
-    }
-'''+s[end:]
+              function _fund() internal {
+                  require(IERC20(FXUSD).balanceOf(CURVE32)>=DEPOSIT,"FXUSD source insufficient");
+                  vm.prank(CURVE32);
+                  require(IERC20(FXUSD).transfer(address(this),DEPOSIT),"fund FXUSD principal");
+              }
+          '''+s[end:]
           start=s.index('        // Establish both positions of the FXN engine')
           end=s.index('        _snapshot("posttimejump");',start)
           s=s[:start]+'''        // No starting FXN and no injected FXN rewards for any strategy.
-        require(IERC20(FXN).balanceOf(address(engine))==0, "engine must start with zero FXN");
-        require(engine.convexLPStaked()==0 && receipt.balanceOf(address(engine))==0,
+                  require(IERC20(FXN).balanceOf(address(engine))==0, "engine must start with zero FXN");
+                  require(engine.convexLPStaked()==0 && receipt.balanceOf(address(engine))==0,
             "engine must start with no staked positions");
-        require(IERC20(FXN).balanceOf(address(c32))==0 &&
+                  require(IERC20(FXN).balanceOf(address(c32))==0 &&
                 IERC20(FXN).balanceOf(address(c37))==0 &&
                 IERC20(FXN).balanceOf(address(receipt))==0,
             "unexpected preseeded FXN reward");
-        vm.warp(block.timestamp + 24 hours);
-        vm.roll(block.number + 7200);
-'''+s[end:]
+                  vm.warp(block.timestamp + 24 hours);
+                  vm.roll(block.number + 7200);
+          '''+s[end:]
           sentinel='        _metric(stage,"child37_fxusd_idle",IERC20(FXUSD).balanceOf(address(c37)));'
           assert s.count(sentinel)==1, 'accounting field baseline changed'
           s=s.replace(sentinel,sentinel+'''
-        _metric(stage,"child32_fxn_idle",IERC20(FXN).balanceOf(address(c32)));
-        _metric(stage,"child37_fxn_idle",IERC20(FXN).balanceOf(address(c37)));
-        _metric(stage,"fixture_receipt_fxn_idle",IERC20(FXN).balanceOf(address(receipt)));''')
+                  _metric(stage,"child32_fxn_idle",IERC20(FXN).balanceOf(address(c32)));
+                  _metric(stage,"child37_fxn_idle",IERC20(FXN).balanceOf(address(c37)));
+                  _metric(stage,"fixture_receipt_fxn_idle",IERC20(FXN).balanceOf(address(receipt)));''')
           s=s.replace('AUDIT_COMPLETE_V31','AUDIT_COMPLETE_V31_24H_ORGANIC')
           assert 'DEPOSIT=1000e18' in s and '24 hours' in s
           assert 'yield injection' not in s and 'fund FXN child' not in s
