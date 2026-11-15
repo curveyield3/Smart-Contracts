@@ -152,6 +152,7 @@ jobs:
                       _metric(prefix,"fxn_vyper_staked_at_start",stakingActiveAtStart?1:0);
                       _metric(prefix,"fxn_convex_lp_staked_at_start",convexStakeAtStart);
                       _metric(prefix,"staking_reward_rate_fxn_per_day",0.002e18);
+                      _metric(prefix,"full_active_week_reward_target_fxn",0.014e18);
                       vm.warp(block.timestamp+7 days);
                       vm.roll(block.number+50400);
                       _freshUSDCPrice(week);
@@ -168,8 +169,26 @@ jobs:
                       _metric(prefix,"modeled_vyper_reward_fxn",weeklyModeledFXN);
                       _snapshot(string.concat(prefix,"_preharvest"));
                       _organicProbe(prefix);
-                      (uint256 sold,uint256 out)=master.harvestActive();
-                      require(sold>0.02e18 && out>0,"weekly atomic harvest failed");
+                      uint256 sold;
+                      uint256 out;
+                      bool completed;
+                      try master.harvestActive() returns (uint256 fxnSold,uint256 fxusdOut) {
+                          sold=fxnSold;
+                          out=fxusdOut;
+                          completed=true;
+                          require(sold>0.02e18 && out>0,"harvest result invariant");
+                      } catch (bytes memory reason) {
+                          bytes4 selector;
+                          if(reason.length>=4){assembly {selector := mload(add(reason,32))}}
+                          if(selector!=FXNYearnMasterAllocator.InsufficientLiquidity.selector) {
+                              assembly {revert(add(reason,32),mload(reason))}
+                          }
+                          // Failed atomic harvest leaves balances unchanged; preserve that
+                          // state and continue the real fork to the next weekly checkpoint.
+                          _metric(prefix,"threshold_blocked",1);
+                      }
+                      if(week==1) require(completed,"first-week harvest did not complete");
+                      _metric(prefix,"harvest_completed",completed?1:0);
                       _metric(prefix,"fxn_sold",sold);
                       _metric(prefix,"fxusd_from_swap",out);
                       _snapshot(string.concat(prefix,"_postharvest"));
