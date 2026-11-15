@@ -101,6 +101,19 @@ jobs:
             "unexpected preseeded FXN reward");
                   vm.warp(block.timestamp + 7 days);
                   vm.roll(block.number + 50400);
+                  // Seven-day static fork has no freshly published Chainlink rounds.
+                  // Preserve observed USDC/USD answer and refresh only its timestamp.
+                  address usdcFeed=address(uint160(0x008fFfFfd4AfB6115b954Bd326cbe7B4BA576818f6));
+                  (bool oracleOk,bytes memory oracleData)=usdcFeed.staticcall(
+                      abi.encodeWithSignature("latestRoundData()")
+                  );
+                  require(oracleOk && oracleData.length>=160,"USDC price feed read");
+                  (uint80 roundId,int256 answer,,,uint80 answeredInRound)=
+                      abi.decode(oracleData,(uint80,int256,uint256,uint256,uint80));
+                  require(answer>0,"invalid USDC price");
+                  vm.mockCall(usdcFeed,abi.encodeWithSignature("latestRoundData()"),
+                      abi.encode(roundId,answer,block.timestamp,block.timestamp,answeredInRound));
+                  console2.log("AUDIT_FORK_ONLY_USDC_ORACLE_TIMESTAMP_REFRESH",uint256(1));
           '''+s[end:]
           sentinel='        _metric(stage,"child37_fxusd_idle",IERC20(FXUSD).balanceOf(address(c37)));'
           assert s.count(sentinel)==1, 'accounting field baseline changed'
@@ -210,7 +223,7 @@ jobs:
                       break
           meta={'source_revision':'v31', 'router_revision':'BoostHub v34 exact source', 'initial_deposit_fxusd':'3000', 'elapsed_seconds':604800, 'artificial_fxn_rewards':False,'network':'ethereum mainnet fork (ephemeral)',
            'real_protocols':['Yearn v3.1.0','Convex F(x)','Curve Pool 8/32','fxSP Pool 37','Uniswap V3'],
-           'simulation_only_substitutes':['Vyper/BoostHub receipt','fork-only FXN->fxUSD route tail (V3 WETH/USDC, Curve NG USDC/fxUSD)','NO synthetic FXN rewards; economic child starts empty'],
+           'simulation_only_substitutes':['Vyper/BoostHub receipt','fork-only FXN->fxUSD route tail (V3 WETH/USDC, Curve NG USDC/fxUSD)','fork-only USDC Chainlink timestamp refreshed, price unchanged','NO synthetic FXN rewards; economic child starts empty'],
            'accounting':snapshots,
            'simulator_result':'passed' if '[PASS]' in s else 'failed_or_incomplete'}
           Path('fork-accounting-snapshots-v2.json').write_text(json.dumps(meta,indent=2)+'\n')
