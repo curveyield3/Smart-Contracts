@@ -71,7 +71,7 @@ jobs:
           NODE
           rm .fxusd-compile/script/DeployFXUSDYearnV19.s.sol
           rm .fxusd-compile/contracts/FXNCurveRewardRouter.sol
-          # Modify only the existing fork harness to measure ORGANIC 24-hour rewards.
+          # Modify only the existing fork harness to measure ORGANIC seven-day rewards.
           # The v31 strategy and v34 router sources above are untouched.
           python3 - <<'PY24H'
           from pathlib import Path
@@ -79,7 +79,7 @@ jobs:
           s=p.read_text()
           old='uint256 constant DEPOSIT=50e18;'
           assert s.count(old)==1, 'deposit baseline changed'
-          s=s.replace(old,'uint256 constant DEPOSIT=1000e18;')
+          s=s.replace(old,'uint256 constant DEPOSIT=3000e18;')
           start=s.index('    function _fund() internal {')
           end=s.index('    function _metric(',start)
           s=s[:start]+'''    // Fork-only funding of fxUSD deposit principal, never artificial FXN.
@@ -99,8 +99,8 @@ jobs:
                 IERC20(FXN).balanceOf(address(c37))==0 &&
                 IERC20(FXN).balanceOf(address(receipt))==0,
             "unexpected preseeded FXN reward");
-                  vm.warp(block.timestamp + 24 hours);
-                  vm.roll(block.number + 7200);
+                  vm.warp(block.timestamp + 7 days);
+                  vm.roll(block.number + 50400);
           '''+s[end:]
           sentinel='        _metric(stage,"child37_fxusd_idle",IERC20(FXUSD).balanceOf(address(c37)));'
           assert s.count(sentinel)==1, 'accounting field baseline changed'
@@ -108,8 +108,8 @@ jobs:
                   _metric(stage,"child32_fxn_idle",IERC20(FXN).balanceOf(address(c32)));
                   _metric(stage,"child37_fxn_idle",IERC20(FXN).balanceOf(address(c37)));
                   _metric(stage,"fixture_receipt_fxn_idle",IERC20(FXN).balanceOf(address(receipt)));''')
-          s=s.replace('AUDIT_COMPLETE_V31','AUDIT_COMPLETE_V31_24H_ORGANIC')
-          assert 'DEPOSIT=1000e18' in s and '24 hours' in s
+          s=s.replace('AUDIT_COMPLETE_V31','AUDIT_COMPLETE_V31_7D_3K_ORGANIC')
+          assert 'DEPOSIT=3000e18' in s and '7 days' in s
           assert 'yield injection' not in s and 'fund FXN child' not in s
           assert '0.015e18' not in s and '0.08e18' not in s and '0.010e18' not in s
           start=s.index('        (uint256 sold,uint256 grossFxusd)=master.harvestActive();')
@@ -151,7 +151,7 @@ jobs:
           s=s.replace(old,'        if (harvestCompleted) require(feeShares>0,"missing Yearn accountant fee shares");')
           assert 'organic_total_fxn' in s and 'min_fxn_threshold_reverted' in s
           p.write_text(s)
-          print('ORGANIC_FORK_CONFIG 1000 fxUSD, 24 hours, zero artificial FXN, zero economic-child seed')
+          print('ORGANIC_FORK_CONFIG 3000 fxUSD, 7 days, zero artificial FXN, zero economic-child seed')
           PY24H
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           git clone --depth 1 -q --branch v1.9.7 https://github.com/foundry-rs/forge-std.git .fxusd-compile/node_modules/forge-std
@@ -208,7 +208,7 @@ jobs:
                   if k.startswith(stage+'_'):
                       snapshots[stage][k[len(stage)+1:]]=str(val)
                       break
-          meta={'source_revision':'v31', 'router_revision':'BoostHub v34 exact source', 'initial_deposit_fxusd':'1000', 'elapsed_seconds':86400, 'artificial_fxn_rewards':False,'network':'ethereum mainnet fork (ephemeral)',
+          meta={'source_revision':'v31', 'router_revision':'BoostHub v34 exact source', 'initial_deposit_fxusd':'3000', 'elapsed_seconds':604800, 'artificial_fxn_rewards':False,'network':'ethereum mainnet fork (ephemeral)',
            'real_protocols':['Yearn v3.1.0','Convex F(x)','Curve Pool 8/32','fxSP Pool 37','Uniswap V3'],
            'simulation_only_substitutes':['Vyper/BoostHub receipt','fork-only FXN->fxUSD route tail (V3 WETH/USDC, Curve NG USDC/fxUSD)','NO synthetic FXN rewards; economic child starts empty'],
            'accounting':snapshots,
