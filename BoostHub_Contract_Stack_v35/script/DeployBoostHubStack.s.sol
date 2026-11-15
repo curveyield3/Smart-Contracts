@@ -83,7 +83,6 @@ contract DeployBoostHubStack is Script {
     address private constant FRAXTAL_SDFXS = 0x1AEe2382e05Dc68BDfC472F1E46d570feCca5814;
     address private constant FRAXTAL_GAUGE = 0x12992595328E52267c95e45B1a97014D6Ddf8683;
     address private constant FRAXTAL_FRAX_REWARD = 0xFc00000000000000000000000000000000000002;
-    address private constant OWNER = 0x11b78837cadC8E894F1c6e13fA9f3A085a75FA35;
     address private constant VL_BOOST = 0xaB05ca46d1c78CAbB051efFE35099714Cad2AddA;
     address private constant STASH = 0x03E34b085C52985F6a5D27243F20C84bDdc01Db4;
     address private constant FEE_RECEIVER = 0x47623C62f281807D615eeb4A2CEee9d97F9D3C49;
@@ -126,14 +125,10 @@ contract DeployBoostHubStack is Script {
 
     address private constant ETH_BEEFY_VAULT_FACTORY = 0xC551dDCE8e5E657503Cd67A39713c06F2c0d2e97;
     address private constant ETH_BEEFY_STRATEGY_FACTORY = 0x52941De3eDE234ae6B8608597440Ac3394C64Ae8;
-    address private constant ETH_BEEFY_VAULT_OWNER = 0x5B6C5363851EC9ED29CB7220C39B44E1dd443992;
-    address private constant ETH_BEEFY_STRATEGY_OWNER = 0x1c9270ac5C42E51611d7b97b1004313D52c80293;
     // Beefy's published Fraxtal vault factory. Deployment preflight verifies its
     // implementation before use; never deploy a parallel vault factory.
     address private constant FRAX_BEEFY_VAULT_FACTORY = 0x91BB303E972995EbE5f593BCddBb6F5Ef49Dbcbd;
     address private constant FRAX_BEEFY_STRATEGY_FACTORY = 0x4b5f7De737531673B23ceB43D45ea3f1297e4C6d;
-    address private constant FRAX_BEEFY_VAULT_OWNER = 0xC35a456138dE0634357eb47Ba5E74AFE9faE9a98;
-    address private constant FRAX_BEEFY_STRATEGY_OWNER = 0x73F97432Adb2a1c39d0E1a6e554c7d4BbDaFC316;
 
 
     event UnifiedCore(address indexed hub, address indexed localDeployer);
@@ -240,14 +235,13 @@ contract DeployBoostHubStack is Script {
         emit PartnerFactorySelected(block.chainid, vaultFactory, strategyFactory);
         for (uint256 pid; pid < assets.length; ++pid) {
             _deployPartnerPair(partnerDeployer, vaultFactory,
-                staking[pid], assets[pid], strategyFactory, swapper, pid);
+                staking[pid], assets[pid], strategyFactory, swapper, broadcaster, pid);
         }
-        omni.transferOwnership(OWNER);
-        emit UnifiedOmniRouter(block.chainid, swapper, OWNER);
-
-        // Owner explicitly accepts pending Hub ownership on each chain.
-        hub.transferOwnership(OWNER);
-        emit PendingExternalOwnership(deployedHub, OWNER);
+        // The broadcaster (the Safe for an atomic Safe deployment) remains owner.
+        // Both Hub and Omni were initialized with that owner; avoid redundant handoffs.
+        require(omni.owner() == broadcaster && hub.owner() == broadcaster,
+            "BOOSTHUB_FINAL_OWNER_MISMATCH");
+        emit UnifiedOmniRouter(block.chainid, swapper, broadcaster);
         vm.stopBroadcast();
     }
 
@@ -322,7 +316,7 @@ contract DeployBoostHubStack is Script {
             IBoostHubStaking instance = IBoostHubStaking(instanceAddress);
             require(instance.lp_token() == assets[pid] && instance.boost_hub() == hub && instance.pid() == pid,
                 "BOOSTHUB_STAKING_BINDING_MISMATCH");
-            instance.commit_transfer_ownership(OWNER);
+            // Admin was initialized as broadcaster; do not create a pending handoff.
             emit UnifiedStaking(pid, instanceAddress);
         }
     }
@@ -371,7 +365,8 @@ contract DeployBoostHubStack is Script {
         require(IBoostHubStrategy(strategy).want() == want, "BOOSTHUB_STRATEGY_WANT_MISMATCH");
         require(IBoostHubVault(vault).strategy() == strategy, "BOOSTHUB_VAULT_STRATEGY_MISMATCH");
         require(IBoostHubVault(vault).want() == want, "BOOSTHUB_VAULT_WANT_MISMATCH");
-        BeefyVaultV7FixedV2(vault).transferOwnership(OWNER);
+        // Newly constructed vault already belongs to broadcaster; retain that owner.
+        require(BeefyVaultV7FixedV2(vault).owner() == broadcaster, "BOOSTHUB_CUSTOM_VAULT_OWNER_MISMATCH");
         emit UnifiedBeefy(pid, strategy, vault);
     }
 
@@ -432,11 +427,7 @@ contract DeployBoostHubStack is Script {
             strategyOwner, vaultOwner, name, symbol
         );
         emit PartnerDeployed(block.chainid, pid, strategy, vault);
-        emit PartnerOwnershipHandoffPending(
-            strategy, vault,
-            block.chainid == 1 ? ETH_BEEFY_STRATEGY_OWNER : FRAX_BEEFY_STRATEGY_OWNER,
-            block.chainid == 1 ? ETH_BEEFY_VAULT_OWNER : FRAX_BEEFY_VAULT_OWNER
-        );
+        emit PartnerOwnershipHandoffPending(strategy, vault, strategyOwner, vaultOwner);
         IFeeConfig.FeeCategory memory fees = IFeeConfig(
             IStrategyFactory(strategyFactory).beefyFeeConfig()
         ).getFees(strategy);
@@ -586,7 +577,8 @@ contract DeployBoostHubStack is Script {
 
     function _deployPartnerPair(
         BoostHubPartnerPairDeployerV4 deployer, address vaultFactory,
-        address staking, address want, address strategyFactory, address omni, uint256 pid
+        address staking, address want, address strategyFactory, address omni,
+        address broadcaster, uint256 pid
     ) internal {
         string memory name;
         string memory symbol;
@@ -598,7 +590,7 @@ contract DeployBoostHubStack is Script {
             name = "Moo BoostHub sdFXN"; symbol = "mooBoostHubSdFXN";
         }
         _createPartnerPair(deployer, vaultFactory, staking, want,
-            strategyFactory, omni, OWNER, OWNER, OWNER, name, symbol, pid);
+            strategyFactory, omni, broadcaster, broadcaster, broadcaster, name, symbol, pid);
     }
 
     function _configureEthereumRoutes(CurveYieldOmniRouter router) internal {
