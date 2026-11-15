@@ -120,8 +120,8 @@ contract DeployBoostHubStack is Script {
     address private constant ETH_WETH_FXN_POOL = 0xC15F285679a1Ef2d25F53D4CbD0265E1D02F2A92;
     address private constant ETH_FXN_SDFXN_POOL = 0x28Ca243dc0aC075dD012fCf9375C25D18A844d96;
     // V3 pools for the rewards actually verified on the older Ethereum deployment.
-    address private constant ETH_CRV_WETH_V3 = 0x919fa96e88d67499339577fa202345436bcdaf79; // 0.30%
-    address private constant ETH_WSTETH_WETH_V3 = 0xd340b57aacdd10f96fc1cf10e15921936f41e29c; // 0.05%
+    address private constant ETH_CRV_WETH_V3 = 0x919Fa96e88d67499339577Fa202345436bcDaf79; // 0.30%
+    address private constant ETH_WSTETH_WETH_V3 = 0xD340B57AAcDD10F96FC1CF10e15921936F41E29c; // 0.05%
     address private constant FRAX_WFRAX_SDFXS_POOL = 0x3df1658e3E76d14eF3C4d410829EA7575bB83B9B;
 
     address private constant ETH_BEEFY_VAULT_FACTORY = 0xC551dDCE8e5E657503Cd67A39713c06F2c0d2e97;
@@ -198,7 +198,7 @@ contract DeployBoostHubStack is Script {
             type(BoostHub).creationCode, abi.encode(broadcaster, boost, distributor)
         ));
         require(deployedHub == expectedHub, "BOOSTHUB_HUB_ADDRESS_MISMATCH");
-        BoostHub hub = BoostHub(deployedHub);
+        BoostHub hub = BoostHub(payable(deployedHub));
         require(hub.owner() == broadcaster && hub.rewardDistributor() == distributor,
             "BOOSTHUB_HUB_CONSTRUCTOR_MISMATCH");
         emit UnifiedCore(deployedHub, broadcaster);
