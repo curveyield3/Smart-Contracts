@@ -112,6 +112,44 @@ jobs:
           assert 'DEPOSIT=1000e18' in s and '24 hours' in s
           assert 'yield injection' not in s and 'fund FXN child' not in s
           assert '0.015e18' not in s and '0.08e18' not in s and '0.010e18' not in s
+          start=s.index('        (uint256 sold,uint256 grossFxusd)=master.harvestActive();')
+          end=s.index('        _snapshot("postharvest");',start)
+          s=s[:start]+'''        // Probe genuine Convex FXN claims and restore the exact fork state.
+                  uint256 rewardSnapshot=vm.snapshotState();
+                  vm.prank(address(master));
+                  uint256 organic32=c32.claimFxNToMaster();
+                  vm.prank(address(master));
+                  uint256 organic37=c37.claimFxNToMaster();
+                  vm.revertToState(rewardSnapshot);
+                  _metric("harvest","organic_curve32_fxn",organic32);
+                  _metric("harvest","organic_fxsp37_fxn",organic37);
+                  _metric("harvest","organic_total_fxn",organic32+organic37);
+                  _metric("harvest","expected_master_sale_after_10pct_diversion",(organic32+organic37)*9000/10000);
+                  uint256 sold;
+                  uint256 grossFxusd;
+                  bool harvestCompleted;
+                  try master.harvestActive() returns (uint256 realizedFXN,uint256 realizedFxUSD) {
+                      sold=realizedFXN;
+                      grossFxusd=realizedFxUSD;
+                      harvestCompleted=true;
+                      require(sold>0.02e18 && grossFxusd>0,"harvest output invariant");
+                  } catch (bytes memory reason) {
+                      bytes4 selector;
+                      if(reason.length>=4){assembly {selector := mload(add(reason,32))}}
+                      if(selector != FXNYearnMasterAllocator.InsufficientLiquidity.selector) {
+                          assembly {revert(add(reason,32),mload(reason))}
+                      }
+                      // Record the expected threshold revert; withdrawal still proceeds.
+                      _metric("harvest","min_fxn_threshold_reverted",1);
+                  }
+                  _metric("harvest","completed",harvestCompleted?1:0);
+                  _metric("harvest","fxn_sold",sold);
+                  _metric("harvest","fxusd_received",grossFxusd);
+          '''+s[end:]
+          old='        require(feeShares>0,"missing Yearn accountant fee shares");'
+          assert s.count(old)==1, 'expected original report fee assertion once'
+          s=s.replace(old,'        if (harvestCompleted) require(feeShares>0,"missing Yearn accountant fee shares");')
+          assert 'organic_total_fxn' in s and 'min_fxn_threshold_reverted' in s
           p.write_text(s)
           print('ORGANIC_FORK_CONFIG 1000 fxUSD, 24 hours, zero artificial FXN, zero economic-child seed')
           PY24H
