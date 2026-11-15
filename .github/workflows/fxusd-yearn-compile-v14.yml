@@ -1,7 +1,7 @@
-name: fxUSD Yearn v30 compile and runtime sizing
+name: fxUSD Yearn v30 mainnet fork lifecycle simulation
 on:
   push:
-    branches: [fxusd-yearn-v30-compile]
+    branches: [fxusd-yearn-v30-fork-sim]
     paths:
       - '.github/workflows/fxusd-yearn-compile-v14.yml'
       - 'fxusd-yearn/compile/v17/Accountant.sol'
@@ -56,12 +56,16 @@ jobs:
             'contracts/FXNYearnChildBase.sol',
             'contracts/CurveConvex32YearnStrategy.sol',
             'contracts/FxBaseConvex37YearnStrategy.sol',
-            'script/DeployFXUSDYearnV26.s.sol'
+            'script/DeployFXUSDYearnV26.s.sol',
+            'contracts/CurveYieldOmniRouter_v4.sol',
+            'test/FXUSDMainnetForkSimulation.t.sol'
           ];
-          if (Object.keys(data).length!==expected.length || expected.some(x=>typeof data[x]!=='string')) throw Error('incomplete v30 overlay');
+          if (Object.keys(data).length!==expected.length || expected.some(x=>typeof data[x]!=='string')) throw Error('incomplete v30 fork overlay');
           for(const [relative,contents] of Object.entries(data)){
             if(!expected.includes(relative)) throw Error('unexpected v30 overlay path');
-            fs.writeFileSync(path.join('.fxusd-compile',relative),contents);
+            const out=path.join('.fxusd-compile',relative);
+            fs.mkdirSync(path.dirname(out),{recursive:true});
+            fs.writeFileSync(out,contents);
           }
           console.log('Applied',expected.length,'exact v30 source overlays');
           NODE
@@ -69,6 +73,7 @@ jobs:
           rm .fxusd-compile/contracts/FXNCurveRewardRouter.sol
           git clone --depth 1 -q --branch v4.9.4 https://github.com/OpenZeppelin/openzeppelin-contracts.git .fxusd-compile/lib/openzeppelin
           git clone --depth 1 -q --branch v1.9.7 https://github.com/foundry-rs/forge-std.git .fxusd-compile/node_modules/forge-std
+          git clone --depth 1 -q https://github.com/Uniswap/v4-core.git .fxusd-compile/node_modules/@uniswap/v4-core
           sed -i 's|@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/|@openzeppelin/contracts/=lib/openzeppelin/contracts/|' .fxusd-compile/foundry.toml
           sed -i '/^remappings = \[/,/^\]/d' .fxusd-compile/foundry.toml
           printf '\nremappings = ["forge-std/=node_modules/forge-std/src/", "@openzeppelin/contracts/=lib/openzeppelin/contracts/", "@tokenized-strategy/=node_modules/@tokenized-strategy/", "@yearn-vaults/=node_modules/@yearn-vaults/"]\n' >> .fxusd-compile/foundry.toml
@@ -95,6 +100,40 @@ jobs:
               print(f'FINAL_SIZE {name}: runtime={len(runtime)//2}, creation={len(creation)//2}, eip170_headroom={24576-len(runtime)//2}')
           Path('size-report-v30.json').write_text(json.dumps(report,indent=2)+'\n')
           PY
+      - name: Execute v30 Ethereum mainnet-fork deposit/timejump/harvest/withdraw simulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .fxusd-compile
+          export ETH_RPC_URL="${ETH_RPC_URL:-https://ethereum-rpc.publicnode.com}"
+          forge test --use 0.8.30 --via-ir --match-contract FXUSDMainnetForkSimulation -vvvv 2>&1 | tee fork-sim.log
+      - name: Persist accounting snapshots even if simulation fails
+        if: always()
+        shell: bash
+        run: |
+          cd .fxusd-compile
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          s=Path('fork-sim.log').read_text() if Path('fork-sim.log').exists() else ''
+          stages=['postdeploy','postdeposit','posttimejump','postharvest','postvaultreport','postwithdraw','harvest','withdraw']
+          snapshots={x:{} for x in stages}
+          for line in s.splitlines():
+              m=re.search(r'AUDIT_(\w+):\s*(\d+)',line)
+              if not m: continue
+              k,val=m.group(1),int(m.group(2))
+              for stage in stages:
+                  if k.startswith(stage+'_'):
+                      snapshots[stage][k[len(stage)+1:]]=str(val)
+                      break
+          meta={'source_revision':'v30','network':'ethereum mainnet fork (ephemeral)',
+           'real_protocols':['Yearn v3.1.0','Convex F(x)','Curve Pool 8/32','fxSP Pool 37','Uniswap V3'],
+           'simulation_only_substitutes':['Vyper/BoostHub receipt','historical V3 price rate snapshot','seeded FXN yield'],
+           'accounting':snapshots,
+           'simulator_result':'passed' if '[PASS]' in s else 'failed_or_incomplete'}
+          Path('fork-accounting-snapshots-v1.json').write_text(json.dumps(meta,indent=2)+'\n')
+          print('ACCOUNTING_SNAPSHOTS',json.dumps({k:len(v) for k,v in snapshots.items()}))
+          PY
       - name: Save compiler output and official source
         if: always()
         uses: actions/upload-artifact@v4
@@ -103,6 +142,9 @@ jobs:
           path: |
             .fxusd-compile/compile.log
             .fxusd-compile/size-report-v30.json
+            .fxusd-compile/fork-sim.log
+            .fxusd-compile/fork-accounting-snapshots-v1.json
+            .fxusd-compile/test/FXUSDMainnetForkSimulation.t.sol
             .fxusd-compile/contracts/Accountant.sol
             .fxusd-compile/node_modules/@yearn-vaults/interfaces/IVault.sol
           if-no-files-found: warn
