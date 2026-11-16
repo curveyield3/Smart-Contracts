@@ -39,3 +39,75 @@ jobs:
             BoostHub_Contract_Stack_v35/artifacts/staking.json
             BoostHub_Contract_Stack_v35/build/forge/
           if-no-files-found: error
+      - name: Publish Vyper staking source to Sourcify and Blockscout
+        if: contains(github.event.head_commit.message, '[verify-vyper]')
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, time, urllib.request, urllib.error, uuid
+          root = pathlib.Path("BoostHub_Contract_Stack_v35")
+          source = (root/"contracts/BoostHubStaking.vy").read_text()
+          artifact = json.loads((root/"artifacts/staking.json").read_text())
+          assert artifact["sourceSha256"].lower() == "0x"+hashlib.sha256(source.encode()).hexdigest(), "Vyper artifact must match exact source"
+          assert artifact["compilerVersion"] == "0.4.3"
+          assert "0.4.3" in subprocess.check_output(["vyper","--version"],text=True)
+          headers = {"User-Agent":"CurveYield-BoostHub-source-verification/1.0 (+https://github.com/curveyield3/Smart-Contracts)", "Accept":"application/json"}
+          addresses = ["0xe3a95f1cc42796cf3dc0c8140eaed89e5335ec37", "0x55eb43c2112f7ed1127f7f313b17ff111f069217"]
+          std = {"language":"Vyper", "sources":{"contracts/BoostHubStaking.vy":{"content":source}}, "settings":{"optimize":"gas","evmVersion":"prague"}}
+          payload = {"stdJsonInput":std,"compilerVersion":"0.4.3","contractIdentifier":"contracts/BoostHubStaking.vy:BoostHubStaking"}
+          def req(url, data=None, content_type=None, method=None):
+              h=dict(headers)
+              if content_type: h["Content-Type"]=content_type
+              request=urllib.request.Request(url,data=data,headers=h,method=method or ("POST" if data is not None else "GET"))
+              try:
+                  with urllib.request.urlopen(request,timeout=45) as response:
+                      raw=response.read().decode()
+                      return response.status, json.loads(raw) if raw else {}
+              except urllib.error.HTTPError as e:
+                  raw=e.read().decode()
+                  try: body=json.loads(raw)
+                  except Exception: body={"error":raw[:1000]}
+                  return e.code,body
+          def multipart(fields, files):
+              boundary="----BoostHubVyper"+uuid.uuid4().hex
+              b=b""
+              for k,v in fields.items():
+                  b+=("--"+boundary+"\r\nContent-Disposition: form-data; name=\""+k+"\"\r\n\r\n"+str(v)+"\r\n").encode()
+              for k,(filename,content) in files.items():
+                  b+=("--"+boundary+"\r\nContent-Disposition: form-data; name=\""+k+"\"; filename=\""+filename+"\"\r\nContent-Type: application/json\r\n\r\n").encode()+content+b"\r\n"
+              b+=("--"+boundary+"--\r\n").encode()
+              return b,"multipart/form-data; boundary="+boundary
+          result={}
+          for address in addresses:
+              row={"address":address,"sourceSha256":artifact["sourceSha256"],"solcVersion":None}
+              sourcify="https://sourcify.dev/server"
+              status,body=req(sourcify+"/v2/verify/1/"+address,data=json.dumps(payload).encode(),content_type="application/json")
+              row["sourcifySubmit"]={"http":status,"response":body}
+              vid=body.get("verificationId")
+              if vid and status==202:
+                  for attempt in range(18):
+                      time.sleep(8)
+                      st,job=req(sourcify+"/v2/verify/"+vid)
+                      row["sourcifyJob"]={"http":st,"response":job}
+                      if st==200 and str(job.get("status","")).lower() in ("completed","success","failed","error","verified"):
+                          break
+              st,contract=req(sourcify+"/v2/contract/1/"+address+"?fields=match")
+              row["sourcifyPublished"]={"http":st,"match":contract.get("match"),"status":contract.get("status"),"error":contract.get("customCode")} 
+              blockscout="https://eth.blockscout.com"
+              st,addr_info=req(blockscout+"/api/v2/addresses/"+address)
+              row["blockscoutIndexed"]={"http":st,"is_contract":addr_info.get("is_contract")}
+              if st==200 and addr_info.get("is_contract") is True:
+                  body_bytes,ct=multipart({"compiler_version":"v0.4.3","license_type":"none","autodetect_constructor_args":"true"},{"files[0]":("BoostHubStaking.json",json.dumps(std).encode())})
+                  st,resp=req(blockscout+"/api/v2/smart-contracts/"+address+"/verification/via/vyper-standard-input",data=body_bytes,content_type=ct)
+                  row["blockscoutSubmit"]={"http":st,"response":resp}
+              else: row["blockscoutSubmit"]={"status":"not submitted: contract is not indexed"}
+              for attempt in range(6):
+                  st,bc=req(blockscout+"/api/v2/smart-contracts/"+address)
+                  if st==200 and bc.get("is_verified") is True: break
+                  time.sleep(5)
+              row["blockscoutPublished"]={"http":st,"is_verified":bc.get("is_verified"),"verified_twin_address_hash":bc.get("verified_twin_address_hash")}
+              result[address]=row
+              print("VYPER_VERIFY_RESULT "+json.dumps(row,sort_keys=True),flush=True)
+          print("VYPER_VERIFICATION_FINAL "+json.dumps(result,sort_keys=True))
+          
+          PY
