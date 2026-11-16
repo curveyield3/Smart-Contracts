@@ -73,8 +73,8 @@ jobs:
                   subprocess.run(['curl','-fLsS','--retry','2','--max-time','40',urljoin(home,name),'-o',local],check=True)
                   print('IMPORTED',name,os.path.getsize(local),flush=True)
               source=open(local,encoding='utf-8').read()
-              refs=re.findall(r'\\bfrom\\s+["\\'](\\.[^"\\']+\\.js)["\\']',source)
-              refs+=re.findall(r'\\bimport\\s*\\(\\s*["\\'](\\.[^"\\']+\\.js)["\\']\\s*\\)',source)
+              refs=re.findall(r"from\s+['\"](\.[^'\"]+\.js)['\"]",source)
+              refs+=re.findall(r"import\s*\(\s*['\"](\.[^'\"]+\.js)['\"]\s*\)",source)
               for ref in refs:
                   resolved=posixpath.normpath(posixpath.join(posixpath.dirname(name),ref))
                   if not resolved.startswith('src-v11/'):continue
