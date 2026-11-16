@@ -1,7 +1,7 @@
 // FRA XTAL V1: Derived from pinned v35 source; only deploys on Fraxtal chain 252.
 // Target owner + every controllable fee receiver: 0x9f2B20A772246960810045905B7daccf960eE288.
-// Broadcast ONLY by signer 0x064256591313eeb86a84a5cbcc4c6460791b96dd.
-// Hub parity factory 0x018d5b5a684f5da8cb629fbb7fe8661b1c07f6d2 with exact Ethereum salt.
+// Broadcast ONLY by signer 0x064256591313eEb86a84A5CbCc4C6460791B96DD.
+// Hub parity factory 0x018D5b5A684F5DA8cb629fBB7FE8661b1c07f6D2 with exact Ethereum salt.
 // HUB OWNERSHIP: queued here; target owner must call executeTransactions() after deployment.
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.28;
@@ -78,10 +78,10 @@ interface IERC20PartnerMetadata {
 ///      MUST be used on both chains. Broadcasting EOAs and nonces may differ. Constructor arguments may differ. This does
 ///      not autonomously accept pending Hub/Staking ownership.
 contract DeployBoostHubFraxtal_v1 is Script {
-    address private constant EXPECTED_HUB = 0x40f7085841034f752f17592875703eb5032f2b42;
-    address private constant EXPECTED_FACTORY = 0x018d5b5a684f5da8cb629fbb7fe8661b1c07f6d2;
+    address private constant EXPECTED_HUB = 0x40f7085841034f752F17592875703EB5032f2B42;
+    address private constant EXPECTED_FACTORY = 0x018D5b5A684F5DA8cb629fBB7FE8661b1c07f6D2;
     bytes32 private constant EXPECTED_HUB_SALT = 0x59f389db9f6874ff387e92bb1728aba09898f253df88506d3a9fe29f829274d9;
-    address private constant BROADCASTER = 0x064256591313eeb86a84a5cbcc4c6460791b96dd;
+    address private constant BROADCASTER = 0x064256591313eEb86a84A5CbCc4C6460791B96DD;
     address private constant FINAL_OWNER = 0x9f2B20A772246960810045905B7daccf960eE288;
     event FraxtalFinalOwnershipPending(address indexed boostHub,address indexed from,address indexed requestedOwner);
 
