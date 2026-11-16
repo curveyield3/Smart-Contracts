@@ -151,5 +151,6 @@ jobs:
           path: |
             fraxtal-v35-*.log
             fraxtal-v35-gas-v1.json
+            BoostHub_Contract_Stack_v35/broadcast/DeployBoostHubFraxtal_v1.s.sol/252/run-latest.json
           if-no-files-found: warn
           retention-days: 30
