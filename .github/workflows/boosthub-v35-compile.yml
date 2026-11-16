@@ -60,6 +60,26 @@ jobs:
               os.makedirs(os.path.dirname(out),exist_ok=True)
               subprocess.run(['curl','-fLsS','--retry','2','--max-time','40',url,'-o',out],check=True)
               print('ARCHIVED',url,os.path.getsize(out),flush=True)
+          # Recursively capture the first-party ES-module imports required by the app.
+          import re, posixpath
+          stack=['src-v11/app.js'];seen=set()
+          while stack:
+              name=stack.pop()
+              if name in seen:continue
+              seen.add(name)
+              local='boosthub-site-public/'+name
+              if not os.path.exists(local):
+                  os.makedirs(os.path.dirname(local),exist_ok=True)
+                  subprocess.run(['curl','-fLsS','--retry','2','--max-time','40',urljoin(home,name),'-o',local],check=True)
+                  print('IMPORTED',name,os.path.getsize(local),flush=True)
+              source=open(local,encoding='utf-8').read()
+              refs=re.findall(r'\\bfrom\\s+["\\'](\\.[^"\\']+\\.js)["\\']',source)
+              refs+=re.findall(r'\\bimport\\s*\\(\\s*["\\'](\\.[^"\\']+\\.js)["\\']\\s*\\)',source)
+              for ref in refs:
+                  resolved=posixpath.normpath(posixpath.join(posixpath.dirname(name),ref))
+                  if not resolved.startswith('src-v11/'):continue
+                  if resolved not in seen:stack.append(resolved)
+          print('SOURCE_MODULES',len(seen),flush=True)
           PY
       - name: Archive public BoostHub site bundle for contract migration
         if: contains(github.event.head_commit.message, '[site-source]')
