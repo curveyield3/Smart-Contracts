@@ -39,3 +39,117 @@ jobs:
             BoostHub_Contract_Stack_v35/artifacts/staking.json
             BoostHub_Contract_Stack_v35/build/forge/
           if-no-files-found: error
+
+      - name: Fraxtal-only live-fork deploy simulation v1
+        if: contains(github.event.head_commit.message, '[fraxtal-fork]')
+        shell: bash
+        env:
+          RPC_FRAXTAL: ${{ secrets.RPC_FRAXTAL }}
+        run: |
+          set -euo pipefail
+          DEPLOYER=0x064256591313eEb86a84A5CbCc4C6460791B96DD
+          FINAL_OWNER=0x9f2B20A772246960810045905B7daccf960eE288
+          HUB=0x40f7085841034f752F17592875703EB5032f2B42
+          FACTORY=0x018D5b5A684F5DA8cb629fBB7FE8661b1c07f6D2
+          LIVE_RPC="${RPC_FRAXTAL:-https://rpc.frax.com}"
+          FORK_RPC=http://127.0.0.1:8545
+          test "$(cast chain-id --rpc-url "$LIVE_RPC")" = 252 || { echo "::error::Wrong upstream chain"; exit 1; }
+          PIN=$(cast block-number --rpc-url "$LIVE_RPC")
+          GAS_PRICE=$(cast gas-price --rpc-url "$LIVE_RPC")
+          echo "Fraxtal fork pin=$PIN; upstream gas price wei=$GAS_PRICE; gas unit FRAX"
+          HUB_LIVE=$(cast code "$HUB" --rpc-url "$LIVE_RPC")
+          test "$HUB_LIVE" = 0x || { echo "::error::Ethereum parity address already occupied on Fraxtal"; exit 1; }
+          FACTORY_LIVE=$(cast code "$FACTORY" --rpc-url "$LIVE_RPC")
+          echo "Existing CREATE3 factory code hex length: ${#FACTORY_LIVE}"
+          anvil --fork-url "$LIVE_RPC" --fork-block-number "$PIN" --chain-id 252 --port 8545 > fraxtal-v35-anvil-v1.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          READY=0
+          for i in $(seq 1 90); do
+            if test "$(cast chain-id --rpc-url "$FORK_RPC" 2>/dev/null || true)" = 252; then READY=1; break; fi
+            sleep 2
+          done
+          test "$READY" = 1 || { echo "::error::Anvil fork failed"; tail -60 fraxtal-v35-anvil-v1.log; exit 1; }
+          START=$(cast block-number --rpc-url "$FORK_RPC")
+          # Funding and impersonation exist ONLY in isolated Anvil.
+          cast rpc anvil_setBalance "$DEPLOYER" 0x21e19e0c9bab2400000 --rpc-url "$FORK_RPC" >/dev/null
+          cast rpc anvil_impersonateAccount "$DEPLOYER" --rpc-url "$FORK_RPC" >/dev/null
+          (
+            cd BoostHub_Contract_Stack_v35
+            forge script script/DeployBoostHubFraxtal_v1.s.sol:DeployBoostHubFraxtal_v1 \
+              --sender "$DEPLOYER" --unlocked --broadcast --rpc-url "$FORK_RPC" -vvv
+          ) > fraxtal-v35-deploy-v1.log 2>&1 || {
+            tail -130 fraxtal-v35-deploy-v1.log
+            echo "::error::Fraxtal script did not execute on live-state Anvil fork"
+            exit 1
+          }
+          HUB_CODE=$(cast code "$HUB" --rpc-url "$FORK_RPC")
+          test "${#HUB_CODE}" -gt 100 || { echo "::error::Expected Hub missing at Ethereum address"; exit 1; }
+          BEFORE=$(cast call "$HUB" 'owner()(address)' --rpc-url "$FORK_RPC" | tr -d '[:space:]')
+          test "${BEFORE,,}" = "${DEPLOYER,,}" || { echo "::error::Hub initial owner mismatch: $BEFORE"; exit 1; }
+          cast rpc anvil_setBalance "$FINAL_OWNER" 0x21e19e0c9bab2400000 --rpc-url "$FORK_RPC" >/dev/null
+          cast rpc anvil_impersonateAccount "$FINAL_OWNER" --rpc-url "$FORK_RPC" >/dev/null
+          cast send "$HUB" 'executeTransactions()' --from "$FINAL_OWNER" --unlocked --rpc-url "$FORK_RPC" > fraxtal-v35-owner-accept-v1.log
+          AFTER=$(cast call "$HUB" 'owner()(address)' --rpc-url "$FORK_RPC" | tr -d '[:space:]')
+          test "${AFTER,,}" = "${FINAL_OWNER,,}" || { echo "::error::Hub final owner mismatch: $AFTER"; exit 1; }
+          export FRA_FORK_START="$START" FRA_FORK_END="$(cast block-number --rpc-url "$FORK_RPC")"
+          export FRA_DEPLOYER="$DEPLOYER" FRA_FINAL_OWNER="$FINAL_OWNER"
+          export FRA_GAS_PRICE="$GAS_PRICE" FRA_HUB="$HUB" FRA_FORK_PIN="$PIN"
+          python - <<'PY' > fraxtal-v35-gas-v1.json
+          import decimal,json,os,urllib.request,math
+          def rpc(method,params):
+              request=urllib.request.Request("http://127.0.0.1:8545",
+                  data=json.dumps({"jsonrpc":"2.0","id":1,"method":method,"params":params}).encode(),
+                  headers={"Content-Type":"application/json"})
+              with urllib.request.urlopen(request,timeout=30) as response: body=json.load(response)
+              if "error" in body: raise RuntimeError(body["error"])
+              return body["result"]
+          deployer=os.environ["FRA_DEPLOYER"].lower()
+          owner=os.environ["FRA_FINAL_OWNER"].lower()
+          txs=[]
+          for number in range(int(os.environ["FRA_FORK_START"])+1,int(os.environ["FRA_FORK_END"])+1):
+              block=rpc("eth_getBlockByNumber",[hex(number),True])
+              for tx in block["transactions"]:
+                  receipt=rpc("eth_getTransactionReceipt",[tx["hash"]])
+                  if int(receipt["status"],16)!=1: raise RuntimeError("Failed local transaction: "+tx["hash"])
+                  gas=int(receipt["gasUsed"],16)
+                  price=int(receipt.get("effectiveGasPrice","0x0"),16)
+                  l1raw=receipt.get("l1Fee","0x0")
+                  l1=int(l1raw,16) if isinstance(l1raw,str) and l1raw.startswith("0x") else int(l1raw or 0)
+                  txs.append({"hash":tx["hash"],"from":tx["from"],"to":tx["to"],
+                      "gasUsed":gas,"effectiveGasPriceWei":price,"l1FeeWei":l1,"costWei":gas*price+l1})
+          groups={}
+          for category,actor in [("connectedDeployer",deployer),("finalOwnerAcceptance",owner)]:
+              mine=[tx for tx in txs if tx["from"].lower()==actor]
+              groups[category]={"wallet":actor,"transactions":len(mine),
+                  "gasUsed":sum(x["gasUsed"] for x in mine),
+                  "forkCostWei":sum(x["costWei"] for x in mine)}
+          if groups["connectedDeployer"]["transactions"]<1: raise RuntimeError("No deployer gas receipts")
+          highest=max(int(os.environ["FRA_GAS_PRICE"]),*(x["effectiveGasPriceWei"] for x in txs))
+          units=groups["connectedDeployer"]["gasUsed"]
+          safety_wei=math.ceil(units*1.5)*math.ceil(highest*1.5)
+          safety_wei+=math.ceil(sum(t["l1FeeWei"] for t in txs if t["from"].lower()==deployer)*1.5)
+          fmt=lambda w:format(decimal.Decimal(w)/decimal.Decimal(10**18),"f")
+          print(json.dumps({"chainId":252,"nativeGasToken":"FRAX",
+              "forkBlock":int(os.environ["FRA_FORK_PIN"]),
+              "expectedEthereumParityHub":os.environ["FRA_HUB"],
+              "upstreamGasPriceWei":int(os.environ["FRA_GAS_PRICE"]),
+              "highestObservedGasPriceWei":highest,
+              "byPayer":groups,"totalGasUsed":sum(x["gasUsed"] for x in txs),
+              "deployerForkCostFRAX":fmt(groups["connectedDeployer"]["forkCostWei"]),
+              "recommendedDeployerFundingFRAX":fmt(safety_wei),
+              "fundingAssumption":"1.5x observed deployer gas and 1.5x sampled gas price plus 1.5x L1 fee",
+              "transactions":txs},indent=2))
+          PY
+          cat fraxtal-v35-gas-v1.json
+
+      - name: Archive Fraxtal fork deployment and gas evidence v1
+        if: always() && contains(github.event.head_commit.message, '[fraxtal-fork]')
+        uses: actions/upload-artifact@v4
+        with:
+          name: boosthub-fraxtal-v35-gas-v1-${{ github.run_id }}
+          path: |
+            fraxtal-v35-*.log
+            fraxtal-v35-gas-v1.json
+          if-no-files-found: warn
+          retention-days: 30
