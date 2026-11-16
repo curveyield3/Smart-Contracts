@@ -146,7 +146,7 @@ contract DeployBoostHubFraxtal_v1 is Script {
     address private constant ETH_WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
     address private constant ETH_FXN = 0x365AccFCa291e7D3914637ABf1F7635dB165Bb09;
     address private constant FRAX_WFRAX = 0xFc00000000000000000000000000000000000002;
-    address private constant FRAX_BEEFY_NATIVE = 0xFc00000000000000000000000000000000000006;
+    address private constant FRAX_BEEFY_NATIVE = 0xFC00000000000000000000000000000000000006;
     // Curve TriCrypto (frxUSD, wfrxETH, WFRAX), indexed 18-decimal historical EMA.
     address private constant FRAX_TRI = address(uint160(0x00a0d3911349e701a1f49c1ba2dda34b4ce9636569));
 
