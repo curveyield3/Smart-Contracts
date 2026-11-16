@@ -31,6 +31,43 @@ jobs:
         run: cd BoostHub_Contract_Stack_v35 && python tooling/make_staking_artifact.py
       - name: Compile the complete Solidity source and the sole deployment script
         run: cd BoostHub_Contract_Stack_v35 && forge build --force
+      - name: Retrieve public BoostHub frontend for source-bound Cloudflare migration
+        if: contains(github.event.head_commit.message, '[site-source]')
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p boosthub-site-public
+          curl -fLsS --retry 2 --max-time 40 https://boosthub.curveyield.com/ -o boosthub-site-public/index.html
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from urllib.parse import urljoin, urlparse
+          import os, subprocess, json
+          class Assets(HTMLParser):
+              def __init__(self): super().__init__();self.files=[]
+              def handle_starttag(self,tag,attrs):
+                  vals=dict(attrs)
+                  if tag=='script' and vals.get('src'):self.files.append(vals['src'])
+                  if tag=='link' and vals.get('rel') in ('modulepreload','stylesheet') and vals.get('href'):self.files.append(vals['href'])
+          home='https://boosthub.curveyield.com/'
+          html=open('boosthub-site-public/index.html').read()
+          parser=Assets();parser.feed(html)
+          links=sorted(set(parser.files))
+          print('HTML length',len(html),'linked assets',json.dumps(links),flush=True)
+          for path in links:
+              url=urljoin(home,path)
+              if urlparse(url).netloc!='boosthub.curveyield.com':continue
+              out='boosthub-site-public/'+urlparse(url).path.lstrip('/')
+              os.makedirs(os.path.dirname(out),exist_ok=True)
+              subprocess.run(['curl','-fLsS','--retry','2','--max-time','40',url,'-o',out],check=True)
+              print('ARCHIVED',url,os.path.getsize(out),flush=True)
+          PY
+      - name: Archive public BoostHub site bundle for contract migration
+        if: contains(github.event.head_commit.message, '[site-source]')
+        uses: actions/upload-artifact@v4
+        with:
+          name: boosthub-public-site-source-v1
+          path: boosthub-site-public/
+          if-no-files-found: error
       - name: Upload compile outputs
         uses: actions/upload-artifact@v4
         with:
