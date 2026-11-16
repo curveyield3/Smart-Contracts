@@ -60,6 +60,29 @@ interface IERC20PartnerMetadata {
     function decimals() external view returns (uint8);
 }
 
+// Fraxtal Beefy's existing factory settles in wfrxETH rather than the
+// chain's current native gas token FRAX. The 3-coin Curve pool provides
+// historical EMA prices for both wfrxETH and WFRAX against the same base;
+// the ratio is the historical WFRAX->wfrxETH conversion rate.
+// This is a fixed, ownerless two-read oracle, not a new swapper.
+interface IFraxtalTriCryptoEma {
+    function price_oracle(uint256 index) external view returns (uint256);
+}
+contract FraxtalTriCryptoEmaRatio {
+    address public immutable pool;
+    constructor(address pool_) {
+        require(pool_.code.length != 0, "FRA_TRI_POOL_MISSING");
+        pool = pool_;
+        require(relativePrice() != 0, "FRA_TRI_EMA_UNAVAILABLE");
+    }
+    function relativePrice() public view returns (uint256) {
+        uint256 wethPrice = IFraxtalTriCryptoEma(pool).price_oracle(0);
+        uint256 wfraxPrice = IFraxtalTriCryptoEma(pool).price_oracle(1);
+        require(wethPrice != 0 && wfraxPrice != 0, "FRA_TRI_EMA_ZERO");
+        return wfraxPrice * 1e18 / wethPrice;
+    }
+}
+
 /// @notice ONE unified native Foundry deployment and configuration entry point.
 /// @dev Deploys the shared-address CREATE3 Hub plus ordinary CREATE staking instances.
 ///      On Ethereum deploys 2 original vault/strategy pairs plus 2 complementary
@@ -123,6 +146,9 @@ contract DeployBoostHubFraxtal_v1 is Script {
     address private constant ETH_WSTETH = 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0;
     address private constant ETH_FXN = 0x365AccFCa291e7D3914637ABf1F7635dB165Bb09;
     address private constant FRAX_WFRAX = 0xFc00000000000000000000000000000000000002;
+    address private constant FRAX_BEEFY_NATIVE = 0xFc00000000000000000000000000000000000006;
+    // Curve TriCrypto (frxUSD, wfrxETH, WFRAX), indexed 18-decimal historical EMA.
+    address private constant FRAX_TRI = address(uint160(0x00a0d3911349e701a1f49c1ba2dda34b4ce9636569));
 
     // These *are* the reward-to-want pools read from the verified legacy
     // 2026 BoostHub downstream converters, not speculative routing addresses.
@@ -228,8 +254,8 @@ contract DeployBoostHubFraxtal_v1 is Script {
         // new Beefy partner strategies. No external Fraxtal adapter is needed.
         CurveYieldOmniRouter omni = new CurveYieldOmniRouter(broadcaster, FEE_RECEIVER);
         address swapper = address(omni);
-        if (isEthereum) _configureEthereumRoutes(omni);
-        else _configureFraxtalRoutes(omni);
+        FraxtalTriCryptoEmaRatio ratioOracle = new FraxtalTriCryptoEmaRatio(FRAX_TRI);
+        _configureFraxtalRoutes(omni, address(ratioOracle));
 
         // Custom BoostHub pairs use the same chain-local Omni as the protected
         // Beefy partner pairs; their v30 simplifications do not alter partner sources.
@@ -548,7 +574,7 @@ contract DeployBoostHubFraxtal_v1 is Script {
 
     function _preflightPartnerDependencies(bool isEthereum) internal view {
         address strategyFactory = isEthereum ? ETH_BEEFY_STRATEGY_FACTORY : FRAX_BEEFY_STRATEGY_FACTORY;
-        address nativeToken = isEthereum ? ETH_WETH : FRAX_WFRAX;
+        address nativeToken = isEthereum ? ETH_WETH : FRAX_BEEFY_NATIVE;
         require(strategyFactory.code.length > 0 && nativeToken.code.length > 0,
             "PARTNER_FACTORY_OR_NATIVE_MISSING");
         IStrategyFactory f = IStrategyFactory(strategyFactory);
@@ -575,6 +601,15 @@ contract DeployBoostHubFraxtal_v1 is Script {
             _requireFraxtalOracle(FRAX_WFRAX_SDFXS_POOL);
             // Verify pool ordering instead of assuming the token symbols.
             _requireFraxtalPoolTokens(FRAX_WFRAX_SDFXS_POOL, FRAX_WFRAX, FRAXTAL_SDFXS);
+            // Existing immutable Beefy native = wfrxETH; WFRAX native gas token is different.
+            require(FRAX_TRI.code.length != 0, "FRA_TRICRYPTO_MISSING");
+            require(_readFraxtalCoin(FRAX_TRI, 0) == 0xFc00000000000000000000000000000000000001
+                && _readFraxtalCoin(FRAX_TRI, 1) == FRAX_BEEFY_NATIVE
+                && _readFraxtalCoin(FRAX_TRI, 2) == FRAX_WFRAX,
+                "FRA_TRICRYPTO_COINS_MISMATCH");
+            require(IFraxtalTriCryptoEma(FRAX_TRI).price_oracle(0) > 0
+                && IFraxtalTriCryptoEma(FRAX_TRI).price_oracle(1) > 0,
+                "FRA_TRICRYPTO_EMA_UNREADABLE");
         }
     }
 
@@ -667,18 +702,47 @@ contract DeployBoostHubFraxtal_v1 is Script {
         hop.oracle.requiredInputs = abi.encode(oracleIndex);
     }
 
-    function _configureFraxtalRoutes(CurveYieldOmniRouter router) internal {
+    function _triHop(address oracle, address tokenOut, uint8 i, uint8 j, bool invert)
+        internal pure returns (CurveYieldOmniRouter.SimpleHop memory hop)
+    {
+        hop = CurveYieldOmniRouter.SimpleHop({
+            poolType: 5, tokenOut: tokenOut, swapContract: FRAX_TRI,
+            poolId: bytes32(0), poolData: abi.encode(i,j),
+            oracle: CurveYieldOmniRouter.SimpleOracle({
+                oracleAddress: oracle,
+                readFunctionID: bytes4(keccak256("relativePrice()")),
+                requiredInputs: bytes(""), invert: invert, rateDecimals: 18
+            })
+        });
+    }
+
+    function _configureFraxtalRoutes(CurveYieldOmniRouter router, address ratioOracle) internal {
         CurveYieldOmniRouter.SimpleHop[] memory one = new CurveYieldOmniRouter.SimpleHop[](1);
+        CurveYieldOmniRouter.SimpleHop[] memory two = new CurveYieldOmniRouter.SimpleHop[](2);
         (bool ok, bytes memory ret) = FRAX_WFRAX_SDFXS_POOL.staticcall(
             abi.encodeWithSignature("price_oracle()"));
         bool indexedOracle = !(ok && ret.length >= 32 && abi.decode(ret, (uint256)) > 0);
         uint16 typeId = _fraxtalCurveType(FRAX_WFRAX_SDFXS_POOL);
+        // Custom vault reward conversion routes (WFRAX <-> sdFXS).
         one[0] = _curveHop(typeId, FRAX_WFRAX_SDFXS_POOL, FRAXTAL_SDFXS,
             0, 1, true, indexedOracle);
         _installPartnerRoute(router, FRAX_WFRAX, FRAXTAL_SDFXS, one);
         one[0] = _curveHop(typeId, FRAX_WFRAX_SDFXS_POOL, FRAX_WFRAX,
             1, 0, false, indexedOracle);
         _installPartnerRoute(router, FRAXTAL_SDFXS, FRAX_WFRAX, one);
+        // Beefy partner strategy settles its actual native asset wfrxETH.
+        one[0] = _triHop(ratioOracle, FRAX_BEEFY_NATIVE, 2, 1, false);
+        _installPartnerRoute(router, FRAX_WFRAX, FRAX_BEEFY_NATIVE, one);
+        one[0] = _triHop(ratioOracle, FRAX_WFRAX, 1, 2, true);
+        _installPartnerRoute(router, FRAX_BEEFY_NATIVE, FRAX_WFRAX, one);
+        two[0] = _curveHop(typeId, FRAX_WFRAX_SDFXS_POOL, FRAX_WFRAX,
+            1, 0, false, indexedOracle);
+        two[1] = _triHop(ratioOracle, FRAX_BEEFY_NATIVE, 2, 1, false);
+        _installPartnerRoute(router, FRAXTAL_SDFXS, FRAX_BEEFY_NATIVE, two);
+        two[0] = _triHop(ratioOracle, FRAX_WFRAX, 1, 2, true);
+        two[1] = _curveHop(typeId, FRAX_WFRAX_SDFXS_POOL, FRAXTAL_SDFXS,
+            0, 1, true, indexedOracle);
+        _installPartnerRoute(router, FRAX_BEEFY_NATIVE, FRAXTAL_SDFXS, two);
     }
 
 }
