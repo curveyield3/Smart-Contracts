@@ -83,6 +83,20 @@ jobs:
             echo "::error::Fraxtal script did not execute on live-state Anvil fork"
             exit 1
           }
+          # Emit bounded unsigned calldata chunks so the connected signer can replay exact fork intents.
+          # No keys, signatures, or authentication values are emitted.
+          python - <<'PY'
+          import json
+          path="BoostHub_Contract_Stack_v35/broadcast/DeployBoostHubFraxtal_v1.s.sol/252/run-latest.json"
+          payload=json.load(open(path))
+          txs=payload["transactions"]
+          for index,record in enumerate(txs):
+              tx=record["transaction"]
+              row=json.dumps({"index":index,"transaction":{k:tx.get(k) for k in ("from","to","input","data","value","nonce","gas","gasPrice","maxFeePerGas","maxPriorityFeePerGas","type","chainId") if k in tx}},separators=(",",":"))
+              for pos in range(0,len(row),6000):
+                  print("FRA_TX_PART|"+str(index)+"|"+str(pos//6000)+"|"+row[pos:pos+6000],flush=True)
+          print("FRA_TX_TOTAL|"+str(len(txs)),flush=True)
+          PY
           HUB_CODE=$(cast code "$HUB" --rpc-url "$FORK_RPC")
           test "${#HUB_CODE}" -gt 100 || { echo "::error::Expected Hub missing at Ethereum address"; exit 1; }
           BEFORE=$(cast call "$HUB" 'owner()(address)' --rpc-url "$FORK_RPC" | tr -d '[:space:]')
