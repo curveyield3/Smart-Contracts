@@ -4,7 +4,7 @@
   "asset": "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
   "mode": "all-worker-listed",
   "createdOn": "2026-11-17",
-  "attempt": 4,
+  "attempt": 5,
   "repair": "fixed heredoc terminator indentation",
-  "activity": "all 108 dedicated dapp HTML checks and version 2 verification"
+  "activity": "repaired full WBTC dapp verification job"
 }
