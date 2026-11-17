@@ -1,4 +1,4 @@
-# CurveYield USDC opportunity research v2
+# CurveYield USDC opportunity research v3
 # Necessity: existing repo workflows only compile/verify individual vaults;
 # the catalog's paginated JSON is inaccessible to the chat web reader.
 name: CurveYield Ethereum USDC opportunity research
@@ -126,6 +126,7 @@ jobs:
                       for i,ln in enumerate(lines):
                           if not rex.search(ln):continue
                           if kind=='rate' and re.search(r'\b(?:borrow|variable debt)\b',ln,re.I) and not re.search(r'supply',ln,re.I):continue
+                          if kind=='util' and re.search(r'\btarget\b',ln,re.I):continue
                           near=' '.join(lines[i:i+3])[:125]
                           after=rex.split(near,maxsplit=1)[-1]
                           pattern=r'(?<!\d)(-?\d+(?:\.\d+)?)\s*%' if kind in ('rate','util') else r'\$?\s*(\d[\d,]*(?:\.\d+)?)\s*([KMBT]?)\b'
@@ -144,7 +145,7 @@ jobs:
                           r'Total\s+Value\s+Locked',r'Market\s+Size',r'Vault\s+TVL',r'TVL'], 'tvl')
               rate=lookup([r'Net\s+Supply\s+APY',r'Supply\s+APY',r'Deposit\s+APY',
                            r'Net\s+APY',r'APY',r'Supply\s+APR',r'Deposit\s+APR',r'APR'], 'rate')
-              util=lookup([r'Utilization\s+Rate',r'Utilisation\s+Rate',r'Utilization',r'Utilisation'], 'util')
+              util=lookup([r'Current\s+Utilization\s+Rate',r'Current\s+Utilization',r'Utilization\s+Rate',r'Utilisation\s+Rate',r'Utilization',r'Utilisation'], 'util')
               extras=[]
               for labels,name,kind in [([r'Borrow\s+APY',r'Borrow\s+APR'],'Borrow yield','rate'),
                                        ([r'Liquidation\s+LTV',r'LLTV',r'Max\s+LTV'],'LLTV','rate'),
@@ -175,8 +176,9 @@ jobs:
                       tvl,rate,util,extras=extract(text)
                       label=(x.get('marketName') or '').lower().strip()
                       sym=(x.get('assetSymbol') or '').lower().strip()
-                      identity=(bool(label and len(label)>4 and label in text.lower())
-                                or bool(sym and sym in text.lower()))
+                      locator=(str(x.get('marketId') or x.get('address') or '')).lower()
+                      identity=(bool(locator and (locator in final.lower() or locator in text.lower()))
+                                or bool(label and len(label)>4 and label in text.lower()))
                       s='REDIRECTED' if redirect else ('DAPP NUMBERS SEEN' if tvl or rate or util else 'DAPP METRICS NOT DISPLAYED')
                       if not identity and s=='DAPP NUMBERS SEEN':s='DAPP IDENTITY AMBIGUOUS'
                       return {'status':s,'note':f'HTTP {code}; final={final}' if redirect else f'HTTP {code}; body identity '+('seen' if identity else 'not established'),
@@ -290,4 +292,15 @@ jobs:
           git add -A -- "Curveyield Markets"
           git diff --cached --quiet && exit 0
           git commit -m "Index and independently inspect Ethereum USDC opportunities"
-          git push
+          for attempt in 1 2 3 4 5 6; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then
+              echo "Research list committed and pushed successfully"
+              exit 0
+            fi
+            echo "Concurrent main update on attempt $attempt, reconciling again"
+            sleep 3
+          done
+          echo "::error::Unable to push after reconciling six concurrent updates"
+          exit 1
