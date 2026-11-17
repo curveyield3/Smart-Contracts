@@ -1,4 +1,4 @@
-name: Temporary ETH-WETH dapp page inspection
+name: Temporary ETH-WETH Morpho vault metric inspection
 on:
   push:
     branches:
@@ -10,73 +10,47 @@ permissions:
 jobs:
   inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 8
     steps:
-      - name: Retrieve and inspect exact opportunity dapp pages
+      - name: Inspect official Morpho vault-specific USD deposits and net APY
         shell: bash
         run: |
           python - <<'PY'
-          import json,urllib.request,urllib.parse,time,re,html
+          import json,urllib.request,urllib.parse,re,html
           from html.parser import HTMLParser
           from concurrent.futures import ThreadPoolExecutor,as_completed
           class Visible(HTMLParser):
-            def __init__(self):super().__init__(convert_charrefs=True);self.hide=0;self.parts=[];self.title=[];self.tit=0
+            def __init__(self):super().__init__(convert_charrefs=True);self.hide=0;self.p=[]
             def handle_starttag(self,tag,attrs):
               if tag in ('script','style','svg','noscript'):self.hide+=1
-              if tag=='title':self.tit+=1
             def handle_endtag(self,tag):
               if tag in ('script','style','svg','noscript'):self.hide=max(0,self.hide-1)
-              if tag=='title':self.tit=max(0,self.tit-1)
             def handle_data(self,data):
-              if self.tit:self.title.append(data)
-              if not self.hide and data.strip():self.parts.append(data.strip())
-          assets=("0x0000000000000000000000000000000000000000","0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2")
-          records=[]
-          for asset in assets:
-            url="https://markets.curveyield.org/api/opportunities?"+urllib.parse.urlencode(dict(asset=asset,conversion=0,limit=500,sort='tvl'))
-            req=urllib.request.Request(url,headers={'Accept':'application/json','User-Agent':'CurveYield-eth-research/2'})
-            with urllib.request.urlopen(req,timeout=100) as f: data=json.load(f)
-            records.extend(data.get('opportunities') or [])
-            print("CYDAPP_INPUT",asset,data.get('total'),data.get('updatedAt'),flush=True)
-          exact={}
-          for x in records:
-            u=x.get("dappUrl")
-            if u and u.startswith('https://'):
-              exact.setdefault(u,[]).append(x)
-          allowed={'fluid.io','app.aave.com','app.spark.finance','app.compound.xyz','pro.aave.com','app.morpho.org','yearn.fi','app.ipor.io','app.euler.finance','app.beefy.com','app.maple.finance'}
-          def check(pair):
-            url,linked=pair
-            h=urllib.parse.urlsplit(url).hostname or ''
-            result=dict(url=url,count=len(linked),ids=[x.get('id') for x in linked])
-            if h not in allowed:
-              result['error']='host_not_allowlisted';return result
+              if not self.hide and data.strip():self.p.append(data.strip())
+          asset='0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
+          q=urllib.parse.urlencode(dict(asset=asset,conversion=0,limit=500,sort='tvl'))
+          req=urllib.request.Request('https://markets.curveyield.org/api/opportunities?'+q,headers={'Accept':'application/json'})
+          with urllib.request.urlopen(req,timeout=90) as f: data=json.load(f)
+          rows=[x for x in data.get('opportunities',[]) if x.get('protocol','').startswith('Morpho Vault') and x.get('dappUrl','').startswith('https://app.morpho.org/ethereum/vault/')]
+          print('MORPHO_VAULT_COUNT',len(rows),flush=True)
+          def fetch(x):
+            url=x['dappUrl'];out={'url':url,'name':x.get('marketName'),'marketTvl':x.get('tvlUsdEstimate')}
             try:
-              req=urllib.request.Request(url,headers={'Accept':'text/html,application/xhtml+xml','User-Agent':'Mozilla/5.0 (compatible; CurveYieldMarketResearch/1.0)'})
-              with urllib.request.urlopen(req,timeout=20) as f:
-                result['http']=f.status;result['resolvedUrl']=f.geturl();typ=f.headers.get('content-type','')
-                data=f.read(2500000)
-              result['type']=typ;result['bytes']=len(data)
-              if 'html' not in typ.lower():
-                result['error']='non_html';return result
-              parser=Visible();parser.feed(data.decode('utf-8','replace'))
-              words=re.sub(r'\s+',' ',' '.join(parser.parts))
-              result['title']=' '.join(parser.title)[:140]
-              result['visibleLen']=len(words);result['head']=words[:190]
-              labels=['Est. APY','30 Day APY','TVL','Total market size','Lend Rate','Current utilization','Utilization','Utilisation','Total Liquidity','Outstanding Loans','Total supplied','Supply APY','Available Liquidity','Total Deposits','Deposit APY','Fees:','Vault Type:','LLTV','Borrow Rate','Risk Score']
-              matches=[]
-              for label in labels:
-                loc=re.search(re.escape(label),words,re.I)
-                if loc:matches.append(label+':'+words[loc.end():loc.end()+80].strip())
-              result['metrics']=matches[:20]
-              result['addressOnPage']=any((x.get('address') or 'none').lower() in data.decode('utf-8','replace').lower() for x in linked if x.get('address') and len(x['address'])==42)
-              if len(words)<120:result['warning']='page_has_no_readable_numbers'
-            except Exception as exc:result['error']=str(exc)[:210]
-            return result
-          print('CYDAPP_URLS',len(exact),flush=True)
+              req=urllib.request.Request(url,headers={'Accept':'text/html,application/xhtml+xml','User-Agent':'Mozilla/5.0'})
+              with urllib.request.urlopen(req,timeout=22) as f:raw=f.read(2200000)
+              p=Visible();p.feed(raw.decode('utf-8','replace'))
+              t=' '.join(p.p)
+              t=re.sub(r'\s+',' ',t)
+              for label in ('Returns','Instant APY','7D APY','7 Day APY','30 Day APY','Net APY','Total Deposits','Vault Details','Asset Deposits','Fee','Deposit APY','Supply APY'):
+                finds=[]
+                for m in list(re.finditer(re.escape(label),t,re.I))[:3]:
+                  finds.append(t[max(0,m.start()-45):m.end()+125])
+                if finds:out[label]=finds
+            except Exception as e:out['error']=str(e)[:180]
+            return out
           with ThreadPoolExecutor(max_workers=4) as pool:
-            futures=[pool.submit(check,pair) for pair in exact.items()]
-            for f in as_completed(futures):
-              res=f.result()
-              print('CYDAPP_ROW|'+json.dumps(res,separators=(',',':'),ensure_ascii=False),flush=True)
-          print('CYDAPP_DONE',len(exact),flush=True)
+            fut=[pool.submit(fetch,x) for x in rows]
+            for f in as_completed(fut):
+              print('MORPHO_VAULT_DETAIL|'+json.dumps(f.result(),separators=(',',':'),ensure_ascii=False),flush=True)
+          print('MORPHO_VAULT_DONE',len(rows),flush=True)
           PY
