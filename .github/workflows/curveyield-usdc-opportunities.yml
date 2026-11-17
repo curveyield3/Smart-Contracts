@@ -1,4 +1,4 @@
-# CurveYield USDC opportunity research v1
+# CurveYield USDC opportunity research v2
 # Necessity: existing repo workflows only compile/verify individual vaults;
 # the catalog's paginated JSON is inaccessible to the chat web reader.
 name: CurveYield Ethereum USDC opportunity research
@@ -65,26 +65,45 @@ jobs:
                       last=ex
                       time.sleep(2*(k+1))
               raise RuntimeError(f'Cannot obtain catalog page {url}: {last}')
-          allrows=[]; offset=0; total=None; captured_at=None; seen=set()
-          while total is None or offset<total:
-              q=urllib.parse.urlencode({'asset':USDC,'sort':'tvl','limit':500,'offset':offset})
-              data=request_json(BASE+'?'+q)
-              if data.get('chainId')!=1 or not isinstance(data.get('opportunities'),list):
-                  raise RuntimeError('Unexpected discovery schema or non-Ethereum chain')
-              if total is None:
-                  total=int(data['total']); captured_at=data.get('updatedAt')
-                  print('Source USDC total:',total,'snapshot:',captured_at,flush=True)
-              if int(data.get('total',-1))!=total or data.get('updatedAt')!=captured_at:
-                  raise RuntimeError('Catalog changed mid-pagination; cannot mix inconsistent snapshots')
-              got=data['opportunities']
-              if not got: raise RuntimeError('Pagination returned no records before total')
-              for x in got:
-                  key=x.get('id')
-                  if not key or key in seen: raise RuntimeError('Duplicate or absent market identifier')
-                  seen.add(key);allrows.append(x)
-              offset+=len(got)
-              print('Downloaded',offset,'/',total,flush=True)
-          if len(allrows)!=total: raise RuntimeError('Filtered catalog row count mismatch')
+          allrows=[]; total=None; captured_at=None; seen=set(); source_times=set()
+          for attempt in range(1,4):
+              offset=0
+              while total is None or offset<total:
+                  q=urllib.parse.urlencode({'asset':USDC,'sort':'tvl','limit':500,'offset':offset})
+                  data=request_json(BASE+'?'+q)
+                  if data.get('chainId')!=1 or not isinstance(data.get('opportunities'),list):
+                      raise RuntimeError('Unexpected discovery schema or non-Ethereum chain')
+                  count=int(data['total'])
+                  total=max(total or 0,count)
+                  observed_time=data.get('updatedAt')
+                  source_times.add(str(observed_time))
+                  captured_at=max(source_times)
+                  got=data['opportunities']
+                  if not got: raise RuntimeError('Pagination returned no records before total')
+                  for x in got:
+                      key=x.get('id')
+                      if not key: raise RuntimeError('Absent market identifier')
+                      x['_catalogUpdatedAt']=observed_time
+                      if key not in seen:
+                          seen.add(key);allrows.append(x)
+                  offset+=len(got)
+                  print('Attempt',attempt,'page offset',offset,'unique',len(seen),'max listed',total,'timestamp',observed_time,flush=True)
+              if len(seen)>=total:break
+              print('Catalog refreshed mid-pagination; reconciling missing entries',total-len(seen),flush=True)
+          if len(seen)<total:
+              for offset in (400,450,475,500,550,600,0):
+                  data=request_json(BASE+'?'+urllib.parse.urlencode({'asset':USDC,'sort':'tvl','limit':500,'offset':offset}))
+                  source_times.add(str(data.get('updatedAt')))
+                  total=max(total,int(data.get('total',0)))
+                  for x in data.get('opportunities',[]):
+                      x['_catalogUpdatedAt']=data.get('updatedAt')
+                      if x.get('id') and x['id'] not in seen:
+                          seen.add(x['id']);allrows.append(x)
+                  if len(seen)>=total:break
+          if len(seen)<total:raise RuntimeError(f'Catalog pagination still incomplete: {len(seen)} unique of {total}')
+          allrows.sort(key=lambda x:-(x.get('tvlUsdEstimate') or 0))
+          if len(source_times)>1:
+              print('MULTIPLE SOURCE SNAPSHOTS: retained per-entry source timestamps',sorted(source_times),flush=True)
           assert all(x.get('matchKind') in ('direct-token','lp-single-coin-conversion-candidate',
                     'lp-nested-underlying-candidate','index-only-underlying-basket') for x in allrows)
           output=ROOT/'research-workfile.json'
@@ -226,7 +245,7 @@ jobs:
                        relation,asset,x.get('asset',''),x.get('address',''),x.get('marketId',''),
                        x.get('tvlUsdEstimate'),original,rate_basis,'',note[:330],
                        x.get('sourceUrl',''),'CATALOG LISTED',
-                       'Dapp comparison in next line',captured_at,NOW])
+                       'Dapp comparison in next line',x.get('_catalogUpdatedAt',captured_at),NOW])
                   d_tvl=observed.get('tvl')
                   d_rate=observed.get('rate')
                   d_util=observed.get('util')
