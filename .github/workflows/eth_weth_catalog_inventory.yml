@@ -1,0 +1,54 @@
+name: Temporary ETH-WETH catalog inventory
+on:
+  push:
+    branches:
+      - eth-market-research-20261117
+    paths:
+      - .github/workflows/eth_weth_catalog_inventory.yml
+permissions:
+  contents: read
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Read CurveYield ETH and WETH indexed entries
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,time,urllib.request,urllib.parse
+          base="https://markets.curveyield.org/api/opportunities"
+          assets=[
+             ("ETH","0x0000000000000000000000000000000000000000"),
+             ("WETH","0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"),
+          ]
+          keys=("id","protocol","marketName","asset","assetSymbol","address","marketId","poolId","tvlUsdEstimate","lendApr","rateType","rateSource","dappUrl","dappLinkType","sourceUrl","depositMode","matchKind","directDepositCompatible","indexOnly","aaveMarketName","aaveReserveId","compoundMarket","fluidVaultId","fluidPair","registryVerified")
+          for symbol,asset in assets:
+            offset=0
+            records=[]
+            for page in range(30):
+              q=urllib.parse.urlencode(dict(asset=asset,conversion=0,limit=500,offset=offset,sort="tvl"))
+              url=base+"?"+q
+              for attempt in range(3):
+                try:
+                  req=urllib.request.Request(url,headers={"Accept":"application/json","User-Agent":"CurveYield-ETH-research/1.0"})
+                  with urllib.request.urlopen(req,timeout=90) as resp:
+                    data=json.load(resp)
+                  break
+                except Exception as exc:
+                  print("CYETH_RETRY",symbol,page,attempt,str(exc),flush=True)
+                  if attempt==2:raise
+                  time.sleep(3*(attempt+1))
+              rows=data.get("opportunities") or []
+              total=data.get("total")
+              print("CYETH_PAGE",symbol,offset,len(rows),total,data.get("updatedAt"),flush=True)
+              records.extend(rows)
+              offset+=len(rows)
+              if not data.get("hasMore") or not rows:break
+            print("CYETH_COUNT",symbol,len(records),flush=True)
+            for i,x in enumerate(records,1):
+              out={k:x.get(k) for k in keys if x.get(k) is not None}
+              out["num"]=i
+              out["assetFilter"]=symbol
+              print("CYETH_ROW|"+json.dumps(out,separators=(",",":"),ensure_ascii=False),flush=True)
+          PY
