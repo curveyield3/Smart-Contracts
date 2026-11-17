@@ -276,14 +276,7 @@ jobs:
               first=first.replace('**Category:** Lending-optimizing vault','**Category:** Yield-bearing carry / leveraged strategy vault')
             if n in statusflags:detail+=' · **VAULT STATUS:** '+statusflags[n]
             if n in smalltv:
-              detail=detail.replace('**Dapp TVL:** unavailable from HTML','**Dapp TVL (USD):** 
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md' 'CurveYield Markets/Verified WBTC Opportunities list_v3.md'
-          git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
-+format(smalltv[n],',')+' (Yearn official)')
+              detail=detail.replace('**Dapp TVL:** unavailable from HTML','**Dapp TVL (USD):** '+chr(36)+format(smalltv[n],',')+' (Yearn official)')
             if countbyurl.get(v['url'],0)>1:
               duplicate=[str(j) for j,w in entries.items() if w['url'] and w['url']==v['url']]
               detail+=' · **DUPLICATE LINK / SHARED OPPORTUNITY:** catalog records #'+', #'.join(duplicate)+' point to the same URL; do not count as distinct investments'
@@ -291,14 +284,7 @@ jobs:
               info=morpho[n]
               if info.get('supplied') is not None:
                 amount=info['supplied']
-                detail=detail.replace('**Dapp TVL:** unavailable from HTML','**Dapp total market supplied (USD):** 
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md'
-          git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
-+format(amount,',.0f'))
+                detail=detail.replace('**Dapp TVL:** unavailable from HTML','**Dapp total market supplied (USD):** '+chr(36)+format(amount,',.0f'))
                 src_amount=re.search(r'\*\*Worker TVL:\*\* \$([\d,]+)',first)
                 if src_amount:
                   worker=float(src_amount.group(1).replace(',',''))
@@ -308,14 +294,7 @@ jobs:
               if info.get('lend') is not None:
                 detail=detail.replace('**Dapp APR/APY:** unavailable from HTML','**Dapp lend rate (6h annualized):** '+info['lend']+'%')
               if info.get('borrow'):detail+=' · **Dapp borrow rate (6h):** '+info['borrow']+'%'
-              if info.get('liquidity') is not None:detail+=' · **Dapp available liquidity:** 
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md'
-          git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
-+format(info['liquidity'],',.0f')
+              if info.get('liquidity') is not None:detail+=' · **Dapp available liquidity:** '+chr(36)+format(info['liquidity'],',.0f')
               if info.get('lltv'):detail+=' · **Liquidation LTV:** '+info['lltv']+'%'
               if info.get('error'):detail+=' · **Market data recheck error:** '+info['error']
             if n in aux:
@@ -344,5 +323,5 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md'
+          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md' 'CurveYield Markets/Verified WBTC Opportunities list_v3.md'
           git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
