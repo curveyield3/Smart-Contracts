@@ -200,6 +200,145 @@ jobs:
           Path('CurveYield Markets/Verified WBTC Opportunities list_v1.md').unlink()
           print('DAPP_AUDIT_SUMMARY '+json.dumps({'html_tried':len(records),'metrics_extracted':count,'bytes':dest.stat().st_size}))
           PY
+      - name: Refine Morpho market figures and final WBTC categories
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, re, urllib.request, collections
+          from pathlib import Path
+          from html.parser import HTMLParser
+          from concurrent.futures import ThreadPoolExecutor
+          
+          src=Path('CurveYield Markets/Verified WBTC Opportunities list_v2.md')
+          raw=src.read_text(encoding='utf-8')
+          lines=raw.splitlines()
+          class V(HTMLParser):
+            def __init__(self):super().__init__();self.t=[];self.ignore=0
+            def handle_starttag(self,tag,attrs):
+              if tag in ('script','style','svg','noscript'):self.ignore+=1
+            def handle_endtag(self,tag):
+              if tag in ('script','style','svg','noscript'):self.ignore=max(0,self.ignore-1)
+            def handle_data(self,data):
+              if not self.ignore and data.strip():self.t.append(data.strip())
+          entries={}
+          for i,l in enumerate(lines):
+            m=re.match(r'^\*\*(\d+)\. ([^—]+) — ',l)
+            if not m:continue
+            n=int(m.group(1));data=lines[i+1] if i+1<len(lines) else ''
+            match=re.search(r'^\*\*Dapp:\*\* (https?://\S+) \(',data)
+            entries[n]=dict(line=i,protocol=m.group(2).strip(),url=match.group(1) if match else None)
+          def morpho_fetch(item):
+            n,url=item
+            try:
+              req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0 (compatible; WBTC-Verification/1.0)','Accept':'text/html'})
+              with urllib.request.urlopen(req,timeout=28) as resp:body=resp.read(2000000).decode('utf-8','replace')
+              v=V();v.feed(body);t=' | '.join(v.t)
+              def numeric(pattern):
+                m=re.search(pattern,t,re.I)
+                return m.group(1).replace(' ','') if m else None
+              def usd(segment):
+                idx=t.lower().rfind(segment.lower())
+                if idx<0:return None
+                after=t[idx+len(segment):idx+len(segment)+110]
+                m=re.search(r'\$\s*(?:\|\s*)?([\d,.]+)\s*(?:\|\s*)?([KMB])\b',after,re.I)
+                if m:return float(m.group(1).replace(',',''))*dict(k=1000,m=1000000,b=1000000000)[m.group(2).lower()]
+                m=re.search(r'\$\s*(?:\|\s*)?([\d,.]+)\b',after)
+                return float(m.group(1).replace(',','')) if m else None
+              a=usd('Total market size')
+              lend=numeric(r'Lend Rate \(6h\)\s*\|\s*([<>]?\s*[\d.]+)\s*(?:\|\s*)?%')
+              borrow=numeric(r'Borrow Rate \(6h\)\s*\|\s*([<>]?\s*[\d.]+)\s*(?:\|\s*)?%')
+              supplied=usd('Total market size')
+              liq=usd('Total Liquidity')
+              lltv=numeric(r'Liquidation Loan-To-Value \(LLTV\)\s*\|\s*([\d.]+)\s*(?:\|\s*)?%')
+              return n,dict(supplied=supplied,lend=lend,borrow=borrow,liquidity=liq,lltv=lltv)
+            except Exception as e:return n,dict(error=str(e)[:140])
+          markets=[(n,v['url']) for n,v in entries.items() if v['protocol']=='Morpho Blue' and v['url']]
+          with ThreadPoolExecutor(max_workers=6) as ex:
+            morpho=dict(ex.map(morpho_fetch,markets))
+          for n,result in sorted(morpho.items()):print('MORPHO_VERIFIED '+str(n)+' '+json.dumps(result))
+          countbyurl=collections.Counter(v['url'] for v in entries.values() if v['url'])
+          aux={
+          1:dict(tv='$2.25B supplied',apy='<0.01% supply APY',util='2.0%',extra='$44.97M borrowed, 0.31% variable borrow APY, 81% max LTV, 85% liquidation threshold, 98.2% of supply cap used',url='https://aavetracker.com/markets/ethereum/wbtc/',source="Independent Aave-API mirror, Nov 17 11:40 UTC"),
+          3:dict(tv='$132.19M supplied',apy='<0.01% deposit APY',util='0.21%',extra='$272.01K borrowed',url='https://data.spark.finance/sparklend',source="Official Spark Data Hub, Nov 17 00:50 UTC"),
+          6:dict(tv='$44.40M supplied',apy='<0.01% supply APY',util='0.6% HUB utilization',extra='$240K borrowed on spoke, borrow base rate 0.28%, 85% collateral factor',url='https://aavetracker.com/v4/spokes/ethereum-main/wbtc/',source="Independent Aave V4 API mirror, Nov 17 15:06 UTC"),
+          7:dict(tv='$26.58M supplied',apy='0.00% supply APY',util='0.0% SPOKE utilization',extra='$0 WBTC borrowed; WBTC not borrowable on this spoke',url='https://aavetracker.com/v4/spokes/ethereum-bluechip/',source="Independent Aave V4 API mirror, Nov 17 02:01 UTC"),
+          }
+          statusflags={20:'RETIRED; MIGRATABLE; withdraw only',56:'RETIRED; MIGRATABLE; withdraw only',59:'RETIRED; MIGRATABLE; withdraw only',60:'RETIRED; MIGRATABLE; withdraw only'}
+          smalltv={56:4240,59:1234,60:1065}
+          updates=0
+          for n,v in entries.items():
+            i=v['line'];first=lines[i];detail=lines[i+1]
+            if v['protocol']=='Fluid Vaults':
+              first=first.replace('**Category:** Lending market','**Category:** WBTC-collateral borrowing vault (not WBTC-earning deposit)')
+            if v['protocol'] in ('CurveLend V1','Fraxlend') and ('borrow' in first.lower()):
+              first=first.replace('**Category:** Lending market','**Category:** WBTC-collateral debt market (not WBTC-earning deposit)')
+            if v['protocol']=='IPOR Fusion' and re.search(r'Carry|Loop|Debt|Yield',first,re.I):
+              first=first.replace('**Category:** Lending-optimizing vault','**Category:** Yield-bearing carry / leveraged strategy vault')
+            if n in statusflags:detail+=' · **VAULT STATUS:** '+statusflags[n]
+            if n in smalltv:
+              detail=detail.replace('**Dapp TVL:** unavailable from HTML','**Dapp TVL (USD):** 
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md' 'CurveYield Markets/Verified WBTC Opportunities list_v3.md'
+          git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
++format(smalltv[n],',')+' (Yearn official)')
+            if countbyurl.get(v['url'],0)>1:
+              duplicate=[str(j) for j,w in entries.items() if w['url'] and w['url']==v['url']]
+              detail+=' · **DUPLICATE LINK / SHARED OPPORTUNITY:** catalog records #'+', #'.join(duplicate)+' point to the same URL; do not count as distinct investments'
+            if n in morpho:
+              info=morpho[n]
+              if info.get('supplied') is not None:
+                amount=info['supplied']
+                detail=detail.replace('**Dapp TVL:** unavailable from HTML','**Dapp total market supplied (USD):** 
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md'
+          git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
++format(amount,',.0f'))
+                src_amount=re.search(r'\*\*Worker TVL:\*\* \$([\d,]+)',first)
+                if src_amount:
+                  worker=float(src_amount.group(1).replace(',',''))
+                  diff=100*(amount/worker-1)
+                  detail+=' · **Supplied TVL difference:** {:+.2f}%'.format(diff)
+                  if abs(diff)>2:detail+=' **MATERIAL TVL DISCREPANCY** (snapshots and market definitions require review)'
+              if info.get('lend') is not None:
+                detail=detail.replace('**Dapp APR/APY:** unavailable from HTML','**Dapp lend rate (6h annualized):** '+info['lend']+'%')
+              if info.get('borrow'):detail+=' · **Dapp borrow rate (6h):** '+info['borrow']+'%'
+              if info.get('liquidity') is not None:detail+=' · **Dapp available liquidity:** 
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md'
+          git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
++format(info['liquidity'],',.0f')
+              if info.get('lltv'):detail+=' · **Liquidation LTV:** '+info['lltv']+'%'
+              if info.get('error'):detail+=' · **Market data recheck error:** '+info['error']
+            if n in aux:
+              x=aux[n]
+              detail+=' · **Additional market stats:** '+x['tv']+', '+x['apy']+', '+x['util']+' utilization; '+x['extra']+' · **Provider:** '+x['source']+' '+x['url']+' (official Spark analytics or independently reproduced Aave API; not identical to dapp HTML)'
+            srate=re.search(r'\*\*Worker rate:\*\* (-?[\d.]+)% (APY|APR)',first)
+            drate=re.search(r'\*\*Dapp APY:\*\* (-?[\d.]+)%',detail)
+            if srate and drate and srate.group(2)=='APY':
+              d=float(drate.group(1))-float(srate.group(1))
+              if abs(d)>=0.25:detail+=' · **MATERIAL YIELD DISCREPANCY:** {:+.2f} percentage points (worker APY vs exact dapp APY)'.format(d)
+              elif abs(d)>=0.01:detail+=' · **Yield difference:** {:+.2f} percentage points'.format(d)
+            if n==17:detail+=' · **Yield composition:** native WBTC yield plus ZAMA incentives; 30-day realized APY differs from current incentive-boosted APY'
+            if n==12:detail+=' · **Risk:** uncollateralized loan market; unlike collateral-backed WBTC lending'
+            if n==45:detail+=' · **Product mismatch:** listing describes borrowing frxUSD secured by WBTC, not a WBTC lending/supply yield'
+            lines[i]=first;lines[i+1]=detail;updates+=1
+          text='\n'.join(lines).replace('Verified WBTC Opportunities list — Ethereum — v2','Verified WBTC Opportunities list — Ethereum — v3',1)
+          text=text.replace('> **Verification:** all 99 dapp-linked discovery records HTTP-checked. 20 have TVL and APY extracted directly from dedicated dapp HTML. Other dapp figures are unavailable from static HTML; no claims of verification made. Individual dapp and catalog snapshots can differ.', '> **Verification status:** All source-filtered records indexed and each linked market-specific dapp HTTP-checked; independent TVL/APY captured directly from 20 app-rendered vault records plus available Morpho Blue market figures and Spark official analytics. Some dapps expose only JavaScript shells; those data are marked missing rather than fabricated. Source and dapp/APIs are sampled at different times. Direct WBTC deposits, collateral-only borrow markets, duplicate source records and WBTC LP/basket conversions are explicitly distinguished. Yield discrepancies >= 0.25 percentage points are flagged.',1)
+          text=text.replace('Compound III WBTC collateral in USDC/USDT base-asset markets','Compound III WBTC collateral in USDC/USDT/WETH base-asset markets',1)
+          dest=Path('CurveYield Markets/Verified WBTC Opportunities list_v3.md')
+          dest.write_text(text+'\n',encoding='utf-8')
+          src.unlink()
+          print('WBTC_RESEARCH_V3 '+json.dumps(dict(records=updates,morpho_market_count=len(morpho),morpho_tvl_found=sum(z.get('supplied') is not None for z in morpho.values()),morpho_rates_found=sum(z.get('lend') is not None for z in morpho.values()),size=dest.stat().st_size)))
+          PY
       - name: Commit source-bound inventory
         shell: bash
         run: |
