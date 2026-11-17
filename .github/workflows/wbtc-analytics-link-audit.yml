@@ -87,8 +87,8 @@ jobs:
             let note='**Verified analytics dapp:** '+(valid?check.final:'none (unverified)');
             note+=' · **Link inspection:** '+(check?'HTTP '+check.http+'; '+check.reason:'no exact URL in Markets source');
             if(!valid){
-             note+=' · **Rejected route:** '+(r.url||'none');
-             note+=' · **Search evidence:** '+(missingDetail[r.n]||'Checked provided exact route in rendered browser, original Markets discovery reference, official '+r.p+' opportunity directory and source-bound WBTC market naming; no exact working analytics view confirmed');
+             note+=' · **Rejected route (non-clickable):** '+(r.url?String.fromCharCode(96)+r.url+String.fromCharCode(96):'none');
+             note+=' · **Search evidence:** '+(missingDetail[r.n]||'Attempted source-provided exact route in a rendered browser; checked source-bound WBTC asset and market naming and compared available provider directory material; no exact working analytics page confirmed');
              note+=' · **Conclusion:** cannot establish a working market-specific analytics page; may be missing or retired; cannot prove that no contract exists';
             }else note+=' · **Visible figures:** '+check.markers.join(', ');
             const tvl=r.first.match(/\*\*Worker TVL:\*\* ([^·]+)/);
