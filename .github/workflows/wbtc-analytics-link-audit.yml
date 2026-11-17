@@ -108,7 +108,7 @@ jobs:
            fs.writeFileSync(file,header+recordsOut.join('\n\n')+foot);
            console.log('SUMMARY',JSON.stringify({total:records.length,verified,missing,bytes:fs.statSync(file).size}));
           })().catch(e=>{console.error(e.stack||String(e));process.exitCode=1});
-                    JS
+          JS
       - name: Publish verified destination list v6
         run: |
           git config user.name 'github-actions[bot]'
