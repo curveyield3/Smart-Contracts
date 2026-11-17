@@ -36,7 +36,7 @@ jobs:
            if(!/not independently extracted/.test(detail))continue;
            entries.push({id:+m[1],name:m[2],url:u[1]});
           }
-          let pos=0;const browser=await chromium.launch({headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
+          let pos=0;let browser;
           const go=async()=>{
            const ctx=await browser.newContext();
            while(pos<entries.length){
@@ -58,7 +58,7 @@ jobs:
            }
            await ctx.close();
           };
-          (async()=>{await Promise.all([go(),go(),go(),go()]);await browser.close();console.log('METRIC_INSPECTION_DONE '+entries.length)})().catch(e=>{console.error(e.stack||e);process.exitCode=1});
+          (async()=>{browser=await chromium.launch({headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});await Promise.all([go(),go(),go(),go()]);await browser.close();console.log('METRIC_INSPECTION_DONE '+entries.length)})().catch(e=>{console.error(e.stack||e);process.exitCode=1});
           JS
       - name: Confirm read-only metric inspection output
         run: echo 'Dapp metrics inspection evidence is emitted in this job log only'
