@@ -25,95 +25,40 @@ jobs:
         shell: bash
         run: |
           node - <<'JS'
-          const fs=require('fs');
-          const {chromium}=require('playwright');
-          const input=fs.readFileSync('CurveYield Markets/Verified WBTC Opportunities list_v5.md','utf8');
-          const records=input.split(/\n\n/).map(s=>{
-           const parts=s.split('\n'),m=parts[0].match(/^\*\*(\d+)\. (.*?) —/);
-           if(!m)return null;
-           const url=(parts[1]||'').match(/^\*\*Dapp:\*\* (https?:\/\/\S+) \(/);
-           return {n:+m[1],p:m[2],first:parts[0],second:parts[1]||'',url:url?url[1]:null};
-          }).filter(Boolean);
-          const candidates=[...new Set(records.map(r=>r.url).filter(Boolean).concat(['https://fluid.io/1/lending/wbtc?mode=deposit','https://fluid.io/1/lending/wbtc']))];
-          const out=new Map();let cursor=0;
-          const provider=u=>(u.match(/morpho|yearn|aave|spark|compound|fluid|euler|ipor|convex|beefy|stakedao|curve/i)||['other'])[0].toLowerCase();
-          (async()=>{
-           const browser=await chromium.launch({headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
-           const worker=async()=>{
-            const ctx=await browser.newContext({viewport:{width:1280,height:900}});
-            while(cursor<candidates.length){
-             const u=candidates[cursor++],page=await ctx.newPage();let data={url:u,http:null,final:u,analytics:false,reason:'',markers:[],textLength:0};
-             try{
-              const response=await page.goto(u,{waitUntil:'domcontentloaded',timeout:21000});
-              data.http=response?.status()||null;
-              try{await page.waitForLoadState('networkidle',{timeout:6500})}catch{}
-              await page.waitForTimeout(1700);
-              data.final=page.url();
-              const text=(await page.locator('body').innerText({timeout:7000})).replace(/\s+/g,' ');
-              data.textLength=text.length;
-              data.markers=(text.match(/\$[0-9][0-9,.]*\s*[KMBT]?|[0-9]+(?:\.[0-9]+)?\s*%/g)||[]).slice(0,8);
-              const official=provider(data.final);
-              const rate=/\b(?:APY|APR|Lend Rate|Supply Rate|Interest Rate|Borrow Rate)\b/i.test(text);
-              const tvl=/\b(?:TVL|Total Deposits|Total Supply|Total Supplied|Total Liquidity|Total Market Size|TVM|Total Staked|Available Liquidity|Total Assets|Total Borrow)\b/i.test(text);
-              const hasNumbers=data.markers.some(v=>v.includes('$'))&&data.markers.some(v=>v.includes('%'));
-              const token=/WBTC|Wrapped BTC|triCrypto|3crypto|sBTC|tBTC|ibBTC|BTC\/|BTC-/i.test(text);
-              const blocked=/404 Not Found|Access Denied|Checking your browser|Application error|Internal Server Error/i.test(text.slice(0,1200));
-              const addressInURL=(u.match(/0x[a-fA-F0-9]{40,64}/)||[])[0];
-            const routeMatch=!addressInURL||data.final.toLowerCase().includes(addressInURL.toLowerCase());
-            data.analytics=data.http>=200&&data.http<400&&text.length>300&&rate&&tvl&&hasNumbers&&token&&!blocked&&routeMatch;
-              data.reason='rendered='+text.length+' chars; rate-label='+rate+'; TVL-label='+tvl+'; figures='+hasNumbers+'; token='+token+'; blocking='+blocked;
-             }catch(e){data.reason=String(e.message||e).slice(0,145)}
-             out.set(u,data);console.log('CHECK',JSON.stringify({url:u,status:data.http,ok:data.analytics,reason:data.reason.slice(0,130)}));
-             await page.close().catch(()=>{});
-            }await ctx.close();
-           };
-           await Promise.all(Array.from({length:5},worker));
-           await browser.close();
-           let verified=0,missing=0;const stamp=new Date().toISOString();
-           const missingDetail={
-           9:'Searched Compound v2 WBTC and cWBTC2 via official market index and v2 documentation; absent exact cToken identifier in catalog',
-           21:'Searched Yearn WBTC vault registry, vault-specific pages and matching Yearn v2 listing; exact vault address absent from index',
-           31:'Searched IPOR official vault directory for wBTC Dollar Carry and compared indexed contract-specific #32; alias identity unproven without contract address',
-           34:'Searched Curve Lend WBTC/crvUSD market directory and controller routes; exact borrowing controller not supplied in discovery',
-           45:'Searched IPOR TAU InfiniFi BTC Carry official directory and published vault address, compared linked #46; alias unresolved without source contract',
-           49:'Searched IPOR Reservoir BTC Yield directory, compared contract-bound #50; absent source contract identity',
-           89:'Searched Convex booster PID and Curve tBTC/sBTC staking markets; PID and reward contract missing in index',
-           96:'Searched Convex booster PID and Curve ibBTC/sBTC markets; no source-confirmed PID or reward contract'
-           };
-           const recordsOut=[];
-           for(const r of records){
-            const check=out.get(r.url),valid=!!(check&&check.analytics);
-            let first=r.first;
-            first=first.replace(/(\*\*\d+\. .*? — )\[([^\]]+)\]\(https?:\/\/[^)]+\)/,(all,start,name)=>start+(valid?'['+name+']('+check.final+')':name+' (analytics link not verified)'));
-            if(valid)verified++;else missing++;
-            let note='**Verified analytics dapp:** '+(valid?check.final:'none (unverified)');
-            note+=' · **Link inspection:** '+(check?'HTTP '+check.http+'; '+check.reason:'no exact URL in Markets source');
-            if(!valid){
-             note+=' · **Rejected route (non-clickable):** '+(r.url?String.fromCharCode(96)+r.url+String.fromCharCode(96):'none');
-             note+=' · **Search evidence:** '+(missingDetail[r.n]||'Attempted source-provided exact route in a rendered browser; checked source-bound WBTC asset and market naming and compared available provider directory material; no exact working analytics page confirmed');
-             note+=' · **Conclusion:** cannot establish a working market-specific analytics page; may be missing or retired; cannot prove that no contract exists';
-            }else note+=' · **Visible figures:** '+check.markers.join(', ');
-            const tvl=r.first.match(/\*\*Worker TVL:\*\* ([^·]+)/);
-            const rate=r.first.match(/\*\*Worker rate:\*\* ([^·]+)/);
-            const cat=r.first.match(/\*\*Category:\*\* ([^·]+)/);
-            const oldTvl=r.second.match(/\*\*Dapp (?:TVL\/deposits \(USD\)|total market supplied \(USD\)|TVL \(USD\)):\*\* ([^·]+)/i);
-            const oldApy=r.second.match(/\*\*Dapp (?:APY|lend rate \(6h annualized\)):\*\* ([^·]+)/i);
-            const oldUtil=r.second.match(/\*\*Utilization:\*\* ([^·]+)/i);
-            note+=' · **Worker:** '+(tvl?tvl[1].trim():'TVL not published')+', '+(rate?rate[1].trim():'yield not published');
-            note+=' · **Dapp measured:** '+(oldTvl?oldTvl[1].trim():'TVL unavailable')+', '+(oldApy?oldApy[1].trim():'rate unavailable')+(oldUtil?', utilization '+oldUtil[1].trim():'');
-            note+=' · **Category:** '+(cat?cat[1].trim():'unclassified');
-            recordsOut.push(first+'\n'+note);
+          const fs=require('fs'),{chromium}=require('playwright');
+          const rows=fs.readFileSync('CurveYield Markets/Verified WBTC Opportunities list_v6.md','utf8').split(/\n/),entries=[];
+          for(let i=0;i<rows.length;i++){
+           const m=rows[i].match(/^\*\*(\d+)\. ([^—]+) —/);
+           if(!m)continue;
+           const detail=rows[i+1]||'';
+           const u=detail.match(/\*\*Analytics dapp:\*\* (https?:\/\/\S+)/);
+           if(!u)continue;
+           if(!/not independently extracted/.test(detail))continue;
+           entries.push({id:+m[1],name:m[2],url:u[1]});
+          }
+          let pos=0;const browser=await chromium.launch({headless:true,args:['--no-sandbox','--disable-dev-shm-usage']});
+          const go=async()=>{
+           const ctx=await browser.newContext();
+           while(pos<entries.length){
+            const x=entries[pos++],page=await ctx.newPage(),out={id:x.id,protocol:x.name,url:x.url,status:null,context:{},visible:0,error:null};
+            try{
+             const resp=await page.goto(x.url,{waitUntil:'domcontentloaded',timeout:20000});
+             out.status=resp?.status();
+             try{await page.waitForLoadState('networkidle',{timeout:5000})}catch{}
+             await page.waitForTimeout(1500);
+             const body=(await page.locator('body').innerText({timeout:6000})).replace(/\s+/g,' ');
+             out.visible=body.length;
+             const labels=['Total Deposits','Total Supply','Total Supplied','Total Value Locked','TVL','Total Collateral','Deposit APY','Supply APY','Net APY','Net APR','Supply APR','Earn APR','Utilization','Available Liquidity','WBTC','Wrapped BTC','WBTC /'];
+             for(const label of labels){let j=body.toLowerCase().indexOf(label.toLowerCase());if(j>=0)out.context[label]=body.slice(Math.max(0,j-50),Math.min(body.length,j+200));}
+             out.money=(body.match(/\$\s*[\d,.]+\s*[KMB]?/g)||[]).slice(0,16);
+             out.rates=(body.match(/[<>]?\s*[\d,.]+\s*%/g)||[]).slice(0,16);
+            }catch(e){out.error=String(e.message||e).slice(0,200)}
+            console.log('METRIC_INSPECTION '+JSON.stringify(out));
+            await page.close().catch(()=>{});
            }
-           const file='CurveYield Markets/Verified WBTC Opportunities list_v6.md';
-           const header='# Verified WBTC Opportunities list — Ethereum — v6\n\n**Rendered-browser link standard:** checked '+stamp+'. '+verified+' destination(s) showed WBTC-related analytics including monetary figures and rates; '+missing+' did not qualify and have no clickable dapp link. This threshold is deliberately stricter than HTTP 200 or a generic site loading. Source TVL and APY reflect Nov 17 Markets snapshots. All 108 source records retained (67 direct WBTC; 41 WBTC LP/basket conversion). Dynamic sites may temporarily fail because of anti-bot or wallet gating; failure is not proof of nonexistence.\n\n';
-           const foot='\n\n## Exhaustive link audit scope\n\nFor each row checked the Markets worker exact link and Ethereum WBTC asset identity; attempted the rendered protocol-specific interface; required market-specific monetary and rate analytics; consulted official protocol listings, source documentation and searched names/addresses for unresolved entries. Where that path did not establish working market analytics, the link was intentionally suppressed. Search evidence for originally missing eight rows is recorded in each row. The audit cannot prove a page is nonexistent.\n';
-           fs.writeFileSync(file,header+recordsOut.join('\n\n')+foot);
-           console.log('SUMMARY',JSON.stringify({total:records.length,verified,missing,bytes:fs.statSync(file).size}));
-          })().catch(e=>{console.error(e.stack||String(e));process.exitCode=1});
+           await ctx.close();
+          };
+          (async()=>{await Promise.all([go(),go(),go(),go()]);await browser.close();console.log('METRIC_INSPECTION_DONE '+entries.length)})().catch(e=>{console.error(e.stack||e);process.exitCode=1});
           JS
-      - name: Publish verified destination list v6
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- 'CurveYield Markets/Verified WBTC Opportunities list_v6.md'
-          git diff --cached --quiet || { git commit -m 'Publish WBTC v6 with only rendered analytics links and per-row failed-link evidence'; git push; }
+      - name: Confirm read-only metric inspection output
+        run: echo 'Dapp metrics inspection evidence is emitted in this job log only'
