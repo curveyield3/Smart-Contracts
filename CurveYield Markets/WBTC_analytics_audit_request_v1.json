@@ -1,8 +1,8 @@
 {
-  "revision": 4,
+  "revision": 5,
   "scope": "Inspect 18 rendered analytics dapps missing exact TVL and APY numbers",
   "standard": "exact opportunity, browser-rendered TVL and APR/APY",
   "date": "2026-11-17",
-  "recovery": "Fixed JS heredoc and added exact contract URL matching",
+  "recovery": "Moved Chromium launch into async IIFE; validated Node 22 CommonJS script mode",
   "mode": "read-only logs; original v6 preserved"
 }
