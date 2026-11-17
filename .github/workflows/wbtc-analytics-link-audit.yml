@@ -58,7 +58,9 @@ jobs:
               const hasNumbers=data.markers.some(v=>v.includes('$'))&&data.markers.some(v=>v.includes('%'));
               const token=/WBTC|Wrapped BTC|triCrypto|3crypto|sBTC|tBTC|ibBTC|BTC\/|BTC-/i.test(text);
               const blocked=/404 Not Found|Access Denied|Checking your browser|Application error|Internal Server Error/i.test(text.slice(0,1200));
-              data.analytics=data.http>=200&&data.http<400&&text.length>300&&rate&&tvl&&hasNumbers&&token&&!blocked;
+              const addressInURL=(u.match(/0x[a-fA-F0-9]{40,64}/)||[])[0];
+            const routeMatch=!addressInURL||data.final.toLowerCase().includes(addressInURL.toLowerCase());
+            data.analytics=data.http>=200&&data.http<400&&text.length>300&&rate&&tvl&&hasNumbers&&token&&!blocked&&routeMatch;
               data.reason='rendered='+text.length+' chars; rate-label='+rate+'; TVL-label='+tvl+'; figures='+hasNumbers+'; token='+token+'; blocking='+blocked;
              }catch(e){data.reason=String(e.message||e).slice(0,145)}
              out.set(u,data);console.log('CHECK',JSON.stringify({url:u,status:data.http,ok:data.analytics,reason:data.reason.slice(0,130)}));
