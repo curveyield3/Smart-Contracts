@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// @custom:version v9 — in-place replacement of the canonical V8 ABI, preserving external selectors.
 /**
  * @title CurveYield System Component
  * @notice CurveYield is a decentralized NGO building optimized DeFi systems for the good of all.
@@ -92,6 +93,7 @@ interface ICYV8ERC4626 {
     function asset() external view returns (address);
     function deposit(uint256 assets, address receiver) external returns (uint256);
     function withdraw(uint256 assets, address receiver, address owner) external returns (uint256);
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256);
     function previewRedeem(uint256 shares) external view returns (uint256);
     function balanceOf(address account) external view returns (uint256);
 }
@@ -452,7 +454,32 @@ contract CurveYieldOmniAdapterV8 {
         if(m.mode==ERC4626||m.mode==BEEFY_V7) {
             uint256 beforeShares=ICYV8Token(m.target).balanceOf(address(this));
             if(m.mode==ERC4626) {
-                ICYV8ERC4626(m.target).withdraw(amount,address(this),address(this));
+                // Some otherwise ERC4626-compatible vaults (including aCRV) round
+                // withdraw() down by a few wei. Burn enough shares through redeem()
+                // to cover the requested underlying, and preserve any overage as
+                // per-market credit in _release(). Never conceal genuine losses:
+                // _value() uses current redeemable assets, which Vault V2 uses
+                // to lower NAV/share price when a strategy loses value.
+                ICYV8ERC4626 vault=ICYV8ERC4626(m.target);
+                uint256 owned=m.trackedShares;
+                uint256 redeemable=vault.previewRedeem(owned);
+                if(owned==0||redeemable==0)revert InsufficientAssets();
+                uint256 shares=CYV8Math.mulDiv(amount,owned,redeemable);
+                if(CYV8Math.mulDiv(shares,redeemable,owned)<amount)++shares;
+                if(shares>owned)shares=owned;
+                // Fee/rounding implementations may quote slightly less at
+                // partial sizes. Correct the shares BEFORE touching the vault;
+                // do not force the parent to absorb an artificial shortfall.
+                uint256 quote=vault.previewRedeem(shares);
+                if(quote<amount&&shares<owned) {
+                    uint256 deficit=amount-quote;
+                    uint256 extra=CYV8Math.mulDiv(deficit,owned,redeemable)+1;
+                    shares=extra>=owned-shares?owned:shares+extra;
+                    // Nonlinear rounding fallback: redeem remaining principal
+                    // to fulfill the withdrawal, retaining the excess as credit.
+                    if(vault.previewRedeem(shares)<amount)shares=owned;
+                }
+                vault.redeem(shares,address(this),address(this));
             }else{
                 uint256 pps=ICYV8Beefy(m.target).getPricePerFullShare();
                 if(pps==0)revert InsufficientAssets();
