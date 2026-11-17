@@ -1,7 +1,8 @@
 {
-  "revision": 3,
-  "scope": "All 108 Ethereum WBTC catalog entries",
+  "revision": 4,
+  "scope": "Inspect 18 rendered analytics dapps missing exact TVL and APY numbers",
   "standard": "exact opportunity, browser-rendered TVL and APR/APY",
   "date": "2026-11-17",
-  "recovery": "Fixed JS heredoc and added exact contract URL matching"
+  "recovery": "Fixed JS heredoc and added exact contract URL matching",
+  "mode": "read-only logs; original v6 preserved"
 }
