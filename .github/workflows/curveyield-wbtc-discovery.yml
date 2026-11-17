@@ -169,16 +169,7 @@ jobs:
             src_amount=float(src.group(1).replace(',','')) if src else None
             l=lines[1].replace('**Dapp TVL/APR/APY:** not verified · **Utilization:** not verified · **Match:** pending.','')
             if amount is not None:
-              l+=' · **Dapp TVL/deposits:** 
-          PY
-      - name: Commit source-bound inventory
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md'
-          git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
-+format(amount,',.0f')
+              l+=' · **Dapp TVL/deposits:** +format(amount,',.0f')
               if src_amount:
                 difference=100*(amount/src_amount-1)
                 l+=' · **TVL vs worker:** {:+.2f}%'.format(difference)
@@ -214,5 +205,5 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add 'CurveYield Markets/Verified WBTC Opportunities list_v1.md'
+          git add -A 'CurveYield Markets/Verified WBTC Opportunities list_v1.md' 'CurveYield Markets/Verified WBTC Opportunities list_v2.md'
           git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
