@@ -29,8 +29,14 @@ jobs:
               if not self.hide and data.strip():self.p.append(data.strip())
           asset='0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
           q=urllib.parse.urlencode(dict(asset=asset,conversion=0,limit=500,sort='tvl'))
-          req=urllib.request.Request('https://markets.curveyield.org/api/opportunities?'+q,headers={'Accept':'application/json'})
-          with urllib.request.urlopen(req,timeout=90) as f: data=json.load(f)
+          req=urllib.request.Request('https://markets.curveyield.org/api/opportunities?'+q,headers={'Accept':'application/json','User-Agent':'Mozilla/5.0 (compatible; CurveYield-ETH-research/2.0)'})
+          for attempt in range(3):
+            try:
+              with urllib.request.urlopen(req,timeout=90) as f: data=json.load(f)
+              break
+            except Exception as exc:
+              if attempt==2:raise
+              import time;time.sleep(3*(attempt+1))
           rows=[x for x in data.get('opportunities',[]) if x.get('protocol','').startswith('Morpho Vault') and x.get('dappUrl','').startswith('https://app.morpho.org/ethereum/vault/')]
           print('MORPHO_VAULT_COUNT',len(rows),flush=True)
           def fetch(x):
