@@ -79,7 +79,7 @@ jobs:
           f=Path('CurveYield Markets/Verified WBTC Opportunities list_v1.md')
           f.parent.mkdir(parents=True,exist_ok=True);f.write_text('\n'.join(out)+'\n',encoding='utf-8')
           print(json.dumps(dict(direct=len(direct),conversions=len(indirect),total=len(records),updatedAt=doc.get('updatedAt'),bytes=f.stat().st_size)))
-                    PY
+          PY
       - name: Commit source-bound inventory
         shell: bash
         run: |
