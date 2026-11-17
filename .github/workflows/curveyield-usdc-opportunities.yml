@@ -1,0 +1,326 @@
+name: One-time CurveYield USDC exact dapp verification
+on:
+  push:
+    paths:
+      - ".github/workflows/curveyield-usdc-opportunities.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: curveyield-usdc-v3
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use existing runner browser and Python Playwright
+        run: python -m pip install --quiet playwright
+      - name: Repair links and record exact source-bound failed searches
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio, csv, io, json, re, urllib.parse, urllib.request, urllib.error, time, datetime, random
+          from pathlib import Path
+          from playwright.async_api import async_playwright
+          ROOT=Path("Curveyield Markets")
+          old=ROOT/"Verified USDC Opportunities v2.csv"
+          new=ROOT/"Verified USDC Opportunities v3.csv"
+          if not old.is_file(): raise RuntimeError("v2 catalog missing; do not generate an incomplete file")
+          with old.open(encoding="utf-8-sig",newline="") as f:
+              parsed=list(csv.reader(f))
+          hdr=parsed[0]
+          if len(hdr)!=20: raise RuntimeError("Unknown source schema")
+          groups=[]
+          for line in parsed[1:]:
+              if len(line)==20 and line[1]=="MARKETS DISCOVERY":
+                  groups.append([line,None])
+              elif len(line)==20 and line[1]=="OFFICIAL DAPP":
+                  if not groups or groups[-1][1] is not None or groups[-1][0][0]!=line[0]:
+                      raise RuntimeError("Unpaired dapp row")
+                  groups[-1][1]=line
+          if len(groups)!=702 or not all(x[1] for x in groups):raise RuntimeError("Missing source/dapp pairs")
+          uindex={a[0]:i for i,(a,b) in enumerate(groups)}
+          timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat()
+          # A prior browser crawl verified opportunity title/ID and at least one metric for these.
+          # Preserve that proof, but do not infer that their yield is verified when unavailable.
+          already=set()
+          for a,b in groups:
+              if b[16]=="DAPP NUMBERS SEEN" and b[15] and "body identity seen" in b[14]:
+                  already.add(a[0])
+          print("Already grounded dapp readings:",len(already),flush=True)
+          def variants(a,b):
+              p=a[3]; name=a[4]; url=b[15].strip(); address=a[8]; marketid=a[9]
+              result=[]
+              def add(s):
+                  if s and s not in result:result.append(s)
+              if p=="Fluid Lending":
+                  add("https://fluid.io/1/lending/usdc?mode=deposit")
+              elif p=="Fluid Vaults":
+                  match=re.search(r'vault\s+(\d+)',name,re.I)
+                  if match:
+                      k=match.group(1)
+                      add("https://fluid.io/1/borrowing/vaults/"+k)
+                      add("https://fluid.io/vaults/1/"+k)
+              elif p=="Fluid Smart Lending":
+                  pair=url.rstrip('/').split('/')[-1] if url else ""
+                  if pair:
+                      add("https://fluid.io/1/smart-lending/"+pair)
+                      add("https://fluid.io/smart-lending/1/"+pair)
+              elif p=="Compound III":
+                  if url:
+                      add(url.replace("app.compound.xyz","app.compound.finance"))
+              elif p=="Compound II":
+                  add("https://app.compound.finance/markets/v2/usdc")
+                  add("https://app.compound.finance/markets/v2/USDC")
+              elif p=="Morpho Vault V2" and address:
+                  add("https://app.morpho.org/ethereum/vault/"+address)
+              elif p=="IPOR Fusion" and address:
+                  add("https://app.ipor.io/fusion/ethereum/"+address)
+              elif p=="Aave V3" and "EtherFi" in name:
+                  add("https://app.aave.com/reserve-overview/?underlyingAsset="+a[7]+"&marketName=proto_etherfi_v3")
+              elif p=="Convex Finance" and url:
+                  add(url.replace("curve.convexfinance.com","www.convexfinance.com"))
+              elif p=="Maple Finance" and address:
+                  add("https://app.maple.finance/earn/"+address)
+              elif p=="Maple Syrup":
+                  # Maple transparency is researched but not automatically accepted as an interactive dapp.
+                  add("https://maple.finance/transparency/products/syrupusdc")
+              elif p=="Fraxlend" and address:
+                  add("https://app.frax.finance/fraxlend/pair/"+address)
+              add(url)
+              return result[:4]
+          def owner_domain(p):
+              if p.startswith("Morpho"):return "app.morpho.org"
+              if p.startswith("Aave"):return "app.aave.com" if p=="Aave V3" else "pro.aave.com"
+              if p.startswith("Maple"):return "app.maple.finance"
+              if p=="Compound II" or p=="Compound III":return "app.compound.finance"
+              if p.startswith("Fluid"):return "fluid.io"
+              if p.startswith("Yearn"):return "yearn.fi"
+              if p=="Convex Finance":return "curve.convexfinance.com"
+              if p=="Beefy Vaults":return "app.beefy.com"
+              if p=="Stake DAO":return "app.stakedao.org"
+              if p=="IPOR Fusion":return "app.ipor.io"
+              if p=="Euler EVK":return "app.euler.finance"
+              if p=="Fraxlend":return "app.frax.finance"
+              if p=="SparkLend":return "app.spark.finance"
+              return ""
+          def exact_identity(a,url,text):
+              address=a[8].lower();market=a[9].lower();name=a[4].lower().strip()
+              s=text.lower(); path=url.lower()
+              if market and market in path and ("market" in s or "supply" in s or "borrow" in s):return True
+              if address and address in path and (name in s or re.search(r'\b(?:tvl|deposit|market|apy|apr|vault|supply)\b',s)):return True
+              if a[3] in ("Aave V3","SparkLend","Compound III","Fluid Lending"):
+                  return ('usdc' in s and 'usdc' in path and any(k in s for k in ('supply','lending','apy','apr','borrow','reserve')))
+              if a[3]=="Maple Syrup":
+                  return "syrupusdc" in s and "syrupusdc" in path
+              if name and len(name)>=8 and name in s:return True
+              return False
+          def metric_lines(text):
+              lines=[re.sub(r'\s+',' ',line).strip() for line in text.splitlines()]
+              lines=[v for v in lines if v][:1400]
+              labels=[
+                r'\bTotal Deposits\b',r'\bTotal Supplied\b',r'\bTotal Assets\b',
+                r'\bTotal Market Size\b',r'\bMarket Size\b',r'\bReserve Size\b',
+                r'\bTVL\b',r'\bAUM\b',r'\bNet APY\b',r'\bSupply APY\b',r'\bAPY\b',
+                r'\bNet APR\b',r'\bSupply APR\b',r'\bAPR\b',r'\bCurrent Utilization\b',
+                r'\bUtilization Rate\b',r'\bUtilization\b']
+              samples=[]
+              for n,line in enumerate(lines):
+                  if any(re.search(k,line,re.I) for k in labels):
+                      near=' '.join(lines[n:n+3])[:230]
+                      # Ignore purely explanatory copy or unrelated footers.
+                      if re.search(r'\$[\d,.]+\s*[KMBT]?\b|(?<!\d)\d+(?:\.\d+)?\s*%',near,re.I):
+                          samples.append(near)
+              return samples[:8]
+          def extract_metric(samples,kind):
+              labels={'tvl':r'\b(?:total market size|total deposits|total supplied|total assets|reserve size|market size|TVL|AUM)\b',
+                      'rate':r'\b(?:net APY|supply APY|deposit APY|APY|net APR|supply APR|deposit APR|APR)\b',
+                      'util':r'\b(?:current utilization|utilization rate|utilization)\b'}[kind]
+              for entry in samples:
+                  m=re.search(labels,entry,re.I)
+                  if not m:continue
+                  rest=entry[m.end():][:115]
+                  if kind in ('rate','util'):
+                      if kind=='rate' and re.search(r'\bborrow(?:ing)?\b',entry[:m.end()],re.I):continue
+                      x=re.search(r'(?<!\d)(\d{1,6}(?:\.\d+)?)\s*%',rest)
+                      if x:
+                          n=float(x.group(1))
+                          if kind=="util" and n>100:continue
+                          return ('>1000' if n==1000 and '>' in rest[:15] else str(n),entry[:140])
+                  else:
+                      x=re.search(r'\$\s*(\d[\d,.]*)\s*([KMBT]?)',rest,re.I)
+                      if x:
+                          val=float(x.group(1).replace(',',''))*{'':1,'K':1e3,'M':1e6,'B':1e9,'T':1e12}[x.group(2).upper()]
+                          return (str(val),entry[:140])
+              return (None,None)
+          async def check_url(ctx,sem,a,url):
+              async with sem:
+                  page=await ctx.new_page()
+                  try:
+                      await page.route("**/*",lambda route:route.abort() if route.request.resource_type in ("image","media","font") else route.continue_())
+                      response=await page.goto(url,wait_until="domcontentloaded",timeout=13000)
+                      await page.wait_for_timeout(2400)
+                      final=page.url
+                      status=response.status if response else 0
+                      title=await page.title()
+                      text=await page.locator('body').inner_text(timeout=5000)
+                      samples=metric_lines(text)
+                      identity=exact_identity(a,final,text)
+                      if status>=400 or not text.strip():
+                          return {'ok':False,'url':url,'status':status,'reason':'HTTP '+str(status)+'; no readable page', 'title':title}
+                      if ('404' in title.lower() or 'not found' in title.lower() or 'whoops there is no' in text[:800].lower()):
+                          return {'ok':False,'url':url,'status':status,'reason':'Error/fallback page, title='+title[:55]}
+                      if urllib.parse.urlsplit(url).hostname!=urllib.parse.urlsplit(final).hostname:
+                          return {'ok':False,'url':url,'status':status,'reason':'Redirect to other host '+final[:90]}
+                      if url.split("?")[0].count('/')>3 and urllib.parse.urlsplit(final).path in ('','/'):
+                          return {'ok':False,'url':url,'status':status,'reason':'Redirected to protocol homepage'}
+                      if not identity:
+                          return {'ok':False,'url':url,'status':status,'reason':'Opportunity identity not established on destination; title='+title[:70]}
+                      if not samples:
+                          return {'ok':False,'url':url,'status':status,'reason':'No readable TVL or APR/APY with a value; title='+title[:60]}
+                      tvl,tvle=extract_metric(samples,'tvl')
+                      rate,ratee=extract_metric(samples,'rate')
+                      util,utile=extract_metric(samples,'util')
+                      if tvl is None and rate is None:
+                          return {'ok':False,'url':url,'status':status,'reason':'No extractable TVL/APY for exact opportunity'}
+                      return {'ok':True,'url':final,'status':status,'title':title[:95], 'tvl':tvl,
+                         'rate':rate,'util':util,'evidence':' | '.join(samples[:4])[:390],
+                         'source':'official destination rendered; exact opportunity identity + financial metric'}
+                  except Exception as ex:
+                      return {'ok':False,'url':url,'reason':type(ex).__name__+': '+str(ex)[:65]}
+                  finally:
+                      await page.close()
+          def search_public(query,engine):
+              base={'bing':'https://www.bing.com/search?q=','google':'https://www.google.com/search?q='}[engine]
+              addr=base+urllib.parse.quote_plus(query)
+              try:
+                  req=urllib.request.Request(addr,headers={'User-Agent':'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/129.0 Safari/537.36','Accept':'text/html'})
+                  with urllib.request.urlopen(req,timeout=7) as resp:
+                      html=resp.read(450_000).decode('utf-8','replace')
+                      http=resp.status
+                  # Only report search success when target domain is actually present.
+                  text=re.sub(r'<[^>]+>',' ',html).lower()
+                  return f'{engine}:HTTP{http},bytes={len(html)}'+(',domain-found' if any(d in html for d in ('app.morpho.org','app.aave.com','app.ipor.io','app.maple.finance','yearn.fi','fluid.io','app.euler.finance','curve.convexfinance.com','app.stakedao.org','app.beefy.com')) else ',no-official-domain-visible')
+              except Exception as e:
+                  return f'{engine}:{type(e).__name__}'
+          async def find_search(a,b,checks):
+              # Every unresolved listing receives protocol- and identifier-specific independent searches.
+              proto=a[3]; label=a[4]; contract=a[8] or a[9]; domain=owner_domain(proto)
+              qs=[f'site:{domain} "{contract}"' if contract else f'site:{domain} "{label}"',
+                  f'"{label}" "{proto}" TVL APY']
+              results=[]
+              for q in qs:
+                  for engine in ('bing','google'):
+                      results.append(q[:76]+' -> '+await asyncio.to_thread(search_public,q,engine))
+              return results
+          async def inspect_all():
+              from collections import Counter
+              results={}
+              sem=asyncio.Semaphore(12)
+              async with async_playwright() as pw:
+                  browser=await pw.chromium.launch(channel="chrome",headless=True,args=["--no-sandbox"])
+                  ctx=await browser.new_context(locale='en-US')
+                  async def inspect(a,b):
+                      n=a[0]
+                      if n in already: return n,{'ok':True,'url':b[15],'status':'PREVIOUSLY VERIFIED','tvl':b[10],'rate':b[11],'util':b[13],'evidence':b[14][:180],'search':[],'attempts':0}
+                      candidates=variants(a,b)
+                      # Each unique candidate page is visited, never assumed to resolve from URL patterns alone.
+                      attempts=[]
+                      accepted=None
+                      for url in candidates:
+                          r=await check_url(ctx,sem,a,url)
+                          attempts.append(r)
+                          if r.get('ok'):
+                              if a[3]=="Maple Syrup" and urllib.parse.urlsplit(r['url']).hostname=="maple.finance":
+                                  # Transparency analytics is not the interactive Maple lending app.
+                                  r['ok']=False;r['reason']='Analytics-only transparency page, not interactive dedicated dapp'
+                              else:
+                                  accepted=r
+                                  break
+                      searches=[]
+                      if not accepted:
+                          searches=await find_search(a,b,attempts)
+                      return n,{'ok':bool(accepted),'result':accepted,
+                          'attempts':attempts,'search':searches}
+                  pending=[inspect(a,b) for a,b in groups]
+                  done=0
+                  for task in asyncio.as_completed(pending):
+                      n,data=await task;results[n]=data;done+=1
+                      if done%50==0:print("Inspected",done,"/",len(groups),"confirmed",sum(1 for x in results.values() if x['ok']),flush=True)
+                  await ctx.close();await browser.close()
+              return results
+          findings=asyncio.run(inspect_all())
+          if len(findings)!=len(groups):raise RuntimeError('Missing verification results')
+          out_hdr=hdr+['Dapp URL verification','Exact-route search evidence']
+          saved=0;cleared=0;newly=0
+          with new.open('w',newline='',encoding='utf-8-sig') as fp:
+              writer=csv.writer(fp);writer.writerow(out_hdr)
+              for a,b in groups:
+                  result=findings[a[0]]
+                  official=a[3] in ("Maple Syrup",)
+                  before_url=b[15]
+                  attempts=result.get('attempts',[])
+                  # Verified v2 rows were independently crawled with exact identity and metrics.
+                  if a[0] in already:
+                      verified=True;url=before_url
+                      proof='v2 rendered dapp: opportunity identity and quoted financial figures observed; '+b[14][:145]
+                  elif result['ok']:
+                      verified=True;entry=result['result'];url=entry['url']
+                      proof='v3 rendered exact dapp: '+entry.get('title','')+'; '+entry.get('evidence','')[:260]
+                      for col,key in ((10,'tvl'),(11,'rate'),(13,'util')):
+                          value=entry.get(key)
+                          if value is not None:
+                              b[col]=value
+                      b[14]=(b[14]+'; '+proof)[:480]
+                      b[16]='EXACT DAPP ANALYTICS VERIFIED'
+                      newly+=1
+                  else:
+                      verified=False;url='';cleared+=1
+                      notes=[u['url']+' => '+u['reason'] for u in attempts]
+                      search=result.get('search',[])
+                      proof=('CHECKED candidate routes: '+(' || '.join(notes) if notes else 'none supplied')
+                         +' || Protocol-specific independent exact-ID/name searches: '+' || '.join(search)
+                         +' || NO VERIFIED DEDICATED DAPP WITH OPPORTUNITY-LEVEL ANALYTICS FOUND. '
+                         +'Could be delisted, unpublished, unavailable to automated access, or nonexistent; none of these possibilities was established conclusively.')
+                      b[10]='NOT VERIFIED';b[11]='NOT VERIFIED';b[13]='NOT VERIFIED' if a[2]=='Lending market' else 'N/A'
+                      b[16]='NO VERIFIED ANALYTICS DAPP — LINK WITHHELD'
+                      b[17]=('Original proposed URL withheld; '+'; '.join(notes))[:290]
+                      b[14]=(b[14]+'; '+proof[:240])[:480]
+                  b[15]=url
+                  if not verified and b[15]:raise RuntimeError('Unverified URL leaked into output')
+                  if verified:saved+=1
+                  # Preserve catalog values in discovery row; do not add an API URL to the dapp link field.
+                  catalog_source=a[15]
+                  a[15]=''
+                  a[14]=(a[14]+'; source API='+catalog_source)[:480]
+                  a[16]='CURVEYIELD CATALOG DATA — NOT DAPP VERIFIED'
+                  a[17]='Official dapp link (only if analytics-verified) on following row'
+                  for rec in (a,b):
+                      writer.writerow(rec+[('OFFICIAL DAPP VERIFIED' if verified else 'NOT VERIFIED') if rec[1]=='OFFICIAL DAPP' else 'Catalog source only',proof[:2200] if rec[1]=='OFFICIAL DAPP' else 'Catalog source recorded in non-link detail field'])
+                  writer.writerow([])
+          if saved+cleared!=702:raise RuntimeError('Verification count inconsistent')
+          if saved<400:raise RuntimeError('Unexpected loss of prior verified results')
+          old.unlink()
+          print("V3 BUILT",json.dumps({'entries':702,'retained_verified_links':saved,'new_verifications':newly,'urls_withheld_as_unverified':cleared}),flush=True)
+          print("OUTPUT",new, new.stat().st_size,flush=True)
+          PY
+      - name: Publish corrected v3 and retire one-time workflow
+        shell: bash
+        run: |
+          rm .github/workflows/curveyield-usdc-opportunities.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "Curveyield Markets" ".github/workflows/curveyield-usdc-opportunities.yml"
+          git commit -m "Replace USDC v2 with exact-dapp-link-audited v3"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git rebase origin/main
+            if git push origin HEAD:main; then
+              echo "V3 accepted on main"
+              exit 0
+            fi
+            sleep 3
+          done
+          exit 1
