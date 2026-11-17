@@ -1,0 +1,89 @@
+name: CurveYield WBTC source inventory (one-time)
+on:
+  push:
+    paths:
+      - 'CurveYield Markets/WBTC_discovery_request_v1.json'
+permissions:
+  contents: write
+concurrency:
+  group: markets-wbtc-source-inventory
+  cancel-in-progress: false
+jobs:
+  gather:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read complete WBTC-filtered Markets API catalog
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, urllib.parse, urllib.request
+          from pathlib import Path
+          from datetime import datetime,timezone
+          W='0x2260fac5e5542a773aa44fbcfedf7c193bc2c599'
+          BASE='https://markets.curveyield.org/api/opportunities'
+          def fetch(conversion):
+            rows=[];offset=0;first=None
+            while True:
+              q=urllib.parse.urlencode(dict(asset=W,conversion=str(conversion),sort='tvl',limit=500,offset=offset))
+              req=urllib.request.Request(BASE+'?'+q,headers={'User-Agent':'CurveYield-WBTC-research/1.0','Accept':'application/json'})
+              with urllib.request.urlopen(req,timeout=120) as r: doc=json.load(r)
+              if first is None:first=doc
+              batch=doc.get('opportunities',[])
+              if not isinstance(batch,list) or (doc.get('hasMore') and not batch):raise RuntimeError('invalid pagination')
+              rows+=batch;offset+=len(batch)
+              if not doc.get('hasMore'):break
+              if offset>5000:raise RuntimeError('unexpected pagination')
+            if len(rows)!=doc.get('total'):raise RuntimeError('incomplete filtered inventory')
+            return rows,first
+          def money(v):
+            try:return '$'+format(float(v),',.0f')
+            except:return 'unavailable'
+          def rate(v,k):
+            try:return format(float(v),'.2f')+'% '+str(k or 'rate not typed')
+            except:return 'unavailable'
+          def cat(p,n):
+            if p.startswith('Morpho Vault') or p in ('IPOR Fusion','Fluid Smart Lending'):return 'Lending-optimizing vault'
+            if p in ('Aave V3','Aave V4','SparkLend','Morpho Blue','Compound II','Compound III','Fraxlend','Euler EVK','CurveLend V1','CurveLend V2','Fluid Lending','Fluid Vaults'):return 'Lending market'
+            if p in ('Yearn V2','Yearn V3','Yearn Vaults','Beefy Vaults','Convex Finance','Stake DAO','Stake DAO Lockers','Maple Syrup','Maple Finance'):return 'Yield-bearing vault / pooled strategy'
+            return 'Unclassified'
+          direct,doc=fetch(0)
+          all_,_=fetch(1)
+          if any(x.get('asset','').lower()!=W for x in direct):raise RuntimeError('unexpected non-WBTC direct entry')
+          key=lambda x:(x.get('protocol'),x.get('address'),x.get('marketName'),x.get('asset'))
+          keys={key(x) for x in direct}
+          indirect=[x for x in all_ if key(x) not in keys]
+          records=[(x,'direct WBTC') for x in direct]+[(x,'WBTC LP/basket conversion') for x in indirect]
+          out=['# Verified WBTC Opportunities list — Ethereum — v1','',
+          '> **Verification state:** All filtered discovery records indexed; dedicated dapp TVL, APR/APY, and utilization are marked **UNVERIFIED** until independently checked. A generated market-specific link is not proof that reported values match.','',
+          '**Retrieved (UTC):** '+datetime.now(timezone.utc).isoformat(timespec='seconds')+' · **Catalog updated:** '+str(doc.get('updatedAt'))+' · **Token:** WBTC '+W,
+          '**Entries:** '+str(len(direct))+' direct WBTC; '+str(len(indirect))+' conversion/basket candidates; '+str(len(records))+' total. **Catalog partial:** '+str(doc.get('partial'))+'. Every filtered API page retrieved.','',
+          'Source: https://markets.curveyield.org/opportunities · API: '+BASE+'?asset='+W+'&conversion=0','',
+          'Compound III WBTC collateral in USDC/USDT base-asset markets **does not earn interest** (per Compound documentation). WBTC conversion/basket candidates are not direct WBTC deposits.','']
+          for i,(x,mode) in enumerate(records,1):
+            p=str(x.get('protocol') or 'Unknown');name=str(x.get('marketName') or 'Unnamed').replace('|','/').replace('\n',' ')
+            asset=str(x.get('asset') or 'unknown');link=str(x.get('dappUrl') or '')
+            label='['+name+']('+link+')' if link.startswith('https://') else name+' (exact dapp unresolved)'
+            category=cat(p,name)
+            note=''
+            if p=='Compound III' and asset.lower()==W:
+              category='Collateral-only lending-market listing (not WBTC interest-bearing)'
+              note=' **DISCREPANCY: WBTC collateral earns no interest in Compound III.**'
+            out.append('**'+str(i)+'. '+p+' — '+label+'** · **Category:** '+category+' · **Path:** '+mode+' · **Asset:** '+str(x.get('assetSymbol') or '?')+' '+asset+' · **Contract:** '+str(x.get('address') or 'index only')+' · **Worker TVL:** '+money(x.get('tvlUsdEstimate'))+' · **Worker rate:** '+rate(x.get('lendApr'),x.get('rateType'))+'.'+note)
+            out.append('   **Dapp:** '+(link or 'unresolved')+' ('+str(x.get('dappLinkType') or 'no link')+') · **Dapp TVL/APR/APY:** not verified · **Utilization:** not verified · **Match:** pending. **Source API:** '+str(x.get('sourceUrl') or 'index only')+' · **Source rate warning:** '+str(x.get('rateWarning') or 'none')+' · **Deposit mode:** '+str(x.get('depositMode') or 'unspecified')+' · **Match kind:** '+str(x.get('matchKind') or 'direct'))
+            out.append('')
+          out+=['## Known catalog source failures','']
+          out += ['- '+str(e.get('source'))+': '+str(e.get('error')) for e in doc.get('sourceFailures',[])]
+          out += ['- '+str(e) for e in doc.get('coverageWarnings',[])]
+          f=Path('CurveYield Markets/Verified WBTC Opportunities list_v1.md')
+          f.parent.mkdir(parents=True,exist_ok=True);f.write_text('\n'.join(out)+'\n',encoding='utf-8')
+          print(json.dumps(dict(direct=len(direct),conversions=len(indirect),total=len(records),updatedAt=doc.get('updatedAt'),bytes=f.stat().st_size)))
+                    PY
+      - name: Commit source-bound inventory
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add 'CurveYield Markets/Verified WBTC Opportunities list_v1.md'
+          git diff --staged --quiet || { git commit -m "Index all Ethereum WBTC opportunities from Markets API"; git push; }
