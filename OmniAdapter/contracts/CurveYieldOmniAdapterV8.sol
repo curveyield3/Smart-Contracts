@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// @custom:version v9 — in-place replacement of the canonical V8 ABI, preserving external selectors.
+// @custom:version v10 — automatic operator-seeded ERC4626 rounding-share reserve; existing selectors preserved.
 /**
  * @title CurveYield System Component
  * @notice CurveYield is a decentralized NGO building optimized DeFi systems for the good of all.
@@ -249,7 +249,7 @@ contract CurveYieldOmniAdapterV8 {
         bytes32 marketId; // Morpho market ID, Aave V4 reserve ID or Dolomite market ID
         uint8 mode;
         uint256 credit;   // Surplus underlying from an exact withdrawal; market-attributed
-        uint256 trackedShares; // Prevent third-party donated shares from distorting vault accounting
+        uint256 trackedShares; // Excludes operator-seeded rounding shares from NAV (and unsolicited share donations)
     }
     mapping(bytes32 key=>MarketRef) public markets;
     struct IsolatedAccount {uint256 isolationMarketId;uint256 accountNumber;uint256 underlyingMarketId;address accountVault;}
@@ -271,6 +271,7 @@ contract CurveYieldOmniAdapterV8 {
 
     event EnteredMarket(bytes32 indexed key,address indexed target,uint8 indexed mode);
     event ExitedMarket(bytes32 indexed key);
+    event RoundingReserveConsumed(bytes32 indexed key,uint256 shares);
 
     constructor(address vault) {
         if(vault.code.length==0)revert InvalidMarket();
@@ -289,6 +290,18 @@ contract CurveYieldOmniAdapterV8 {
     }
     function idData(uint8 mode,address target,bytes32 marketId,address auxiliary) external view returns(bytes memory) {
         return abi.encode("curveyield/omni-v8",address(this),mode,target,marketId,auxiliary);
+    }
+    /// @notice Share-token units transferred directly by the operator (or others),
+    ///         beyond shares acquired through the vault's own allocations.
+    /// @dev Untracked ERC4626 shares never enter NAV. They are used only to
+    ///      cover additional rounding shares on redemption. Transfer shares
+    ///      to this adapter separately after deployment; no privileged funding
+    ///      or share-minting function is needed. This is not a token burn.
+    function roundingReserveShares(address shareVault) external view returns(uint256) {
+        if(shareVault.code.length==0||ICYV8ERC4626(shareVault).asset()!=asset)revert InvalidMarket();
+        uint256 tracked=markets[keyOf(ERC4626,shareVault,bytes32(0),address(0))].trackedShares;
+        uint256 held=ICYV8Token(shareVault).balanceOf(address(this));
+        return held>tracked?held-tracked:0;
     }
     function marketCount() external view returns(uint256){return active.length;}
     function marketAt(uint256 index) external view returns(bytes32 key,MarketRef memory market) {
@@ -462,34 +475,48 @@ contract CurveYieldOmniAdapterV8 {
                 // to lower NAV/share price when a strategy loses value.
                 ICYV8ERC4626 vault=ICYV8ERC4626(m.target);
                 uint256 owned=m.trackedShares;
+                if(beforeShares<owned)revert InsufficientAssets();
+                uint256 reserve=beforeShares-owned; // Direct transfers, excluded from NAV
                 uint256 redeemable=vault.previewRedeem(owned);
                 if(owned==0||redeemable==0)revert InsufficientAssets();
-                uint256 shares=CYV8Math.mulDiv(amount,owned,redeemable);
-                if(CYV8Math.mulDiv(shares,redeemable,owned)<amount)++shares;
-                if(shares>owned)shares=owned;
-                // Fee/rounding implementations may quote slightly less at
-                // partial sizes. Correct the shares BEFORE touching the vault;
-                // do not force the parent to absorb an artificial shortfall.
+                // Proportional principal shares rounded DOWN. Only the extra
+                // share units needed to round a redemption UP use the reserve.
+                uint256 principalShares=CYV8Math.mulDiv(amount,owned,redeemable);
+                if(principalShares>owned)principalShares=owned;
+                uint256 shares=principalShares;
                 uint256 quote=vault.previewRedeem(shares);
-                if(quote<amount&&shares<owned) {
-                    uint256 deficit=amount-quote;
-                    uint256 extra=CYV8Math.mulDiv(deficit,owned,redeemable)+1;
-                    shares=extra>=owned-shares?owned:shares+extra;
-                    // Nonlinear rounding fallback: redeem remaining principal
-                    // to fulfill the withdrawal, retaining the excess as credit.
-                    if(vault.previewRedeem(shares)<amount)shares=owned;
+                if(quote<amount) {
+                    uint256 extra=CYV8Math.mulDiv(amount-quote,owned,redeemable)+1;
+                    uint256 room=beforeShares-shares;
+                    shares+=extra>room?room:extra;
+                    // Some vaults have nonlinear previews; spend no more than
+                    // the physically held shares, including operator seed dust.
+                    if(vault.previewRedeem(shares)<amount)shares=beforeShares;
                 }
+                // No artificial change in principal shares when rounding
+                // consumes donor-funded reserve shares instead.
                 vault.redeem(shares,address(this),address(this));
+                uint256 afterShares=ICYV8Token(m.target).balanceOf(address(this));
+                if(afterShares>=beforeShares)revert InsufficientAssets();
+                uint256 burned=beforeShares-afterShares;
+                uint256 reserveUsed=burned>principalShares?burned-principalShares:0;
+                if(reserveUsed>reserve)reserveUsed=reserve;
+                uint256 principalBurned=burned-reserveUsed;
+                if(principalBurned>owned)revert InsufficientAssets();
+                m.trackedShares=owned-principalBurned;
+                if(reserveUsed!=0)emit RoundingReserveConsumed(
+                    keyOf(ERC4626,m.target,bytes32(0),address(0)),reserveUsed
+                );
             }else{
                 uint256 pps=ICYV8Beefy(m.target).getPricePerFullShare();
                 if(pps==0)revert InsufficientAssets();
                 uint256 shares=CYV8Math.mulDiv(amount,SCALE,pps);
                 if(CYV8Math.mulDiv(shares,pps,SCALE)<amount)++shares;
                 ICYV8Beefy(m.target).withdraw(shares);
+                uint256 afterShares=ICYV8Token(m.target).balanceOf(address(this));
+                if(afterShares>=beforeShares||beforeShares-afterShares>m.trackedShares)revert InsufficientAssets();
+                m.trackedShares-=beforeShares-afterShares;
             }
-            uint256 afterShares=ICYV8Token(m.target).balanceOf(address(this));
-            if(afterShares>=beforeShares||beforeShares-afterShares>m.trackedShares)revert InsufficientAssets();
-            m.trackedShares-=beforeShares-afterShares;
         } else if(m.mode==AAVE_V3)ICYV8AaveV3(m.target).withdraw(asset,amount,address(this));
         else if(m.mode==COMPOUND)ICYV8Comet(m.target).withdraw(asset,amount);
         else if(m.mode==AAVE_V4)ICYV8AaveSpoke(m.target).withdraw(uint256(m.marketId),amount,address(this));
