@@ -1,0 +1,274 @@
+# CurveYield USDC opportunity research v1
+# Necessity: existing repo workflows only compile/verify individual vaults;
+# the catalog's paginated JSON is inaccessible to the chat web reader.
+name: CurveYield Ethereum USDC opportunity research
+on:
+  push:
+    paths:
+      - ".github/workflows/curveyield-usdc-opportunities.yml"
+      - "Curveyield Markets/refresh-usdc.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: curveyield-usdc-opportunities
+  cancel-in-progress: false
+
+jobs:
+  collect-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Install browser client for dapp research
+        run: python -m pip install --quiet playwright
+      - name: Pull complete USDC catalog and inspect exact dapp pages
+        shell: bash
+        run: |
+          python - <<'PY'
+          import asyncio, csv, datetime as dt, glob, json, os, re, time, urllib.parse, urllib.request
+          from pathlib import Path
+          from playwright.async_api import async_playwright
+
+          ROOT=Path('Curveyield Markets')
+          ROOT.mkdir(exist_ok=True)
+          USDC='0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+          BASE='https://markets.curveyield.org/api/opportunities'
+          NOW=dt.datetime.now(dt.timezone.utc).isoformat()
+          HEAD=['#','Record','Category','Protocol','Opportunity','USDC eligibility','Deposit asset',
+                'Deposit asset address','Vault/market contract','Market ID','TVL USD',
+                'Rate percent','Rate basis','Utilization percent','Other useful details',
+                'Source / exact dapp URL','Evidence status','Difference / limitation',
+                'Catalog updated UTC','Research UTC']
+          LENDING={'Aave V2','Aave V3','Aave V4','Morpho Blue','SparkLend','Compound II',
+                   'Compound III','Euler EVK','Fluid Lending','Fluid Vaults',
+                   'CurveLend V1','CurveLend V2','Fraxlend','Maple Finance'}
+          OPTIMIZE={'Morpho Vault V1','Morpho Vault V2','Morpho Optimizer','IPOR Fusion',
+                    'Fluid Smart Lending','Maple Syrup'}
+          def category(p):
+              return ('Lending market' if p in LENDING else
+                      'Lending optimizing vault' if p in OPTIMIZE else 'Yield-bearing vault')
+          def request_json(url):
+              last=None
+              for k in range(5):
+                  try:
+                      req=urllib.request.Request(url,headers={
+                          'Accept':'application/json','User-Agent':'CurveYield-USDC-Index-Research/1.0'})
+                      with urllib.request.urlopen(req,timeout=120) as r:
+                          body=r.read()
+                      return json.loads(body)
+                  except Exception as ex:
+                      last=ex
+                      time.sleep(2*(k+1))
+              raise RuntimeError(f'Cannot obtain catalog page {url}: {last}')
+          allrows=[]; offset=0; total=None; captured_at=None; seen=set()
+          while total is None or offset<total:
+              q=urllib.parse.urlencode({'asset':USDC,'sort':'tvl','limit':500,'offset':offset})
+              data=request_json(BASE+'?'+q)
+              if data.get('chainId')!=1 or not isinstance(data.get('opportunities'),list):
+                  raise RuntimeError('Unexpected discovery schema or non-Ethereum chain')
+              if total is None:
+                  total=int(data['total']); captured_at=data.get('updatedAt')
+                  print('Source USDC total:',total,'snapshot:',captured_at,flush=True)
+              if int(data.get('total',-1))!=total or data.get('updatedAt')!=captured_at:
+                  raise RuntimeError('Catalog changed mid-pagination; cannot mix inconsistent snapshots')
+              got=data['opportunities']
+              if not got: raise RuntimeError('Pagination returned no records before total')
+              for x in got:
+                  key=x.get('id')
+                  if not key or key in seen: raise RuntimeError('Duplicate or absent market identifier')
+                  seen.add(key);allrows.append(x)
+              offset+=len(got)
+              print('Downloaded',offset,'/',total,flush=True)
+          if len(allrows)!=total: raise RuntimeError('Filtered catalog row count mismatch')
+          assert all(x.get('matchKind') in ('direct-token','lp-single-coin-conversion-candidate',
+                    'lp-nested-underlying-candidate','index-only-underlying-basket') for x in allrows)
+          output=ROOT/'research-workfile.json'
+          # Workfile exists only on runner; never commit source snapshots or auxiliary data.
+          output.write_text(json.dumps({'captured_at':captured_at,'items':allrows}),encoding='utf8')
+          def numeric(s):
+              s=str(s).replace(',','').replace(' ','').replace('$','').strip()
+              m=re.match(r'^([0-9]+(?:\.[0-9]+)?)([KMBT]?)$',s,re.I)
+              if not m: return None
+              return float(m.group(1))*{'':1,'K':1e3,'M':1e6,'B':1e9,'T':1e12}[m.group(2).upper()]
+          def formatted(x):
+              if x is None: return ''
+              return ('%.5f'%float(x)).rstrip('0').rstrip('.')
+          def extract(text):
+              lines=[re.sub(r'\s+',' ',t).strip() for t in text.splitlines()]
+              lines=[s for s in lines if s][:900]
+              def lookup(labels,kind):
+                  for lab in labels:
+                      rex=re.compile(r'(?<![a-z])'+lab+r'(?![a-z])',re.I)
+                      for i,ln in enumerate(lines):
+                          if not rex.search(ln):continue
+                          if kind=='rate' and re.search(r'\b(?:borrow|variable debt)\b',ln,re.I) and not re.search(r'supply',ln,re.I):continue
+                          near=' '.join(lines[i:i+3])[:125]
+                          after=rex.split(near,maxsplit=1)[-1]
+                          pattern=r'(?<!\d)(-?\d+(?:\.\d+)?)\s*%' if kind in ('rate','util') else r'\$?\s*(\d[\d,]*(?:\.\d+)?)\s*([KMBT]?)\b'
+                          m=re.search(pattern,after,re.I)
+                          if m:
+                              if kind=='tvl':
+                                  # TVL must display a dollar prefix to disambiguate token quantities.
+                                  dollar=re.search(r'\$\s*\d',after)
+                                  if not dollar:continue
+                                  n=numeric(m.group(1)+m.group(2))
+                              else:n=float(m.group(1))
+                              if n is not None and n>=0 and (kind=='tvl' or n<=1000):
+                                  return (n,lab,near[:90])
+                  return None
+              tvl=lookup([r'Total\s+Supplied',r'Total\s+Deposits',r'Total\s+Assets',
+                          r'Total\s+Value\s+Locked',r'Market\s+Size',r'Vault\s+TVL',r'TVL'], 'tvl')
+              rate=lookup([r'Net\s+Supply\s+APY',r'Supply\s+APY',r'Deposit\s+APY',
+                           r'Net\s+APY',r'APY',r'Supply\s+APR',r'Deposit\s+APR',r'APR'], 'rate')
+              util=lookup([r'Utilization\s+Rate',r'Utilisation\s+Rate',r'Utilization',r'Utilisation'], 'util')
+              extras=[]
+              for labels,name,kind in [([r'Borrow\s+APY',r'Borrow\s+APR'],'Borrow yield','rate'),
+                                       ([r'Liquidation\s+LTV',r'LLTV',r'Max\s+LTV'],'LLTV','rate'),
+                                       ([r'Available\s+Liquidity'],'Liquidity','tvl'),
+                                       ([r'Withdrawal\s+Fee',r'Performance\s+Fee'],'Fee','rate')]:
+                  hit=lookup(labels,kind)
+                  if hit:extras.append(name+'='+formatted(hit[0])+('%' if kind=='rate' else ' USD'))
+              return tvl,rate,util,'; '.join(extras)[:230]
+          async def inspect(x,ctx,sem):
+              url=x.get('dappUrl')
+              if not url or x.get('dappLinkType') not in ('detail','legacy-detail'):
+                  return {'status':'NO EXACT DAPP','note':'Catalog link unresolved; cannot compare dapp figures'}
+              async with sem:
+                  page=await ctx.new_page()
+                  try:
+                      await page.route('**/*',lambda route: route.abort() if route.request.resource_type in
+                         ('image','font','media') else route.continue_())
+                      response=await page.goto(url,wait_until='domcontentloaded',timeout=18000)
+                      await page.wait_for_timeout(1750)
+                      final=page.url
+                      text=await page.locator('body').inner_text(timeout=5000)
+                      code=response.status if response else 0
+                      if not text.strip() or code>=400:
+                          return {'status':'DAPP NOT READABLE','note':f'HTTP {code}; no readable opportunity metrics'}
+                      requested=urllib.parse.urlparse(url);actual=urllib.parse.urlparse(final)
+                      redirect=(requested.hostname!=actual.hostname or
+                           (actual.path in ('','/') and requested.path not in ('','/')))
+                      tvl,rate,util,extras=extract(text)
+                      label=(x.get('marketName') or '').lower().strip()
+                      sym=(x.get('assetSymbol') or '').lower().strip()
+                      identity=(bool(label and len(label)>4 and label in text.lower())
+                                or bool(sym and sym in text.lower()))
+                      s='REDIRECTED' if redirect else ('DAPP NUMBERS SEEN' if tvl or rate or util else 'DAPP METRICS NOT DISPLAYED')
+                      if not identity and s=='DAPP NUMBERS SEEN':s='DAPP IDENTITY AMBIGUOUS'
+                      return {'status':s,'note':f'HTTP {code}; final={final}' if redirect else f'HTTP {code}; body identity '+('seen' if identity else 'not established'),
+                              'tvl':tvl[0] if tvl else None,'rate':rate[0] if rate else None,
+                              'rateLabel':rate[1] if rate else None,'util':util[0] if util else None,
+                              'other':extras,'evidence':'; '.join(v[2] for v in [tvl,rate,util] if v)[:200]}
+                  except Exception as ex:
+                      return {'status':'DAPP UNREADABLE','note':(str(ex) or type(ex).__name__)[:180]}
+                  finally:await page.close()
+          async def research():
+              async with async_playwright() as pw:
+                  browser=await pw.chromium.launch(channel='chrome',headless=True,args=['--no-sandbox'])
+                  ctx=await browser.new_context(locale='en-US',timezone_id='UTC',
+                        user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131.0 Safari/537.36')
+                  sem=asyncio.Semaphore(10)
+                  tasks=[inspect(x,ctx,sem) for x in allrows]
+                  results=[]
+                  for i,t in enumerate(asyncio.as_completed(tasks),1):
+                      results.append(await t)
+                      if i%50==0:print('Dapp pages reviewed:',i,'/',len(tasks),flush=True)
+                  # as_completed loses source index; pass indexed tasks instead for stable numbering.
+                  await ctx.close();await browser.close()
+                  return results
+          async def indexed():
+              async with async_playwright() as pw:
+                  browser=await pw.chromium.launch(channel='chrome',headless=True,args=['--no-sandbox'])
+                  ctx=await browser.new_context(locale='en-US',timezone_id='UTC')
+                  sem=asyncio.Semaphore(10)
+                  async def one(i,x):
+                      return i,await inspect(x,ctx,sem)
+                  tasks=[one(i,x) for i,x in enumerate(allrows)]
+                  result=[None]*len(allrows)
+                  done=0
+                  for task in asyncio.as_completed(tasks):
+                      i,value=await task
+                      result[i]=value;done+=1
+                      if done%50==0:print('Dapp pages reviewed:',done,'/',total,flush=True)
+                  await ctx.close();await browser.close()
+                  return result
+          try:
+              inspected=asyncio.run(indexed())
+          except Exception as ex:
+              print('Browser launch/crawl failed:',str(ex),flush=True)
+              inspected=[{'status':'DAPP CRAWL UNAVAILABLE','note':str(ex)[:130]} for _ in allrows]
+          old=sorted(glob.glob(str(ROOT/'Verified USDC Opportunities v*.csv')))
+          versions=[int(m.group(1)) for file in old if (m:=re.search(r' v(\d+)\.csv$',file))]
+          version=max(versions,default=0)+1
+          target=ROOT/f'Verified USDC Opportunities v{version}.csv'
+          with target.open('w',newline='',encoding='utf-8-sig') as fp:
+              writer=csv.writer(fp)
+              writer.writerow(HEAD)
+              for i,(x,observed) in enumerate(zip(allrows,inspected),1):
+                  proto=x.get('protocol','')
+                  cat=category(proto)
+                  asset=x.get('assetSymbol','')
+                  relation=x.get('matchKind','')
+                  original=x.get('lendApr')
+                  rate_basis=x.get('rateType','')
+                  src=x.get('dappUrl') or ''
+                  note=('deposit mode='+str(x.get('depositMode',''))+'; source='+str(x.get('rateSource',''))
+                        +'; index-only='+str(x.get('indexOnly',False))
+                        +('; '+str(x.get('rateWarning')) if x.get('rateWarning') else ''))
+                  if x.get('conversionRoute'):
+                      note+='; conversion needs quote; no direct USDC deposit verified'
+                  writer.writerow([i,'MARKETS DISCOVERY',cat,proto,x.get('marketName',''),
+                       relation,asset,x.get('asset',''),x.get('address',''),x.get('marketId',''),
+                       x.get('tvlUsdEstimate'),original,rate_basis,'',note[:330],
+                       x.get('sourceUrl',''),'CATALOG LISTED',
+                       'Dapp comparison in next line',captured_at,NOW])
+                  d_tvl=observed.get('tvl')
+                  d_rate=observed.get('rate')
+                  d_util=observed.get('util')
+                  d_basis='APR' if 'APR' in str(observed.get('rateLabel','')).upper() else 'APY' if d_rate is not None else ''
+                  diffs=[]
+                  if observed.get('status') in ('REDIRECTED','DAPP IDENTITY AMBIGUOUS'):
+                      diffs.append(observed.get('status'))
+                  if d_tvl is None:diffs.append('Dapp TVL not independently readable')
+                  elif x.get('tvlUsdEstimate') is not None:
+                      base=float(x['tvlUsdEstimate'])
+                      if base>0 and abs(d_tvl-base)/base>0.05:
+                          diffs.append(f'TVL differs {100*(d_tvl-base)/base:+.1f}%')
+                      else:diffs.append('TVL similar (within 5%)')
+                  if d_rate is None:diffs.append('Dapp rate not independently readable')
+                  elif d_basis!=rate_basis:diffs.append('APR/APY basis differs; not directly comparable')
+                  elif original is None:diffs.append('Catalog rate unavailable')
+                  elif abs(float(original)-d_rate)>0.5:
+                      diffs.append(f'Yield differs {d_rate-float(original):+.2f} percentage points')
+                  else:diffs.append('Yield similar (within 0.50 pp)')
+                  if cat=='Lending market' and d_util is None:
+                      diffs.append('Utilization not independently readable')
+                  other=(observed.get('other','')+'; '+observed.get('evidence','')+'; '+observed.get('note','')).strip(' ;')
+                  writer.writerow([i,'OFFICIAL DAPP',cat,proto,x.get('marketName',''),
+                     relation,asset,x.get('asset',''),x.get('address',''),x.get('marketId',''),
+                     d_tvl if d_tvl is not None else 'NOT DISCLOSED/UNREADABLE',
+                     d_rate if d_rate is not None else 'NOT DISCLOSED/UNREADABLE',d_basis,
+                     d_util if d_util is not None else ('NOT DISCLOSED/UNREADABLE' if cat=='Lending market' else 'N/A'),
+                     other[:480],src,observed.get('status','UNVERIFIED'),'; '.join(diffs),
+                     captured_at,NOW])
+                  writer.writerow([])
+          for file in old:Path(file).unlink()
+          output.unlink(missing_ok=True)
+          print('WROTE',target,'opportunities',len(allrows),'version',version,flush=True)
+          print('STATUS BREAKDOWN',json.dumps({k:sum(z.get('status')==k for z in inspected) for k in sorted({z.get('status') for z in inspected})}),flush=True)
+          PY
+      - name: Commit the single current verified-USDC list
+        if: success()
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- "Curveyield Markets"
+          git diff --cached --quiet && exit 0
+          git commit -m "Index and independently inspect Ethereum USDC opportunities"
+          git push
