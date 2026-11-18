@@ -365,7 +365,7 @@ contract CyWBTCSafetyForkV1 {
 
     /// @dev Only the existing required redemption route is installed. No swap benchmarking.
     function _configureScheduledRedeemSwap() private {
-        bytes32[] memory x = new bytes32[](7);
+        bytes32[] memory x = new bytes32[](8);
         x[0] = bytes32((uint256(1) << 248) | uint256(uint160(FXUSD)));
         x[1] = bytes32((uint256(1) << 248) | uint256(uint160(USDC)));
         x[2] = bytes32((uint256(1) << 248) | uint256(uint160(FXN)));
@@ -373,6 +373,7 @@ contract CyWBTCSafetyForkV1 {
         x[4] = bytes32((uint256(2) << 248) | uint256(uint160(USDC)));
         x[5] = bytes32((uint256(2) << 248) | uint256(uint160(OMNI)));
         x[6] = bytes32((uint256(2) << 248) | uint256(uint160(WBTC)));
+        x[7] = bytes32((uint256(2) << 248) | uint256(uint160(FXUSD)));
         _tx("substrates_existing_universal_swapper", OWNER, VAULT,
             abi.encodeWithSignature("grantMarketSubstrates(uint256,bytes32[])", 12, x), true);
         ICurveYieldRouterFork.Hop[] memory route = new ICurveYieldRouterFork.Hop[](1);
@@ -414,6 +415,31 @@ contract CyWBTCSafetyForkV1 {
         _tx("configure_existing_wbtc_usdc_fxusd_repayment_route", OWNER, OMNI,
             abi.encodeCall(ICurveYieldRouterFork.setRoute, (WBTC, FXUSD, collateralRecovery)), true);
         require(ICurveYieldRouterFork(OMNI).routeLength(WBTC, FXUSD) == 2, "Recovery route not installed on fork");
+
+        // Entire vault exit must settle *all* remaining idle fxUSD into WBTC
+        // after the atomic fxMINT debt+collateral close. The same approved
+        // direct two-hop route is used; never introduce an extra WETH hop.
+        ICurveYieldRouterFork.Hop[] memory fullExit = new ICurveYieldRouterFork.Hop[](2);
+        fullExit[0] = ICurveYieldRouterFork.Hop({
+            poolType: 7, tokenOut: USDC, swapContract: CURVE_USDC_FXUSD,
+            poolId: bytes32(0), poolData: abi.encode(uint8(1), uint8(0)),
+            oracle: ICurveYieldRouterFork.Oracle({
+                oracleAddress: CURVE_USDC_FXUSD,
+                readFunctionID: bytes4(keccak256("price_oracle(uint256)")),
+                requiredInputs: abi.encode(uint256(0)), invert: false, rateDecimals: 18
+            })
+        });
+        fullExit[1] = ICurveYieldRouterFork.Hop({
+            poolType: 2, tokenOut: WBTC, swapContract: UNIV3_USDC_WBTC,
+            poolId: bytes32(0), poolData: new bytes(0),
+            oracle: ICurveYieldRouterFork.Oracle({
+                oracleAddress: address(0), readFunctionID: bytes4(0),
+                requiredInputs: new bytes(0), invert: false, rateDecimals: 0
+            })
+        });
+        _tx("configure_existing_fxusd_usdc_wbtc_final_settlement_route", OWNER, OMNI,
+            abi.encodeCall(ICurveYieldRouterFork.setRoute, (FXUSD, WBTC, fullExit)), true);
+        require(ICurveYieldRouterFork(OMNI).routeLength(FXUSD, WBTC) == 2, "Final settlement route not installed");
     }
 
     function _pendingUnlock() private view returns (uint256 unlockAt) {
