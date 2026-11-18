@@ -89,6 +89,7 @@ contract CyWBTCSafetyForkV1 {
     address private constant PUBLIC_CALLER = address(0xB002);
     address private constant UNAUTHORIZED = address(0xB003);
     uint256 private constant TARGET = 6e17;
+    uint256 private simulatedPriceShiftBeforeFinalizeBps;
 
     FXMintBalanceFuse private balanceFuse;
     FXMintBorrowFuse private borrowFuse;
@@ -479,6 +480,9 @@ contract CyWBTCSafetyForkV1 {
         _snapshot("user_scheduled_cooldown_pending");
         vm.warp(unlockAt + 2);
         vm.roll(block.number + 20);
+        if (simulatedPriceShiftBeforeFinalizeBps != 0) {
+            _shockWBTC(simulatedPriceShiftBeforeFinalizeBps);
+        }
         _snapshot("user_scheduled_after_cooldown");
         // f(x) PoolConfiguration uses a transaction-long transient lock:
         // each finalize invocation can use at most ONE fxMINT operate.
@@ -882,4 +886,33 @@ contract CyWBTCSafetyForkV1 {
         _snapshot("fee_configuration_after_role_checks");
     }
 
+    /// @notice Stress mainnet-priced f(x) and IPOR collateral reads together
+    /// between the user's initial request and the matured exit.
+    function test_10_full_exit_succeeds_after_20pct_wbtc_crash_during_cooldown() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        simulatedPriceShiftBeforeFinalizeBps = 8_000;
+        _fullScheduledExit();
+        require(IERC20(VAULT).totalSupply() == 0, "Crash-exit left vault shares");
+        require(_state().rawDebt == 0, "Crash-exit left fxMINT debt");
+        _snapshot("full_exit_after_mature_cooldown_20pct_crash");
+    }
+
+    function test_11_full_exit_succeeds_after_40pct_wbtc_rally_during_cooldown() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        simulatedPriceShiftBeforeFinalizeBps = 14_000;
+        _fullScheduledExit();
+        require(IERC20(VAULT).totalSupply() == 0, "Rally-exit left vault shares");
+        require(_state().rawDebt == 0, "Rally-exit left fxMINT debt");
+        _snapshot("full_exit_after_mature_cooldown_40pct_rally");
+    }
 }
