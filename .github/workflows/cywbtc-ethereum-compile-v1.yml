@@ -1,0 +1,126 @@
+name: cyWBTC Ethereum source compile v1
+
+on:
+  push:
+    branches: [cywbtc-ethereum-implementation-v1]
+    paths:
+      - "cywbtc-ethereum-v1/**"
+      - ".github/workflows/cywbtc-ethereum-compile-v1.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cywbtc-ethereum-compile-v1
+  cancel-in-progress: false
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    steps:
+      - name: Checkout isolated source branch
+        uses: actions/checkout@v4
+        with:
+          ref: cywbtc-ethereum-implementation-v1
+          path: current
+
+      - name: Retrieve pinned historical compiler-repair reference
+        uses: actions/checkout@v4
+        with:
+          ref: 65d1023b9576a49e6de32d0b9f245d06e9c55a3b
+          path: historical
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Materialize only the selected historical ABI/library imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT="$RUNNER_TEMP/cywbtc-eth-build"
+          mkdir -p "$PROJECT"
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          import shutil
+          workspace=Path.cwd()
+          archive=workspace/"historical/cywbtc-ipor-source-v19/cyWBTC_IPOR_Source_v19_V7_Compiler_Repair.zip"
+          root=Path(__import__('os').environ['RUNNER_TEMP'])/'cywbtc-eth-build'
+          selected=[
+              'contracts/fuses/IFuseCommon.sol',
+              'contracts/fuses/IFuseInstantWithdraw.sol',
+              'contracts/fuses/IMarketBalanceFuse.sol',
+              'contracts/fuses/erc20/Erc20BalanceFuse.sol',
+              'contracts/interfaces/IPlasmaVault.sol',
+              'contracts/libraries/FuseStorageLib.sol',
+              'contracts/libraries/FusesLib.sol',
+              'contracts/libraries/PlasmaVaultConfigLib.sol',
+              'contracts/libraries/PlasmaVaultLib.sol',
+              'contracts/libraries/PlasmaVaultStorageLib.sol',
+              'contracts/libraries/errors/Errors.sol',
+              'contracts/libraries/math/IporMath.sol',
+              'contracts/price_oracle/IPriceOracleMiddleware.sol'
+          ]
+          with ZipFile(archive) as z:
+              names=set(z.namelist())
+              selected.extend(sorted(n for n in names if n.startswith('lib/openzeppelin-contracts/') and n.endswith('.sol')))
+              for p in selected:
+                  if p not in names: raise SystemExit(f'missing pinned historical import: {p}')
+                  out=root/p
+                  out.parent.mkdir(parents=True,exist_ok=True)
+                  out.write_bytes(z.read(p))
+          current=workspace/'current/cywbtc-ethereum-v1/contracts'
+          for p in sorted(current.rglob('*.sol')):
+              out=root/'contracts'/p.relative_to(current)
+              out.parent.mkdir(parents=True,exist_ok=True)
+              shutil.copyfile(p,out)
+          print('historical imports:',len(selected))
+          print('target Solidity sources:',len(list(current.rglob('*.sol'))))
+          PY
+          cat > "$PROJECT/foundry.toml" <<'TOML'
+          [profile.default]
+          src = "contracts"
+          out = "out"
+          libs = ["lib"]
+          solc_version = "0.8.30"
+          auto_detect_solc = false
+          optimizer = true
+          optimizer_runs = 200
+          via_ir = true
+          evm_version = "cancun"
+          ffi = false
+          remappings = ["@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/"]
+          TOML
+
+      - name: Compile selected production sources only — NO tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cywbtc-eth-build"
+          forge build --sizes 2>&1 | tee "$RUNNER_TEMP/cywbtc-ethereum-compile-v1.log"
+
+      - name: Publish compilation result
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## cyWBTC Ethereum implementation v1'
+            echo
+            echo 'Only production contract compilation performed. No tests, fork simulation or live deployments.'
+            echo
+            echo '~~~text'
+            tail -n 160 "$RUNNER_TEMP/cywbtc-ethereum-compile-v1.log" 2>/dev/null || true
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload compile output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cywbtc-ethereum-compile-v1
+          path: ${{ runner.temp }}/cywbtc-ethereum-compile-v1.log
+          retention-days: 14
+          if-no-files-found: warn
