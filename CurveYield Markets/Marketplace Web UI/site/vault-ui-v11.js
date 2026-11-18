@@ -37,7 +37,7 @@ controls.querySelector('[data-next]').onclick=()=>{show(2);scrollTo(0,0)};show(s
 function dashboard(page){page.classList.add('cy-manage');
 const h=page.querySelector('.v-heading'),g=page.querySelector('.create-grid'),f=page.querySelector('.create-form'),summary=page.querySelector('.create-summary');
 if(!h||!g||!f)return;
-const name=h.querySelector('h1')?.textContent||'Vault';h.prepend(el('p','cy-vault-name','✦ '+name+' · Fraxtal Vault V2'));
+const name=h.querySelector('h1')?.textContent||'Vault';h.prepend(el('p','cy-vault-name','✦ '+name+' · Fraxtal Vault V2'));const sub=h.querySelector('p:not(.cy-vault-name)');if(sub)sub.textContent='Review on-chain vault configuration and manage supported adapter, operator and fee operations.';const review=summary?.querySelector('.create-eyebrow');if(review)review.textContent='VAULT READINESS';
 const sections=['overview','allocation','caps','timelocks','sentinel'];
 const nav=el('nav','cy-dashboard-tabs',sections.map(x=>'<button type="button" data-section="'+x+'">'+x[0].toUpperCase()+x.slice(1)+'</button>').join(''));
 nav.setAttribute('aria-label','Vault management pages');h.after(nav);
