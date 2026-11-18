@@ -9,14 +9,33 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      PROTOCOL: "all" # complete direct-USDC dapp verification
+      PROTOCOL: ${{ contains(github.event.head_commit.message, '[axelar-its-fee-quote]') && 'Axelar ITS' || 'all' }} # preserve default discovery on other commits
       ASSET: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-      STAGE: "verify"
+      STAGE: ${{ contains(github.event.head_commit.message, '[axelar-its-fee-quote]') && 'research' || 'verify' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Quote live Axelar ITS Base to Fraxtal cross-chain fee
+        if: env.PROTOCOL == 'Axelar ITS'
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          const endpoint='https://api.axelarscan.io/gmp/estimateITSFee';
+          const payload={sourceChain:'base',destinationChain:'fraxtal',event:'InterchainTransfer',showDetailedFees:true};
+          const resp=await fetch(endpoint,{
+            method:'POST',
+            headers:{'content-type':'application/json','accept':'application/json'},
+            body:JSON.stringify(payload),
+            signal:AbortSignal.timeout(30000)
+          });
+          const body=await resp.text();
+          console.log('AXELAR_ITS_QUOTE_REQUEST '+JSON.stringify(payload));
+          console.log('AXELAR_ITS_QUOTE_HTTP '+resp.status);
+          console.log('AXELAR_ITS_QUOTE_RESPONSE '+body.slice(0,25000));
+          if(!resp.ok)process.exitCode=1;
+          JS
       - name: Install Chromium browser
         if: env.STAGE != 'research'
         run: |
