@@ -531,4 +531,22 @@ contract CyWBTCSafetyForkV1 {
         _snapshot("over_target_borrow_rejected");
     }
 
+    function test_04_direct_alpha_collateral_exit_must_not_bypass_ltv() public {
+        _deploy();
+        _configure();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        uint256 beforeLtv = _state().managerLtv;
+        require(beforeLtv <= TARGET, "Initial over-target position");
+        FuseAction[] memory actions = new FuseAction[](1);
+        actions[0] = FuseAction(address(collateralFuse),
+            abi.encodeWithSignature("exit(uint256,uint256,uint256)",
+                balanceFuse.positionId(), uint256(100_000), uint256(0)));
+        _tx("reject_alpha_direct_collateral_exit_above_target", OWNER, VAULT,
+            abi.encodeWithSignature("execute((address,bytes)[])", actions), false);
+        require(_state().managerLtv == beforeLtv, "Direct collateral exit bypassed target");
+        _snapshot("over_target_collateral_exit_rejected");
+    }
+
 }
