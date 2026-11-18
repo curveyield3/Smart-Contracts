@@ -611,14 +611,9 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             sell = Math.mulDiv(sell, BPS + COLLATERAL_RECOVERY_SWAP_BUFFER_BPS,
                 BPS, Math.Rounding.Up);
             if (sell == 0) revert InvalidAmount();
-            uint256 scaling = IFXMintManagerPoolManager(POOL_MANAGER).getTokenScalingFactor(WBTC);
-            if (scaling == 0) revert InvalidConfiguration();
-            (uint256 collateral,) = _position(id);
-            uint256 rawToRelease = Math.mulDiv(sell, scaling, WAD, Math.Rounding.Up)
-                + (scaling / WAD) + 1;
-            if (rawToRelease >= collateral) revert InsufficientCollateral(rawToRelease, collateral);
-            // The same live-target post-condition is enforced by the
-            // collateral fuse; repeating it here wastes bytecode and gas.
+            // CollateralFuse.exit and fxMINT PoolManager enforce both
+            // withdrawable collateral and live target LTV after the change.
+            // No duplicate preflight calculations in the public manager.
             uint256 beforeWBTC = IERC20(WBTC).balanceOf(VAULT);
             _executeOne(FXMINT_COLLATERAL_FUSE,
                 abi.encodeWithSignature("exit(uint256,uint256,uint256)", id, sell, uint256(0)));
