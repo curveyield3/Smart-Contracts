@@ -162,6 +162,34 @@ contract CyWBTCSafetyForkV1 {
             && a.rawDebt == b.rawDebt && a.sharesReserved == b.sharesReserved;
     }
 
+    struct CallEvidence {
+        string label;
+        address sender;
+        address target;
+        bytes calldataCopy;
+        bytes result;
+        bool success;
+        bool expected;
+        bool accountingUnchanged;
+        uint256 gasMeasured;
+    }
+
+    function _saveCall(CallEvidence memory c) private {
+        string memory k = string.concat("call_", c.label);
+        vm.serializeString(k, "label", c.label);
+        vm.serializeAddress(k, "from", c.sender);
+        vm.serializeAddress(k, "to", c.target);
+        vm.serializeBytes(k, "calldata", c.calldataCopy);
+        vm.serializeBytes(k, "rawReturnOrRevertData", c.result);
+        vm.serializeBool(k, "success", c.success);
+        vm.serializeBool(k, "expectedSuccess", c.expected);
+        vm.serializeUint(k, "gasMeasuredInsideForge", c.gasMeasured);
+        vm.serializeUint(k, "blockNumber", block.number);
+        vm.serializeBool(k, "accountingUnchanged", c.accountingUnchanged);
+        string memory json = vm.serializeString(k, "executionType", "fork EVM call in Foundry test (not standalone tx hash)");
+        vm.writeJson(json, string.concat("simulation-output/transaction_", c.label, ".json"));
+    }
+
     function _tx(
         string memory label, address sender, address target, bytes memory callData, bool shouldSucceed
     ) private returns (bytes memory returnData) {
@@ -170,23 +198,19 @@ contract CyWBTCSafetyForkV1 {
         uint256 startGas = gasleft();
         vm.prank(sender);
         (bool success, bytes memory result) = target.call(callData);
-        uint256 measuredGas = startGas - gasleft();
-        State memory afterState = _state();
+        CallEvidence memory rec;
+        rec.label = label;
+        rec.sender = sender;
+        rec.target = target;
+        rec.calldataCopy = callData;
+        rec.result = result;
+        rec.success = success;
+        rec.expected = shouldSucceed;
+        rec.gasMeasured = startGas - gasleft();
+        rec.accountingUnchanged = _sameAccounting(beforeState, _state());
         _snapshot(string.concat(label, "_after"));
-        string memory k = string.concat("call_", label);
-        vm.serializeString(k, "label", label);
-        vm.serializeAddress(k, "from", sender);
-        vm.serializeAddress(k, "to", target);
-        vm.serializeBytes(k, "calldata", callData);
-        vm.serializeBytes(k, "rawReturnOrRevertData", result);
-        vm.serializeBool(k, "success", success);
-        vm.serializeBool(k, "expectedSuccess", shouldSucceed);
-        vm.serializeUint(k, "gasMeasuredInsideForge", measuredGas);
-        vm.serializeUint(k, "blockNumber", block.number);
-        vm.serializeBool(k, "accountingUnchanged", _sameAccounting(beforeState, afterState));
-        string memory json = vm.serializeString(k, "executionType", "fork EVM call in Foundry test (not standalone tx hash)");
-        vm.writeJson(json, string.concat("simulation-output/transaction_", label, ".json"));
-        if (!success && !_sameAccounting(beforeState, afterState)) revert("Reverting call changed accounting");
+        _saveCall(rec);
+        if (!success && !rec.accountingUnchanged) revert("Reverting call changed accounting");
         if (success != shouldSucceed) revert CallOutcomeMismatch(label, shouldSucceed, success);
         return result;
     }
