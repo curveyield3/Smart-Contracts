@@ -41,8 +41,8 @@ jobs:
           const head=Number(BigInt(await rpc('eth_blockNumber',[]))); 
           const hits=[];let queried=0,failures=0;
           console.log('BASE_ITS_HEAD '+head);
-          for(let offset=0;offset<500000;offset+=2000){
-            const low=Math.max(0,head-offset-1999), high=head-offset;
+          for(let offset=0;offset<12000000;offset+=10000){
+            const low=Math.max(0,head-offset-9999), high=head-offset;
             try {
               const rows=await rpc('eth_getLogs',[{address:addr,fromBlock:'0x'+low.toString(16),toBlock:'0x'+high.toString(16),topics:[topic]}]);
               queried++;
@@ -50,9 +50,9 @@ jobs:
                 if(!item.data.toLowerCase().includes('6672617874616c'))continue;
                 hits.push({hash:item.transactionHash,block:Number(BigInt(item.blockNumber)),tokenId:item.topics[1],from:item.topics[2],data:item.data.slice(0,350)});
               }
-              if(hits.length>=8)break;
+              if(hits.length>=12)break;
             }catch(e){failures++;if(failures<5)console.log('RPC_SCAN_ERROR '+low+'-'+high+' '+String(e).slice(0,500))}
-            if(offset%40000===0)console.log('SCAN_PROGRESS '+JSON.stringify({offset,queried,failures,hits:hits.length}));
+            if(offset%500000===0)console.log('SCAN_PROGRESS '+JSON.stringify({offset,queried,failures,hits:hits.length}));
           }
           console.log('BASE_TO_FRAXTAL_ITS_HITS '+JSON.stringify({queried,failures,hits}));
           for(const h of hits.slice(0,8)){
