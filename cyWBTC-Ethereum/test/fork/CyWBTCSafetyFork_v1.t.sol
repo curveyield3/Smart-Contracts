@@ -255,7 +255,7 @@ contract CyWBTCSafetyForkV1 {
         _snapshot("deploy_before");
         balanceFuse = new FXMintBalanceFuse(VAULT, OWNER, FXMINT_POOL, WBTC, FXUSD);
         borrowFuse = new FXMintBorrowFuse(FXMINT_POOL, POOL_MANAGER, FXUSD);
-        collateralFuse = new FXMintCollateralFuse(FXMINT_POOL, POOL_MANAGER, WBTC);
+        collateralFuse = new FXMintCollateralFuse(FXMINT_POOL, POOL_MANAGER, WBTC, address(balanceFuse));
         fxspFuse = new FxSPSupplyFuse(16, FXSP, FXUSD);
         fxspBalance = new FxSPCurveBalanceFuse(16);
         convexFuse = new ConvexFXGaugeSupplyFuse(17, BOOSTER, REGISTRY);
@@ -270,6 +270,8 @@ contract CyWBTCSafetyForkV1 {
             usdc: USDC, withdrawManager: WITHDRAW_MANAGER
         });
         ltvManager = new FXMintLTVManager(a, TARGET);
+        _tx("safe_registers_live_risk_manager", OWNER, address(balanceFuse),
+            abi.encodeWithSignature("setRiskManager(address)", address(ltvManager)), true);
         publicExecutor = new FulfillWithdrawExecutor(address(ltvManager));
         require(ltvManager.targetLtvWad() == TARGET, "60% LTV constructor failed");
         require(address(publicExecutor.MANAGER()) == address(ltvManager), "Wrong public manager");
