@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'cyWBTC-Ethereum/contracts/**'
+      - 'cyWBTC-Ethereum/test/**'
       - '.github/workflows/cywbtc-ethereum-compile-v2.yml'
 permissions:
   contents: read
