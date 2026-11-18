@@ -9,8 +9,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
-      PROTOCOL: "Euler EVK"
-      STAGE: "verify"
+      PROTOCOL: "Beefy Vaults"
+      STAGE: "research"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,6 +64,32 @@ jobs:
              snapshotTimestamp:v.snapshotTimestamp,status:v.status,totalAssets:v.totalAssets}));
           }
           console.log('EULER_RESEARCH_SUMMARY '+JSON.stringify({sampled:arr.length,positive:good.length,visibilityKeys:Array.from(new Set(arr.flatMap(v=>Object.keys(v.visibility||{}))))}));
+          JS
+      - name: Inspect actual Ethereum Beefy vault metadata, APY, TVL and deposit assets
+        if: env.PROTOCOL == 'Beefy Vaults'
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          const urls=['vaults','apy','tvl'];
+          const values=await Promise.all(urls.map(async k=>{
+            const r=await fetch('https://api.beefy.finance/'+k,{signal:AbortSignal.timeout(100000)});
+            if(!r.ok)throw Error('Beefy '+k+' HTTP '+r.status);
+            return r.json();
+          }));
+          const [vaults,yields,tvls]=values,counts={};
+          const eth=vaults.filter(v=>['ethereum','eth'].includes(String(v.chain||v.network).toLowerCase()));
+          for(const v of eth){const label=(v.status||'(missing)')+':'+(v.assets?.length??-1);counts[label]=(counts[label]||0)+1;}
+          const candidates=eth.filter(v=>v.status==='active'&&Array.isArray(v.assets)&&v.assets.length===1&&
+           /^0x[a-f0-9]{40}$/i.test(v.tokenAddress||'')&&/^0x[a-f0-9]{40}$/i.test(v.earnContractAddress||'')&&
+           Number(yields[v.id])>Math.expm1(0.01)&&Number.isFinite(Number(yields[v.id]))&&
+           Number(yields[v.id])<10&&Number(tvls?.['1']?.[v.id])>100);
+          candidates.sort((a,b)=>(Number(tvls?.['1']?.[b.id])||0)-(Number(tvls?.['1']?.[a.id])||0));
+          console.log('BEEFY_META '+JSON.stringify({allVaults:vaults.length,ethVaults:eth.length,byStatusAndAssets:counts,candidateCount:candidates.length}));
+          for(const v of candidates.slice(0,45))
+           console.log('BEEFY_CANDIDATE '+JSON.stringify({id:v.id,name:v.name,token:v.token,
+            assets:v.assets,tokenAddress:v.tokenAddress,earnContractAddress:v.earnContractAddress,
+            platformId:v.platformId,status:v.status,type:v.type,chain:v.chain,
+            tvl:tvls?.['1']?.[v.id],apy:yields[v.id],oracleId:v.oracleId}));
           JS
       - name: Inspect full protocol listing, rates, single token identity and dapp usability
         if: env.STAGE != 'research'
