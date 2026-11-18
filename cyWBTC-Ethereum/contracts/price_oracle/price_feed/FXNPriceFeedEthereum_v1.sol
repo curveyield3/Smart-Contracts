@@ -51,7 +51,8 @@ contract FXNPriceFeedEthereum {
         view
         returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
     {
-        (roundId, int256 ethUsd, startedAt, updatedAt, answeredInRound) =
+        int256 ethUsd;
+        (roundId, ethUsd, startedAt, updatedAt, answeredInRound) =
             IFXNChainlinkETHUSD(ETH_USD_CHAINLINK).latestRoundData();
         if (ethUsd <= 0) revert InvalidETHFeed();
         if (updatedAt == 0 || updatedAt > block.timestamp ||
