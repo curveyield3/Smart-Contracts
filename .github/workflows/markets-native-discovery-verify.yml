@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 12
     env:
       PROTOCOL: "Compound III" # v102 official raw market import recovery
-      STAGE: "diagnose"
+      STAGE: "verify"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
