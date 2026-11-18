@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: "22"
       - name: Discover successful Base to Fraxtal Axelar ITS references
-        if: env.PROTOCOL == 'Axelar ITS'
+        if: env.PROTOCOL == 'Axelar ITS' && 'false' == 'true'
         shell: bash
         run: |
           node --input-type=module <<'JS'
@@ -63,6 +63,28 @@ jobs:
             }catch(e){console.log('ITS_SOURCE_TX_ERROR '+h.hash+' '+String(e))}
           }
           if(!hits.length)process.exitCode=1;
+          JS
+      - name: Query Axelar GMP index for Base to Fraxtal transaction references
+        if: env.PROTOCOL == 'Axelar ITS'
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          const url='https://api.axelarscan.io/gmp/searchGMP';
+          const cases=[
+            {sourceChain:'base',destinationChain:'fraxtal',size:50},
+            {sourceChain:'base',destinationChain:'axelar',size:100},
+            {destinationChain:'fraxtal',size:100}
+          ];
+          for(const body of cases) {
+            try{
+              const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
+              const raw=await r.text();
+              let j;try{j=JSON.parse(raw)}catch{}
+              const data=Array.isArray(j?.data)?j.data:[];
+              const succinct=data.map(x=>({id:x._id,txHash:x.txHash,sourceChain:x.sourceChain,destinationChain:x.destinationChain,status:x.status,method:x.method,call:x.call&&{transactionHash:x.call.transactionHash,returnValues:x.call.returnValues},executed:x.executed&&{transactionHash:x.executed.transactionHash},refunded:x.refunded})).slice(0,50);
+              console.log('AXELAR_SEARCH '+JSON.stringify({query:body,status:r.status,count:data.length,total:j?.total,keys:j&&Object.keys(j),rows:succinct,rawPreview:!j?raw.slice(0,700):undefined}).slice(0,50000));
+            }catch(e){console.log('AXELAR_SEARCH_FAILED '+JSON.stringify({query:body,error:String(e)}))}
+          }
           JS
       - name: Install Chromium browser
         if: env.STAGE != 'research'
