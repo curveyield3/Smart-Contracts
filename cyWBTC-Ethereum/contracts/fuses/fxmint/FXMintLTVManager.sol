@@ -83,6 +83,12 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     uint256 private constant WITHDRAW_LTV_IMPROVEMENT_WAD = 1e16;
     uint256 private constant WITHDRAW_ROUNDING_HEADROOM_WAD = 1e14;
     uint256 private constant FXSP_COOLDOWN = 1 hours;
+    /// @dev IPOR calls its instant-withdraw queue repeatedly inside a single
+    /// redeem(), including reserve/slippage-buffer attempts. f(x) permits only
+    /// one PoolManager.operate per transaction (EIP-1153 transient lock).
+    /// Therefore do not perform a second collateral exit in the same tx.
+    bytes32 private constant INSTANT_FXMINT_EXIT_USED_SLOT =
+        keccak256("curveyield.cywbtc.fxmint.instant-withdraw.pool-operate.used.v1");
     uint256 private constant COLLATERAL_RECOVERY_SWAP_BUFFER_BPS = 300;
 
     struct Addresses {
@@ -258,6 +264,15 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         // would be unnecessary and could revert on the LTV guard.
         if (IFXMintManagerConfig(VERSION).isFinalizingScheduledWithdrawal()) return;
         if (params.length != 1) revert InvalidAmount();
+        // The first call obtains enough underlying for ERC4626 redemption;
+        // repeated calls request an optional additional liquidity buffer.
+        // A second f(x) operate in the same tx always reverts due its native
+        // transient lock. If actual payout lacks WBTC the ERC4626 transfer
+        // still reverts atomically; this never fabricates collateral/liquidity.
+        bytes32 usedSlot = INSTANT_FXMINT_EXIT_USED_SLOT;
+        uint256 used;
+        assembly ("memory-safe") { used := tload(usedSlot) }
+        if (used != 0) return;
         uint256 shortfall = uint256(params[0]);
         if (shortfall == 0) return;
         Withdrawal memory s = _prepareWithdrawal(shortfall);
@@ -268,6 +283,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         if (newLtv > s.target) revert DebtRepaymentRequiresScheduledWithdrawal(currentDebt);
         _executeOne(FXMINT_COLLATERAL_FUSE,
             abi.encodeWithSignature("exit(uint256,uint256,uint256)", s.id, s.collateralReleaseWBTC, s.netWBTCNeeded));
+        assembly ("memory-safe") { tstore(usedSlot, 1) }
         emit CollateralWithdrawal(s.id, s.collateralReleaseWBTC, shortfall, 0);
     }
 
