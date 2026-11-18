@@ -7,7 +7,7 @@ const create=location.pathname==='/vaults/create',manage=/^\/vaults\/0x[a-f0-9]{
 if((!create&&!manage&&!marketCreate)||new URLSearchParams(location.search).get('chain')==='ethereum')return;
 let stage=1,tab='overview';try{stage=sessionStorage.getItem('cy-vault-stage')==='2'?2:1}catch{}
 for(const a of frame.querySelectorAll('a[href^="#/"]')){const h=a.getAttribute('href'),map={'#/overview':'/','#/markets':'/markets','#/vaults':'/vaults','#/portfolio/positions':'/portfolio','#/markets/create':'/create','#/vaults/create':'/vaults/create'};if(map[h])a.href=map[h];else if(h==='#/oracles'||h==='#/liquidations'){a.hidden=true;a.style.display='none'}}
-for(const section of frame.querySelectorAll('.side-section'))if(/Favorites|My Vaults/.test(section.querySelector('.section-label')?.textContent||''))section.hidden=true;
+for(const section of frame.querySelectorAll('.side-section'))if(/Favorites|My Vaults/.test(section.querySelector('.section-label')?.textContent||'')){section.hidden=true;section.style.display='none'};
 for(const a of frame.querySelectorAll('.wordmark,.collapsed-create,.side-head .gold-btn'))a.href=a.matches('.wordmark')?'/':'/vaults/create';
 const toggle=document.getElementById('sidebarToggle');
 const sync=()=>{toggle?.setAttribute('aria-expanded',String(!frame.classList.contains('sidebar-collapsed')));toggle?.setAttribute('aria-label',frame.classList.contains('sidebar-collapsed')?'Expand sidebar':'Collapse sidebar')};
