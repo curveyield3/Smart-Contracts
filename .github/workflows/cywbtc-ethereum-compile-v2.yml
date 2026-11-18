@@ -71,6 +71,9 @@ jobs:
           RPC="${MAINNET_FORK_URL:-https://ethereum-rpc.publicnode.com}"
           cd "$ROOT"
           mkdir -p simulation-output
+          # The pinned v19 archive contains retired Yearn contracts unrelated to cyWBTC.
+          # Their legacy compiler error must not shadow this isolated IPOR fork suite.
+          rm -rf contracts/yearn
           set +e
           forge test --fork-url "$RPC" --match-path test/fork/CyWBTCSafetyFork_v1.t.sol -vvv > fork-test.log 2>&1
           EXIT_CODE=$?
