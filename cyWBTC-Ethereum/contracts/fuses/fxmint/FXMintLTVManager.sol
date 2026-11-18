@@ -321,6 +321,13 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         if (desiredWBTC <= idleWBTC) revert InvalidAmount(); // use native instant redemption instead
         Withdrawal memory s = _prepareWithdrawal(desiredWBTC - idleWBTC);
         if (s.debtReduction == 0) revert InvalidAmount(); // this path is exclusively for debt repayment
+        // When the requested shares are ALL outstanding shares, the fxMINT
+        // position must close completely. Leaving an 11 fxUSD residual debt
+        // against near-zero collateral made the original 100% exit impossible.
+        if (r.shares == IERC20(VAULT).totalSupply()) {
+            s.debtReduction = s.initialDebt;
+            s.collateralReleaseWBTC = type(uint256).max; // full-position sentinel
+        }
         uint256 debtBudget = _repayBudget(s.debtReduction);
         uint256 idleFxUSD = IERC20(FXUSD).balanceOf(VAULT);
         if (idleFxUSD >= debtBudget) revert InvalidAmount(); // no delayed redemption required
@@ -383,6 +390,9 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             uint256 usdc = IERC20(USDC).balanceOf(VAULT);
             if (usdc != 0) _swap(USDC, FXUSD, usdc);
             uint256 desiredReduction = p.debtReduction;
+            if (p.collateralReleaseWBTC == type(uint256).max) {
+                (, desiredReduction) = _position(p.nftId); // include any accrued debt
+            }
             if (IERC20(FXUSD).balanceOf(VAULT) >= _repayBudget(desiredReduction)) {
                 _repayFromIdle(p.nftId, desiredReduction);
                 p.debtReduction = 0;
@@ -404,7 +414,11 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         }
         if (stage == 2) {
             // Another transaction: one fxMINT operate repays remaining debt.
-            _repayFromIdle(p.nftId, p.debtReduction);
+            uint256 finalReduction = p.debtReduction;
+            if (p.collateralReleaseWBTC == type(uint256).max) {
+                (, finalReduction) = _position(p.nftId);
+            }
+            _repayFromIdle(p.nftId, finalReduction);
             p.debtReduction = 0;
             p.stage = 3;
             emit WithdrawRequestAdvanced(p.user, 3, 0);
@@ -422,6 +436,8 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     function _releasePendingCollateralAndShares() private {
         PendingRequest memory p = pendingRequest;
         (uint256 rawCollateral, uint256 liveDebt) = _position(p.nftId);
+        if (p.collateralReleaseWBTC == type(uint256).max && liveDebt != 0)
+            revert UnsafeLtv(type(uint256).max, _liveTarget());
         uint256 scaling = IFXMintManagerPoolManager(POOL_MANAGER).getTokenScalingFactor(WBTC);
         if (scaling == 0) revert InvalidConfiguration();
         uint256 nativeAvailable = Math.mulDiv(rawCollateral, WAD, scaling);
