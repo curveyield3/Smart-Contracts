@@ -9,110 +9,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      PROTOCOL: ${{ contains(github.event.head_commit.message, '[axelar-its-reference]') && 'Axelar ITS' || 'all' }} # preserve original behavior otherwise
+      PROTOCOL: "all" # complete direct-USDC dapp verification
       ASSET: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-      STAGE: ${{ contains(github.event.head_commit.message, '[axelar-its-reference]') && 'research' || 'verify' }}
+      STAGE: "verify"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Discover successful Base to Fraxtal Axelar ITS references
-        if: env.PROTOCOL == 'Axelar ITS' && 'false' == 'true'
-        shell: bash
-        run: |
-          node --input-type=module <<'JS'
-          const baseRPC=['https://base-rpc.publicnode.com','https://mainnet.base.org','https://base.drpc.org'];
-          const addr='0xb5fb4be02232b1bba4dc8f81dc24c26980de9e3c';
-          const topic='0xcd05f5b9dc4bb03babf40f5da98f5f46819846207d916f89b67d36fd1f7fd74f';
-          let requestId=0;
-          async function rpc(method,params) {
-            let last;
-            for(const url of baseRPC) {
-              try {
-                const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:++requestId,method,params}),signal:AbortSignal.timeout(20000)});
-                if(!r.ok)throw Error(url+' HTTP '+r.status);
-                const j=await r.json();if(j.error)throw Error(url+' '+JSON.stringify(j.error).slice(0,330));
-                return j.result;
-              }catch(e){last=String(e)}
-            }
-            throw Error(method+' '+last);
-          }
-          const head=Number(BigInt(await rpc('eth_blockNumber',[]))); 
-          const hits=[];let queried=0,failures=0;
-          console.log('BASE_ITS_HEAD '+head);
-          for(let offset=0;offset<12000000;offset+=10000){
-            const low=Math.max(0,head-offset-9999), high=head-offset;
-            try {
-              const rows=await rpc('eth_getLogs',[{address:addr,fromBlock:'0x'+low.toString(16),toBlock:'0x'+high.toString(16),topics:[topic]}]);
-              queried++;
-              for(const item of rows) {
-                if(!item.data.toLowerCase().includes('6672617874616c'))continue;
-                hits.push({hash:item.transactionHash,block:Number(BigInt(item.blockNumber)),tokenId:item.topics[1],from:item.topics[2],data:item.data.slice(0,350)});
-              }
-              if(hits.length>=12)break;
-            }catch(e){failures++;if(failures<5)console.log('RPC_SCAN_ERROR '+low+'-'+high+' '+String(e).slice(0,500))}
-            if(offset%500000===0)console.log('SCAN_PROGRESS '+JSON.stringify({offset,queried,failures,hits:hits.length}));
-          }
-          console.log('BASE_TO_FRAXTAL_ITS_HITS '+JSON.stringify({queried,failures,hits}));
-          for(const h of hits.slice(0,8)){
-            try{
-              const tx=await rpc('eth_getTransactionByHash',[h.hash]);
-              const receipt=await rpc('eth_getTransactionReceipt',[h.hash]);
-              console.log('ITS_SOURCE_TX '+JSON.stringify({hash:h.hash,block:h.block,status:receipt?.status,to:tx?.to,from:tx?.from,value:tx?.value,input:tx?.input?.slice(0,160),gasUsed:receipt?.gasUsed,tokenId:h.tokenId}));
-            }catch(e){console.log('ITS_SOURCE_TX_ERROR '+h.hash+' '+String(e))}
-          }
-          if(!hits.length)process.exitCode=1;
-          JS
-      - name: Query Axelar GMP index for Base to Fraxtal transaction references
-        if: env.PROTOCOL == 'Axelar ITS'
-        shell: bash
-        run: |
-          node --input-type=module <<'JS'
-          const url='https://api.axelarscan.io/gmp/searchGMP';
-          const cases=[
-            {sourceChain:'base',destinationChain:'fraxtal',size:25},
-            {sourceChain:'base',destinationChain:'axelar',size:25},
-            {sourceChain:'axelar',destinationChain:'fraxtal',size:25},
-            {sourceChain:'axelar',destinationChain:'fraxtal',size:25,from:25},
-            {sourceChain:'axelar',destinationChain:'fraxtal',size:25,from:50},
-            {destinationChain:'fraxtal',size:25}
-          ];
-          for(const body of cases) {
-            try{
-              const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
-              const raw=await r.text();
-              let j;try{j=JSON.parse(raw)}catch{}
-              const data=Array.isArray(j?.data)?j.data:[];
-              const succinct=data.map(x=>({id:x._id,txHash:x.txHash,sourceChain:x.sourceChain,destinationChain:x.destinationChain,status:x.status,method:x.method,call:x.call&&{transactionHash:x.call.transactionHash,returnValues:x.call.returnValues&&{sender:x.call.returnValues.sender,destinationChain:x.call.returnValues.destinationChain,destinationContractAddress:x.call.returnValues.destinationContractAddress,symbol:x.call.returnValues.symbol,amount:x.call.returnValues.amount,payloadHasBase:String(x.call.returnValues.payload||'').toLowerCase().includes('62617365'),payloadBytes:(x.call.returnValues.payload?.length||2)/2-1}},executed:x.executed&&{transactionHash:x.executed.transactionHash},refunded:x.refunded&&{transactionHash:x.refunded.transactionHash,amount:x.refunded.amount}})).slice(0,50);
-              console.log('AXELAR_SEARCH '+JSON.stringify({query:body,status:r.status,count:data.length,total:j?.total,keys:j&&Object.keys(j),error:j?.error,code:j?.code,message:j?.message,rows:succinct,rawPreview:!j?raw.slice(0,700):undefined}).slice(0,50000));
-            }catch(e){console.log('AXELAR_SEARCH_FAILED '+JSON.stringify({query:body,error:String(e)}))}
-          }
-          JS
-      - name: Query indexed Base ITS contract logs for real Fraxtal transfers
-        if: env.PROTOCOL == 'Axelar ITS' && 'false' == 'true'
-        shell: bash
-        run: |
-          node --input-type=module <<'JS'
-          const endpoint='https://base.blockscout.com/api/v2/addresses/0xb5fb4be02232b1bba4dc8f81dc24c26980de9e3c/logs';
-          let next=null,total=0,matched=[],first=null;
-          try{
-            for(let page=0;page<40;page++){
-              const u=new URL(endpoint);if(next)for(const [k,v] of Object.entries(next))u.searchParams.set(k,String(v));
-              const r=await fetch(u,{signal:AbortSignal.timeout(30000)});
-              const txt=await r.text();if(!r.ok){console.log('BLOCKSCOUT_HTTP '+r.status+' '+txt.slice(0,800));break;}
-              let j;try{j=JSON.parse(txt)}catch{console.log('BLOCKSCOUT_BAD_JSON '+txt.slice(0,500));break}
-              if(!first)first={count:j.items?.length,keys:j.items?.[0]&&Object.keys(j.items[0]),sample:j.items?.[0],next:j.next_page_params};
-              const rows=j.items||[];total+=rows.length;
-              for(const x of rows) {
-                const d=JSON.stringify(x).toLowerCase();
-                if(d.includes('6672617874616c')&&d.includes('cd05f5b9'))matched.push({tx:x.tx_hash||x.transaction_hash||x.transaction?.hash,block:x.block_number,data:x.data,topics:x.topics});
-              }
-              next=j.next_page_params;if(!next||matched.length>6)break;
-            }
-            console.log('BLOCKSCOUT_ITS_LOGS '+JSON.stringify({total,first,matched,hasMore:!!next}).slice(0,35000));
-          }catch(e){console.log('BLOCKSCOUT_ERROR '+String(e))}
-          JS
       - name: Install Chromium browser
         if: env.STAGE != 'research'
         run: |
