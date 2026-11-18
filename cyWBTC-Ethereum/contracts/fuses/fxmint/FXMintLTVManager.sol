@@ -514,20 +514,27 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         uint256 repaid = initialDebt - debtAfter;
         uint256 remainingToRepay = requestedReduction > repaid ? requestedReduction - repaid : 0;
         if (remainingToRepay == 0) return;
+        _sellCollateralAndFinishRepay(id, remainingToRepay);
+    }
+
+    /// @dev Separate bounded branch so Solidity 0.8.30 compiles without viaIR.
+    ///      The collateral side enforces the live target even if this check passes.
+    function _sellCollateralAndFinishRepay(uint256 id, uint256 remainingToRepay) private {
         uint256 fullBudget = _repayBudget(remainingToRepay);
         uint256 idleStable = IERC20(FXUSD).balanceOf(VAULT);
         if (fullBudget > idleStable) {
-            uint256 missing = fullBudget - idleStable;
-            uint256 sell = Math.mulDiv(missing, 1e8, price, Math.Rounding.Up);
+            uint256 price = _exchangePrice();
+            uint256 sell = Math.mulDiv(fullBudget - idleStable, 1e8, price, Math.Rounding.Up);
             sell = Math.mulDiv(sell, BPS + COLLATERAL_RECOVERY_SWAP_BUFFER_BPS,
                 BPS, Math.Rounding.Up);
             if (sell == 0) revert InvalidAmount();
             uint256 scaling = IFXMintManagerPoolManager(POOL_MANAGER).getTokenScalingFactor(WBTC);
             if (scaling == 0) revert InvalidConfiguration();
+            (uint256 collateral, uint256 debt) = _position(id);
             uint256 rawToRelease = Math.mulDiv(sell, scaling, WAD, Math.Rounding.Up)
                 + (scaling / WAD) + 1;
-            if (rawToRelease >= rawCollateral) revert InsufficientCollateral(rawToRelease, rawCollateral);
-            uint256 projectedLtv = _ltv(rawCollateral - rawToRelease, debtAfter, price);
+            if (rawToRelease >= collateral) revert InsufficientCollateral(rawToRelease, collateral);
+            uint256 projectedLtv = _ltv(collateral - rawToRelease, debt, price);
             if (projectedLtv > _liveTarget()) revert UnsafeLtv(projectedLtv, _liveTarget());
             uint256 beforeWBTC = IERC20(WBTC).balanceOf(VAULT);
             _executeOne(FXMINT_COLLATERAL_FUSE,
