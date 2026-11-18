@@ -424,6 +424,15 @@ contract CyWBTCSafetyForkV1 {
         );
     }
 
+    function _pendingStage() private view returns (uint8 stage) {
+        (bool ok, bytes memory result) = address(ltvManager).staticcall(
+            abi.encodeWithSignature("pendingRequest()"));
+        require(ok && result.length >= 256, "Pending stage unavailable");
+        (, , , , , , , stage) = abi.decode(
+            result, (address, uint256, uint256, uint256, uint256, uint256, uint256, uint8)
+        );
+    }
+
     function _fullScheduledExit() private {
         uint256 allUserShares = IERC20(VAULT).balanceOf(USER);
         require(allUserShares > 0, "No user shares before full exit");
@@ -445,7 +454,23 @@ contract CyWBTCSafetyForkV1 {
         vm.warp(unlockAt + 2);
         vm.roll(block.number + 20);
         _snapshot("user_scheduled_after_cooldown");
-        _tx("any_public_caller_can_finalize_and_redeem_full_shares", UNAUTHORIZED, address(publicExecutor),
+        // f(x) PoolConfiguration uses a transaction-long transient lock:
+        // each finalize invocation can use at most ONE fxMINT operate.
+        _tx("any_public_caller_can_redeem_fxsp_and_partially_repay", UNAUTHORIZED, address(publicExecutor),
+            abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+        _snapshot("scheduled_after_first_finalize_tx");
+        uint8 currentStage = _pendingStage();
+        if (currentStage == 1) {
+            _tx("another_public_caller_can_release_safe_recovery_collateral", PUBLIC_CALLER, address(publicExecutor),
+                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+            require(_pendingStage() == 2, "Recovery collateral stage not reached");
+            _snapshot("scheduled_after_recovery_collateral_tx");
+            _tx("public_caller_can_complete_debt_repayment", UNAUTHORIZED, address(publicExecutor),
+                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+            require(_pendingStage() == 3, "Final debt repayment stage not reached");
+            _snapshot("scheduled_after_debt_repayment_tx");
+        } else require(currentStage == 3, "Unexpected scheduled withdrawal stage");
+        _tx("public_caller_can_finally_redeem_all_user_shares", PUBLIC_CALLER, address(publicExecutor),
             abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
         _snapshot("user_full_exit_final");
         require(IERC20(VAULT).balanceOf(USER) == 0, "User did not redeem all shares");
