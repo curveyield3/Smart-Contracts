@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 12
     env:
       PROTOCOL: "Beefy Vaults" # v96 exact official vault eligibility gate
-      STAGE: "verify"
+      STAGE: "diagnose"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -91,8 +91,43 @@ jobs:
             platformId:v.platformId,status:v.status,type:v.type,chain:v.chain,
             tvl:tvls?.['1']?.[v.id],apy:yields[v.id],oracleId:v.oracleId}));
           JS
+      - name: Diagnose official Beefy UI hosts and JavaScript loading
+        if: env.STAGE == 'diagnose'
+        timeout-minutes: 4
+        run: |
+          cat > "$RUNNER_TEMP/market-verify/beefy-ui.mjs" <<'JS'
+          import {chromium} from 'playwright';
+          const browser=await chromium.launch({headless:true,args:['--disable-dev-shm-usage']});
+          const context=await browser.newContext({viewport:{width:1350,height:850}});
+          const sites=[
+           'https://app.beefy.com/vault/bifi-vault',
+           'https://app.beefy.finance/vault/bifi-vault',
+           'https://beefy-v2.pages.dev/vault/bifi-vault',
+           'https://app.beefy.com/'
+          ];
+          for(const url of sites){
+           const p=await context.newPage(),errors=[],failed=[];
+           p.on('pageerror',e=>errors.push(String(e).slice(0,330)));
+           p.on('console',m=>{if(m.type()==='error')errors.push(m.text().slice(0,200))});
+           p.on('requestfailed',r=>{if(failed.length<12)failed.push({url:r.url().slice(0,150),err:r.failure()?.errorText})});
+           try{
+            const r=await p.goto(url,{waitUntil:'domcontentloaded',timeout:23000});
+            await p.waitForTimeout(6500);
+            const body=await p.locator('body').innerText({timeout:5000}).catch(()=>'');
+            const html=await p.locator('body').innerHTML({timeout:5000}).catch(()=>'');
+            const scripts=await p.locator('script').count();
+            console.log('BEEFY_UI_DIAG '+JSON.stringify({url,http:r?.status(),finalUrl:p.url(),title:await p.title(),
+             bodyLength:body.length,bodyPreview:body.slice(0,300),htmlLength:html.length,scriptCount:scripts,
+             jsErrors:errors.slice(0,12),requestFailures:failed}));
+           }catch(e){console.log('BEEFY_UI_ERROR '+url+' '+String(e))}
+           await p.close();
+          }
+          await context.close();await browser.close();
+          JS
+          cd "$RUNNER_TEMP/market-verify"
+          node beefy-ui.mjs
       - name: Inspect full protocol listing, rates, single token identity and dapp usability
-        if: env.STAGE != 'research'
+        if: env.STAGE == 'verify'
         timeout-minutes: 9
         run: |
           cat > "$RUNNER_TEMP/market-verify/check.mjs" <<'NODE'
