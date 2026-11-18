@@ -74,6 +74,8 @@ jobs:
             {sourceChain:'base',destinationChain:'fraxtal',size:25},
             {sourceChain:'base',destinationChain:'axelar',size:25},
             {sourceChain:'axelar',destinationChain:'fraxtal',size:25},
+            {sourceChain:'axelar',destinationChain:'fraxtal',size:25,from:25},
+            {sourceChain:'axelar',destinationChain:'fraxtal',size:25,from:50},
             {destinationChain:'fraxtal',size:25}
           ];
           for(const body of cases) {
