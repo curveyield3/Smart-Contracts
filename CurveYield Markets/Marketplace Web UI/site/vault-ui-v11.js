@@ -42,14 +42,16 @@ const sections=['overview','allocation','caps','timelocks','sentinel'];
 const nav=el('nav','cy-dashboard-tabs',sections.map(x=>'<button type="button" data-section="'+x+'">'+x[0].toUpperCase()+x.slice(1)+'</button>').join(''));
 nav.setAttribute('aria-label','Vault management pages');h.after(nav);
 const cards=[...f.children].filter(x=>x.matches('.create-card:not(.lm-panel)')),lm=f.querySelector('.lm-panel');
-const deferred=el('section','cy-not-yet','<h2>Pending settings</h2><p>This section requires an action interface verified against the deployed contracts. No example roles, waiting periods or executable operations are represented as live.</p><p>Actual operator, fee, first-deposit, adapter and cap operations remain in Overview, Allocation and Caps.</p>');
+const deferred=el('section','cy-not-yet','');
 f.appendChild(deferred);
 const note=el('div','cy-risk-note','Select a supported lending market below to view its actual on-chain allocation and cap operations.');lm?.before(note);
 function show(v){tab=v;page.dataset.tab=v;h.querySelector('h1').textContent=v[0].toUpperCase()+v.slice(1);
 for(const b of nav.children){b.classList.toggle('active',b.dataset.section===v);b.setAttribute('aria-current',b.dataset.section===v?'page':'false')}
 for(const card of cards)card.hidden=v!=='overview';if(lm)lm.hidden=v!=='allocation'&&v!=='caps';
 deferred.hidden=v!=='timelocks'&&v!=='sentinel';note.hidden=v!=='caps';
-deferred.querySelector('h2').textContent=v==='sentinel'?'Sentinel permissions':'Vault timelocks';
+deferred.innerHTML=v==='timelocks'
+ ?'<div class="cy-config-block"><h2>Vault Pending Actions</h2><p>The on-chain pending-action index is not yet connected. This is not a claim that no transactions are pending.</p></div><div class="cy-config-block"><h2>Vault Timelocks</h2>'+[['Add Adapter','Changes the vault adapter set'],['Increase Absolute Cap','Allows additional exposure'],['Increase Relative Cap','Changes proportional exposure'],['Allocator','Grants or revokes allocation privileges'],['Performance Fee','Changes yield-based fees'],['Management Fee','Changes annual fee rate']].map(r=>'<div class="cy-config-row"><div><strong>'+r[0]+'</strong><small>'+r[1]+'</small></div><span>Not loaded</span></div>').join('')+'</div><div class="cy-config-block"><h2>Market Adapter Timelocks</h2><p>Adapter-specific delays are shown after a verified adapter registry read is integrated.</p></div>'
+ :'<div class="cy-config-block"><h2>Sentinel Addresses</h2><p>Active sentinel roles are not yet read from this vault. Do not assume any sample address is authorized.</p></div><div class="cy-config-block"><h2>Emergency Actions</h2>'+[['Decrease Absolute Cap','Reduce permitted exposure'],['Decrease Relative Cap','Reduce proportional exposure'],['Revoke Pending Action','Stop an eligible queued change']].map(r=>'<div class="cy-config-row"><div><strong>'+r[0]+'</strong><small>'+r[1]+'</small></div><span>Read-only</span></div>').join('')+'<p>No transaction controls are presented without verified authority and exact deployed ABI.</p></div><div class="cy-config-block"><h2>Recent Activity</h2><p>Sentinel action history is not indexed yet.</p></div>';
 if(summary)summary.hidden=v!=='overview';g.classList.toggle('cy-full',v!=='overview')}
 nav.querySelectorAll('button').forEach(b=>b.onclick=()=>{show(b.dataset.section);scrollTo(0,0)});show(tab)}
 function decorate(){const page=root.querySelector('.v-page');if(!page||page.dataset.cyDecorated==='11')return;page.dataset.cyDecorated='11';if(create)wizard(page);else dashboard(page)}
