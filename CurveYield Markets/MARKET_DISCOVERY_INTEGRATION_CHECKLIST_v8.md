@@ -1,8 +1,62 @@
-# MARKET DISCOVERY INTEGRATION CHECKLIST — v7
+# MARKET DISCOVERY INTEGRATION CHECKLIST — v8
+
+> **Scope:** Ethereum mainnet, verified single-ERC-20 deposit assets and source-specific opportunity discovery
+> **Status:** Worker v176 deployed November 18, 2026. Smart-contract changes remain paused.
+> **Market data:** All counts below were observed at a fully warmed native-source snapshot. Edge caches can become cold and report `partial:true` until refreshed.
+
+## Quality-first and expanded asset selection — Worker v175–v176
+
+**Live production verification:** [CurveYield opportunities](https://markets.curveyield.org/opportunities) and [native API status](https://markets.curveyield.org/api/opportunities/status). Before the v176 change, all 708 qualifying listings remained accessible, with no observed source failures or coverage warnings after warming the providers. The backend now supports exact `minYield` (reported annual percentage) and `minTvl` (USD) filters; the UI defaults to 5%+ reported yield and $1M+ supplied TVL.
+
+| Discovery tier | Live matching snapshot | Purpose |
+| --- | ---: | --- |
+| Default: ≥5% reported annual yield, ≥$1M TVL | **125** | Depth-first higher-yield shortlist |
+| Higher yield: ≥8% reported annual yield, ≥$1M TVL | **46** | Higher-return shortlist, no claim of lower risk |
+| Exploratory: ≥5% reported annual yield, ≥$100K TVL | **198** | More speculative smaller markets |
+| All qualifying source-validated listings | **708** | Complete market catalog (historical lower bound >1% and >$100 TVL) |
+
+**The 25-token deposit-asset selector** uses immutable Ethereum contract addresses and filters exclusively by the asset users actually deposit, not its collateral or the vault’s underlying strategy. Its entries cover USDC, USDT, WETH, WBTC, wstETH, DAI, USDS, PYUSD, RLUSD, AUSD, crvUSD, frxUSD, GHO, USDe, EURC, USDG, apxUSD, BOLD, cbBTC, tBTC, weETH, rETH, cbETH, fxUSD, sUSDe. Selecting a token with no qualifying rate correctly returns an empty shortlist. These **25 selectable tokens are not 25 independently verified markets or protocols**.
+
+**Rate quality disclosure:** The catalog does not equate TVL to available withdrawal liquidity and does not assign a safety score based on TVL. APR and APY retain source-specific labels; rates are not directly interchangeable. Reported annual yields above **30%** now show an extreme-rate warning to encourage source, incentive, duration and withdrawal checks. Even the ≥$1M threshold is not liquidity proof. Snapshot yields may be stale, rapidly variable or dominated by promotional rewards. The original all-market view remains available.
+
+### Actual opportunity gaps, not a mandate to inflate the listing count
+
+| Deposit token | Qualified earlier-snapshot listings | ≥5% yield AND ≥$100K TVL | Discovery interpretation |
+| --- | ---: | ---: | --- |
+| USDC | ~277 | ~121 | Already saturated; deprioritize more small identical pools |
+| WETH | ~52 | 2 | Core yield coverage is thin after filtering |
+| WBTC | 10 | 1 | Severe shortage of meaningfully sized higher-yield lending |
+| wstETH | 1 | 0 | Severe shortage; lending income is low despite inherent staking exposure |
+| DAI | 18 | 4 | Can benefit from selective higher-quality savings |
+| USDS | 12 | 4 | Native Sky covered; seek sources beyond identical strategies |
+| frxUSD | 9 | 2 | Fraxlend and frxUSD-specific yield sources should be verified carefully |
+| GHO | 4 | 1 | Limited qualifying lender depth |
+| EURC | 13 | 0 | No demonstrated strong-yield source at current threshold |
+| RLUSD | 16 | 2 | Yield outliers need concentration and reward scrutiny |
+| PYUSD | ~27 | ~7 | Broader coverage but return is clustered in select sources |
+| AUSD | 19 | 7 | Broader, mostly Morpho; distinguish borrow-collateral from deposit asset |
+
+*Counts in this asset matrix come from paginated reads of a changing catalog across multiple cache snapshots and are indicative, not a single transactionally consistent full snapshot. The exact quality-tier totals above were verified from a fully refreshed 708-entry aggregate.*
+
+### New upstream sources screened, not published without proven eligibility
+
+- **Euler Earn:** Official Ethereum Earn API `https://v3.euler.finance/v3/earn/vaults?chainId=1&limit=100` exposed 12 records. One visible, explorable USDC vault (`InfiniFi Markets`, `0xB4a2fC3adAF3BfA8FCBA2A6FDAA200De106B8825`) advertised roughly **9.23%** current and 7-day APY at ~$142K TVL. Direct Ethereum reads verified underlying USDC, ERC-4626 `totalAssets` and positive `maxDeposit`, but the vault held **zero idle USDC**. No immediate same-asset exit was demonstrated; it was **not added**. Zero idle does not by itself prove all withdrawals impossible, but third-party strategy withdrawals require proof.
+- **Fraxlend:** Official registry and Ethereum pool inventory already exist in the Worker but remain quarantined pending exact official pair-specific interaction links, pair-level deposit permission/whitelist, direct same-asset withdrawal liquidity and correct APR. Fraxlend's active frxUSD/sfrxETH lender appears approximately 3.5% and $4.6M in external trackers, not sufficiently high to bypass these checks. Frax Facts analytics links are not automatically working deposit pages.
+- **Aave USDe headline rewards:** November 2026 Aave discussion explains advertised approximately 5.25% USDe returns depend mainly on separate Merkl campaign rewards while native lending supply interest is around 0.1%. Never replace native supply APY with advertising-inclusive temporary campaign rates without source-bound claim/reward handling. Reference: https://governance.aave.com/t/risk-stewards-november-2026-stablecoin-interest-rate-adjustments/26414
+- **cbBTC/tBTC/weETH/rETH:** Some are widely supplied as **collateral** but pay near-zero native supply interest on Ethereum. A collateral pool with large TVL is not a qualifying lending opportunity to deposit that collateral token itself. Lending vaults and routes must identify the exact deposit token.
+- **Frax sFRXUSD:** The Ethereum staking/unstaking route uses crosschain lockbox components according to official Frax docs, so its headline return is not an automatically compatible single-call ERC-4626 deposit/withdraw route. No adapter changes are authorized.
+- **Ethena sUSDe:** Staking yield must not be misrepresented as immediately withdrawable when the underlying redemption path has a cooldown.
+
+**Next source work:** prioritize executable source-native, fee-free, independently verifiable immediate-withdrawal markets for WBTC, WETH, wstETH, frxUSD, GHO, RLUSD and new BTC/ETH derivatives. Require source-bound APR/APY, recent onchain position identity and balances, exact asset-specific dapp links, deposit enablement, and verified withdrawal liquidity. Record zero qualifying findings explicitly, rather than lowering the bar or importing collateral-token yield.
+
+---
+
+## Previous verified integration checkpoint (v7; retained for provenance)
+
 
 > **Scope:** Ethereum mainnet · single-token ERC-20 deposits only
 > **Document status:** Verified protocol-discovery checkpoint; no smart-contract modifications or execution testing in this round.
-> **Current verified Worker deployment:** v170 (November 18, 2026); v168–v169 source integrations preserved by concurrent UI/Fraxtal updates.
+> **Historical Worker deployment:** v170 (November 18, 2026), superseded by the v176 checkpoint above; v168–v169 source integrations were preserved by concurrent UI/Fraxtal updates.
 > **Live aggregate verification:** [Markets status](https://markets.curveyield.org/api/opportunities/status) and [opportunities](https://markets.curveyield.org/opportunities).
 
 ## Current integration checkpoint — November 18, 2026 (Worker v170)
