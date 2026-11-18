@@ -21,7 +21,10 @@ jobs:
           set -euo pipefail
           ROOT="$RUNNER_TEMP/cywbtc-ethereum"
           mkdir -p "$ROOT"
-          unzip -q 'cywbtc-ipor-source-v19/cyWBTC_IPOR_Source_v19_V7_Compiler_Repair.zip' -d "$ROOT"
+          git fetch --no-tags --depth=1 origin 65d1023b9576a49e6de32d0b9f245d06e9c55a3b
+          git show 65d1023b9576a49e6de32d0b9f245d06e9c55a3b:cywbtc-ipor-source-v19/cyWBTC_IPOR_Source_v19_V7_Compiler_Repair.zip > "$RUNNER_TEMP/cywbtc-source-v19.zip"
+          echo '41a55c5f5d33d0135d0b2ebde0ad8fc558b014060c9d99b15f2bf2bc46b79947  ' "$RUNNER_TEMP/cywbtc-source-v19.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/cywbtc-source-v19.zip" -d "$ROOT"
           mkdir -p "$ROOT/contracts/fuses/fxsp" "$ROOT/contracts/fuses/convex" "$ROOT/contracts/executors"
           cp -r cyWBTC-Ethereum/contracts/* "$ROOT/contracts/"
           cd "$ROOT"
