@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 12
     env:
       PROTOCOL: "Beefy Vaults" # v96 exact official vault eligibility gate
-      STAGE: "verify"
+      STAGE: "diagnose"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -100,10 +100,9 @@ jobs:
           const browser=await chromium.launch({headless:true,args:['--disable-dev-shm-usage']});
           const context=await browser.newContext({viewport:{width:1350,height:850},locale:'en-US'});
           const sites=[
-           'https://app.beefy.com/vault/bifi-vault',
-           'https://app.beefy.finance/vault/bifi-vault',
-           'https://beefy-v2.pages.dev/vault/bifi-vault',
-           'https://app.beefy.com/'
+           'https://app.beefy.com/vault/morpho-eth-gauntlet-frontier-usdc',
+           'https://app.beefy.finance/vault/morpho-eth-gauntlet-frontier-usdc',
+           'https://app.beefy.com/vault/yb-wbtc'
           ];
           for(const url of sites){
            const p=await context.newPage(),errors=[],failed=[];
@@ -112,7 +111,7 @@ jobs:
            p.on('requestfailed',r=>{if(failed.length<12)failed.push({url:r.url().slice(0,150),err:r.failure()?.errorText})});
            try{
             const r=await p.goto(url,{waitUntil:'domcontentloaded',timeout:23000});
-            await p.waitForTimeout(6500);
+            await p.waitForTimeout(11500);
             const body=await p.locator('body').innerText({timeout:5000}).catch(()=>'');
             const html=await p.locator('body').innerHTML({timeout:5000}).catch(()=>'');
             const scripts=await p.locator('script').count();
