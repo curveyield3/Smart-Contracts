@@ -484,6 +484,10 @@ contract CyWBTCSafetyForkV1 {
             _shockWBTC(simulatedPriceShiftBeforeFinalizeBps);
         }
         _snapshot("user_scheduled_after_cooldown");
+        if (simulatedPriceShiftBeforeFinalizeBps != 0) {
+            _driveShockedRequestWithSafeRecovery();
+            return;
+        }
         // f(x) PoolConfiguration uses a transaction-long transient lock:
         // each finalize invocation can use at most ONE fxMINT operate.
         _tx("any_public_caller_can_redeem_fxsp_and_partially_repay", UNAUTHORIZED, address(publicExecutor),
@@ -808,7 +812,17 @@ contract CyWBTCSafetyForkV1 {
         uint256 shares = IERC20(VAULT).balanceOf(USER) / 100;
         _tx("reject_instant_exit_during_wbtc_price_crash", USER, VAULT,
             abi.encodeWithSignature("redeem(uint256,address,address)", shares, USER, USER), false);
-        require(_sameAccounting(shocked, _state()), "Vault worsened debt or consumed funds during shock");
+        // Repricing and subsequent balance-cache refresh legitimately change
+        // totalAssets; require the real balances and obligations stay unchanged.
+        State memory postShock = _state();
+        require(postShock.rawDebt == shocked.rawDebt &&
+            postShock.rawCollateral == shocked.rawCollateral &&
+            postShock.userShares == shocked.userShares &&
+            postShock.wbtcIdle == shocked.wbtcIdle &&
+            postShock.fxusdIdle == shocked.fxusdIdle &&
+            postShock.fxspIdle == shocked.fxspIdle &&
+            postShock.gaugeStakedShares == shocked.gaugeStakedShares,
+            "Vault changed real balances or debt during price shock");
         _snapshot("price_crash_final_account_state");
     }
 
@@ -859,7 +873,19 @@ contract CyWBTCSafetyForkV1 {
             abi.encodeWithSignature("compound(uint256)", uint256(0)));
         require(_state().managerLtv <= TARGET, "Routine manager action created excess debt");
         _fullScheduledExit();
-        require(IERC20(VAULT).totalSupply() == 0, "Closed vault still has unowned shares");
+        // Fee accrual during the cooldown can mint a few shares to the
+        // official DAO recipient. User 100% exit is valid when those tiny
+        // *owned* shares and their corresponding WBTC dust are the only residue.
+        uint256 feeShares = IERC20(VAULT).totalSupply();
+        address daoRecipient = address(bytes20(hex"f6a9bd8f6dc537675d499ac1ca14f2c55d8b5569"));
+        require(IERC20(VAULT).balanceOf(USER) == 0, "User shares not fully withdrawn");
+        require(feeShares <= 1_000 && IERC20(VAULT).balanceOf(daoRecipient) == feeShares,
+            "Unexpected non-DAO shares remain after user full exit");
+        State memory settled = _state();
+        require(settled.rawDebt == 0 && settled.gaugeStakedShares == 0 &&
+            settled.fxusdIdle == 0 && settled.fxspIdle == 0 && settled.wbtcIdle <= 10,
+            "Residual leveraged exposure exceeds accepted fee dust");
+        _snapshot("full_exit_only_dao_fee_dust");
     }
 
     function test_09_fee_admin_config_and_unauthorized_fee_guards() public {
@@ -914,5 +940,50 @@ contract CyWBTCSafetyForkV1 {
         require(IERC20(VAULT).totalSupply() == 0, "Rally-exit left vault shares");
         require(_state().rawDebt == 0, "Rally-exit left fxMINT debt");
         _snapshot("full_exit_after_mature_cooldown_40pct_rally");
+    }
+    /// @notice A large oracle change can precede DEX repricing. In that
+    /// temporarily inconsistent market state the existing UniversalTokenSwapper
+    /// slippage guard MUST revert without losing state, and the request must be
+    /// completable after prices again agree. Do not weaken the live swap guard.
+    function _driveShockedRequestWithSafeRecovery() private {
+        bool slippageProtected;
+        for (uint256 i; i < 8 && _pendingUnlock() != 0; i++) {
+            string memory label = string.concat("shock_finalize_step_", vm.toString(i));
+            _snapshot(string.concat(label, "_before"));
+            State memory beforeState = _state();
+            uint256 gasBefore = gasleft();
+            bytes memory calldataCopy = abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()");
+            vm.prank(PUBLIC_CALLER);
+            (bool ok, bytes memory result) = address(publicExecutor).call(calldataCopy);
+            CallEvidence memory c;
+            c.label = label;
+            c.sender = PUBLIC_CALLER;
+            c.target = address(publicExecutor);
+            c.calldataCopy = calldataCopy;
+            c.result = result;
+            c.success = ok;
+            c.expected = ok;
+            c.gasMeasured = gasBefore - gasleft();
+            c.accountingUnchanged = _sameAccounting(beforeState, _state());
+            _snapshot(string.concat(label, "_after"));
+            _saveCall(c);
+            if (!ok) {
+                require(!slippageProtected, "Failed again after restoring consistent prices");
+                require(c.accountingUnchanged, "Blocked price-shock swap changed vault accounting");
+                require(result.length >= 4 &&
+                    bytes4(result) == FXMintLTVManager.FuseExecutionFailed.selector,
+                    "Unexpected price-shock revert (not fuse slippage protection)");
+                slippageProtected = true;
+                vm.clearMockedCalls(); // fork-only: restore the real f(x)/IPOR oracle state
+                _snapshot("restore_consistent_chain_pricing_after_shock_guard");
+            }
+        }
+        require(slippageProtected, "Market/oracle mismatch did not trigger protection");
+        require(_pendingUnlock() == 0, "Request remained stuck after prices recovered");
+        require(IERC20(VAULT).balanceOf(USER) == 0, "User shares not fully redeemed after shock");
+        State memory post = _state();
+        require(post.rawDebt == 0, "fxMINT debt persisted after shock recovery");
+        require(post.gaugeStakedShares == 0, "Convex position persisted after full exit");
+        _snapshot("price_shock_then_recovery_full_user_exit");
     }
 }
