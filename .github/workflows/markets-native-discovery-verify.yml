@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
-      PROTOCOL: "Compound III"
+      PROTOCOL: "Beefy Vaults"
       STAGE: "research"
     steps:
       - uses: actions/checkout@v4
@@ -244,6 +244,20 @@ jobs:
              eligible:!paused&&apr>1&&tvl>100}));
            }catch(e){console.log('COMET_ERROR '+n+' '+String(e))}
           }
+          JS
+      - name: Inspect Beefy live withdrawal fee settings and YieldBasis wrappers
+        if: env.PROTOCOL == 'Beefy Vaults'
+        run: |
+          node --input-type=module <<'JS'
+          const u='https://api.beefy.finance/fees';
+          const r=await fetch(u,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(30000)});
+          console.log('FEE_API_HTTP '+r.status);
+          if(!r.ok)throw Error('Beefy /fees unavailable '+r.status);
+          const j=await r.json();
+          console.log('FEE_META '+JSON.stringify({total:Object.keys(j).length,withdrawFeeCount:Object.values(j).filter(x=>Number(x?.withdraw)>0).length}));
+          const names=['yb-cbbtc','yb-wbtc','yb-eth','bifi-vault','convex-staked-cvx','morpho-smokehouse-usdc','morpho-eth-gauntlet-frontier-usdc','morpho-v2-ethereum-steakhouse-high-yield-usdc'];
+          for(const k of names)console.log('FEE_VAULT '+JSON.stringify({vault:k,fees:j[k]||null}));
+          console.log('BEEFY_WITHDRAWAL_NONZERO '+JSON.stringify(Object.entries(j).filter(([k,v])=>Number(v?.withdraw)>0&&(/yb-|morpho|bifi|convex-staked|aavev4|sky-staking/i.test(k))).slice(0,100).map(([k,v])=>({vault:k,withdraw:v.withdraw}))));
           JS
       - name: Inspect full protocol listing, rates, single token identity and dapp usability
         if: env.STAGE == 'verify'
