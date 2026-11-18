@@ -164,6 +164,7 @@ jobs:
           async function read(to,method,...args){
             return I.decodeFunctionResult(method,await rpc(to,I.encodeFunctionData(method,args)));
           }
+          console.log('SPARK_SELECTORS '+JSON.stringify(Object.fromEntries(['getPool','getPoolDataProvider','getPriceOracle','getAllReservesTokens','getReserveData','getReserveConfigurationData','getReserveCaps','getConfiguration','getAssetPrice'].map(n=>[n,I.getFunction(n).selector]))));
           const provider='0x02c3ea4e34c0cbd694d2adfa2c690eecbc1793ee';
           const pool=(await read(provider,'getPool'))[0],dp=(await read(provider,'getPoolDataProvider'))[0],oracle=(await read(provider,'getPriceOracle'))[0];
           const reserves=(await read(dp,'getAllReservesTokens'))[0];
