@@ -9,8 +9,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
-      PROTOCOL: "Beefy Vaults" # v96 exact official vault eligibility gate
-      STAGE: "verify"
+      PROTOCOL: "SparkLend"
+      STAGE: "research"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -125,6 +125,67 @@ jobs:
           JS
           cd "$RUNNER_TEMP/market-verify"
           node beefy-ui.mjs
+      - name: Research SparkLend native reserves via official addresses provider
+        if: env.PROTOCOL == 'SparkLend'
+        timeout-minutes: 4
+        run: |
+          mkdir -p "$RUNNER_TEMP/market-verify"
+          cd "$RUNNER_TEMP/market-verify"
+          npm install --no-save --no-audit --no-fund ethers@6.15.0
+          node --input-type=module <<'JS'
+          import {Interface} from 'ethers';
+          const endpoints=['https://ethereum-rpc.publicnode.com','https://eth.llamarpc.com','https://eth.drpc.org'];
+          let index=0;
+          async function rpc(to,data){
+            let last;
+            for(let k=0;k<endpoints.length;k++){
+              const u=endpoints[(index+k)%endpoints.length];
+              try{
+                const r=await fetch(u,{method:'POST',headers:{'content-type':'application/json'},
+                  body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_call',params:[{to,data,gas:'0x1c9c380'},'latest']}),
+                  signal:AbortSignal.timeout(14000)});
+                const j=await r.json();if(!r.ok||j.error||typeof j.result!=='string')throw Error('RPC '+r.status+' '+JSON.stringify(j.error||j).slice(0,120));
+                index=(index+k)%endpoints.length;return j.result;
+              }catch(e){last=e}
+            }
+            throw last;
+          }
+          const I=new Interface([
+            'function getPool() view returns(address)',
+            'function getPoolDataProvider() view returns(address)',
+            'function getPriceOracle() view returns(address)',
+            'function getAllReservesTokens() view returns (tuple(string symbol,address tokenAddress)[])',
+            'function getReserveData(address) view returns(uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint40)',
+            'function getReserveConfigurationData(address) view returns(uint256,uint256,uint256,uint256,uint256,bool,bool,bool,bool,bool)',
+            'function getReserveCaps(address) view returns(uint256,uint256)',
+            'function getConfiguration(address) view returns(uint256)',
+            'function getAssetPrice(address) view returns(uint256)'
+          ]);
+          async function read(to,method,...args){
+            return I.decodeFunctionResult(method,await rpc(to,I.encodeFunctionData(method,args)));
+          }
+          const provider='0x02c3ea4e34c0cbd694d2adfa2c690eecbc1793ee';
+          const pool=(await read(provider,'getPool'))[0],dp=(await read(provider,'getPoolDataProvider'))[0],oracle=(await read(provider,'getPriceOracle'))[0];
+          const reserves=(await read(dp,'getAllReservesTokens'))[0];
+          console.log('SPARK_REGISTRY '+JSON.stringify({provider,pool,dp,oracle,reserves:reserves.length,at:Date.now()}));
+          for(const asset of reserves){
+            try{
+              const a=asset.tokenAddress;
+              const [d,c,cap,p,mask]=await Promise.all([
+                read(dp,'getReserveData',a),read(dp,'getReserveConfigurationData',a),read(dp,'getReserveCaps',a),
+                read(oracle,'getAssetPrice',a),read(pool,'getConfiguration',a)
+              ]);
+              const dec=Number(c[0]),sup=Number(d[2])/10**dec,interest=Number(d[5])/1e27*100;
+              const bits=BigInt(mask[0]),enabled=(bits>>56n&1n)===1n,
+                frozen=(bits>>57n&1n)===1n,paused=(bits>>60n&1n)===1n;
+              const tvl=sup*Number(p[0])/1e8;
+              console.log('SPARK_RESERVE '+JSON.stringify({token:asset.symbol,address:a,supply: sup,
+                tvl,apr:interest,apy:Math.expm1(interest/100)*100,active:enabled,frozen,paused,
+                rawSupplyCap:cap[0].toString(),decimals:dec,
+                eligible:enabled&&!frozen&&!paused&&interest>1&&tvl>100}));
+            }catch(e){console.log('SPARK_RESERVE_ERROR '+asset.symbol+' '+String(e))}
+          }
+          JS
       - name: Inspect full protocol listing, rates, single token identity and dapp usability
         if: env.STAGE == 'verify'
         timeout-minutes: 9
