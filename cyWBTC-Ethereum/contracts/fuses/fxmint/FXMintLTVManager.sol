@@ -55,6 +55,12 @@ interface IFxSPNavForManager {
     function nav() external view returns (uint256);
     function redeemRequests(address account) external view returns (uint128 amount, uint128 unlockAt);
 }
+interface IFXMintConvexReader {
+    function REGISTRY() external view returns (address);
+}
+interface IFXMintConvexRegistry {
+    function vaultMap(uint256 pid, address owner) external view returns (address);
+}
 
 /// @notice fxMINT LTV logic plus ONE public, globally pending, native-IPOR withdrawal request.
 /// @dev Own storage holds only target/slippage/pending request. All PlasmaVault protocol operations
@@ -77,6 +83,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     uint256 private constant WITHDRAW_LTV_IMPROVEMENT_WAD = 1e16;
     uint256 private constant WITHDRAW_ROUNDING_HEADROOM_WAD = 1e14;
     uint256 private constant FXSP_COOLDOWN = 1 hours;
+    uint256 private constant COLLATERAL_RECOVERY_SWAP_BUFFER_BPS = 300;
 
     struct Addresses {
         address vault;
@@ -317,9 +324,16 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         if (shareNav == 0) revert InvalidPrice();
         // Single fxUSD <-> fxSP conversion convention. No USDC/fxUSD output forecast.
         uint256 shares = Math.mulDiv(debtBudget - idleFxUSD, WAD, shareNav, Math.Rounding.Up);
-        // Idle fxSP is already available for redemption. Unstake only the
-        // additional shares needed, rather than failing on an excessive gauge withdrawal.
+        // The live stake can be BELOW the full debt repayment budget because
+        // fxSP/Convex entrance costs and fxMINT borrow/repay fees exist.
+        // Never attempt to unstake more than the actually redeemable shares.
         uint256 idleFxspShares = IERC20(FXSP).balanceOf(VAULT);
+        address registry = IFXMintConvexReader(CONVEX_STAKE_FUSE).REGISTRY();
+        address personal = IFXMintConvexRegistry(registry).vaultMap(37, VAULT);
+        uint256 staked = personal == address(0) ? 0 : IERC20(CONVEX_GAUGE).balanceOf(personal);
+        uint256 availableShares = idleFxspShares + staked;
+        if (shares > availableShares) shares = availableShares;
+        if (shares == 0) revert InsufficientLiquidity(debtBudget, 0);
         if (shares > idleFxspShares) {
             _executeOne(CONVEX_STAKE_FUSE, abi.encodeWithSignature(
                 "exit((address,uint256))", ConvexGaugeExitData(CONVEX_GAUGE, shares - idleFxspShares)));
@@ -349,13 +363,26 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             "finalizeExit((address,uint256))", FxSPExitData(FXSP, p.fxspShares)));
         uint256 usdc = IERC20(USDC).balanceOf(VAULT);
         if (usdc != 0) _swap(USDC, FXUSD, usdc);
-        _repayFromIdle(p.nftId, p.debtReduction);
+        if (IERC20(FXUSD).balanceOf(VAULT) >= _repayBudget(p.debtReduction)) {
+            _repayFromIdle(p.nftId, p.debtReduction);
+        } else {
+            // One scheduled exit may need a little collateral conversion to
+            // cover protocol entry/exit fees. Never do this in instantWithdraw.
+            _repayWithCollateralRecovery(p.nftId, p.debtReduction);
+        }
         (uint256 rawCollateral, uint256 liveDebt) = _position(p.nftId);
-        uint256 rawRemaining = _remainingRawCollateral(p.collateralReleaseWBTC, rawCollateral);
-        if (_ltv(rawRemaining, liveDebt, _exchangePrice()) > _liveTarget()) revert UnsafeLtv(
-            _ltv(rawRemaining, liveDebt, _exchangePrice()), _liveTarget());
-        _executeOne(FXMINT_COLLATERAL_FUSE,
-            abi.encodeWithSignature("exit(uint256,uint256,uint256)", p.nftId, p.collateralReleaseWBTC, uint256(0)));
+        uint256 scaling = IFXMintManagerPoolManager(POOL_MANAGER).getTokenScalingFactor(WBTC);
+        if (scaling == 0) revert InvalidConfiguration();
+        uint256 nativeAvailable = Math.mulDiv(rawCollateral, WAD, scaling);
+        uint256 releaseWBTC = p.collateralReleaseWBTC < nativeAvailable
+            ? p.collateralReleaseWBTC : nativeAvailable;
+        if (releaseWBTC != 0) {
+            uint256 rawRemaining = _remainingRawCollateral(releaseWBTC, rawCollateral);
+            if (_ltv(rawRemaining, liveDebt, _exchangePrice()) > _liveTarget()) revert UnsafeLtv(
+                _ltv(rawRemaining, liveDebt, _exchangePrice()), _liveTarget());
+            _executeOne(FXMINT_COLLATERAL_FUSE,
+                abi.encodeWithSignature("exit(uint256,uint256,uint256)", p.nftId, releaseWBTC, uint256(0)));
+        }
         // Use IPOR's native release + request redemption; no custom shares accounting or queue.
         IFXMintWithdrawManager(WITHDRAW_MANAGER).releaseFunds(block.timestamp - 1, p.shares);
         uint256 released = IFXMintManagerVault(VAULT).redeemFromRequest(p.shares, p.user, p.user);
@@ -446,6 +473,64 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         if (feeBps < MIN_REPAY_RESERVE_BPS) feeBps = MIN_REPAY_RESERVE_BPS;
         budget = debtReduction + Math.mulDiv(debtReduction, feeBps + reserve, BPS, Math.Rounding.Up)
             + RAW_DEBT_BUFFER;
+    }
+
+    /// @notice Scheduled-only debt repayment recovery when redeemed fxSP is
+    ///         insufficient to cover both principal and fees. First repay from
+    ///         actual fxUSD, then release a small SAFE amount of WBTC and swap it
+    ///         using the existing WBTC->USDC->fxUSD OmniRouter configuration.
+    /// @dev Neither the normal user instant redemption nor instantWithdraw calls
+    ///      this function. Each withdrawal checks the live configured LTV.
+    function _repayWithCollateralRecovery(uint256 id, uint256 requestedReduction) private {
+        (uint256 rawCollateral, uint256 initialDebt) = _position(id);
+        if (requestedReduction > initialDebt) requestedReduction = initialDebt;
+        uint256 price = _exchangePrice();
+        uint256 stableAvailable = IERC20(FXUSD).balanceOf(VAULT);
+        (, , , uint256 liveRepayFee) = _feeRatios();
+        uint256 feeBps = Math.mulDiv(liveRepayFee, BPS, FEE_PRECISION, Math.Rounding.Up);
+        if (feeBps < MIN_REPAY_RESERVE_BPS) feeBps = MIN_REPAY_RESERVE_BPS;
+        uint256 repayable = Math.mulDiv(stableAvailable, BPS,
+            BPS + feeBps + IFXMintManagerConfig(VERSION).withdrawSlippageBps() + 100);
+        if (repayable > requestedReduction) repayable = requestedReduction;
+        (uint256 minDebtRatio,) = IFXMintManagerPosition(POOL).getDebtRatioRange();
+        uint256 minResidual = Math.mulDiv(
+            Math.mulDiv(rawCollateral, price, WAD), minDebtRatio, WAD, Math.Rounding.Up
+        ) + RAW_DEBT_BUFFER;
+        if (repayable != 0 && initialDebt - repayable < minResidual) {
+            repayable = initialDebt > minResidual ? initialDebt - minResidual : 0;
+        }
+        if (repayable != 0) {
+            _executeOne(FXMINT_BORROW_FUSE, abi.encodeWithSignature(
+                "exit(uint256,uint256,bool,uint256)", id, repayable, false, stableAvailable));
+        }
+        (, uint256 debtAfter) = _position(id);
+        if (debtAfter > initialDebt) revert UnexpectedPositionChange();
+        uint256 repaid = initialDebt - debtAfter;
+        uint256 remainingToRepay = requestedReduction > repaid ? requestedReduction - repaid : 0;
+        if (remainingToRepay == 0) return;
+        uint256 fullBudget = _repayBudget(remainingToRepay);
+        uint256 idleStable = IERC20(FXUSD).balanceOf(VAULT);
+        if (fullBudget > idleStable) {
+            uint256 missing = fullBudget - idleStable;
+            uint256 sell = Math.mulDiv(missing, 1e8, price, Math.Rounding.Up);
+            sell = Math.mulDiv(sell, BPS + COLLATERAL_RECOVERY_SWAP_BUFFER_BPS,
+                BPS, Math.Rounding.Up);
+            if (sell == 0) revert InvalidAmount();
+            uint256 scaling = IFXMintManagerPoolManager(POOL_MANAGER).getTokenScalingFactor(WBTC);
+            if (scaling == 0) revert InvalidConfiguration();
+            uint256 rawToRelease = Math.mulDiv(sell, scaling, WAD, Math.Rounding.Up)
+                + (scaling / WAD) + 1;
+            if (rawToRelease >= rawCollateral) revert InsufficientCollateral(rawToRelease, rawCollateral);
+            uint256 projectedLtv = _ltv(rawCollateral - rawToRelease, debtAfter, price);
+            if (projectedLtv > _liveTarget()) revert UnsafeLtv(projectedLtv, _liveTarget());
+            uint256 beforeWBTC = IERC20(WBTC).balanceOf(VAULT);
+            _executeOne(FXMINT_COLLATERAL_FUSE,
+                abi.encodeWithSignature("exit(uint256,uint256,uint256)", id, sell, uint256(0)));
+            uint256 receivedWBTC = IERC20(WBTC).balanceOf(VAULT) - beforeWBTC;
+            if (receivedWBTC == 0) revert InsufficientLiquidity(sell, 0);
+            _swap(WBTC, FXUSD, receivedWBTC);
+        }
+        _repayFromIdle(id, remainingToRepay);
     }
 
     function _repayFromIdle(uint256 id, uint256 debtReduction) private {
