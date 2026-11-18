@@ -9,14 +9,53 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
-      PROTOCOL: "all" # complete direct-USDC dapp verification
+      PROTOCOL: ${{ contains(github.event.head_commit.message, '[axelar-eth-quote]') && 'Axelar Ethereum quote' || 'all' }} # unchanged for regular runs
       ASSET: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
-      STAGE: "verify"
+      STAGE: ${{ contains(github.event.head_commit.message, '[axelar-eth-quote]') && 'research' || 'verify' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Quote Axelar Ethereum to Fraxtal and Ethereum execution gas
+        if: env.PROTOCOL == 'Axelar Ethereum quote'
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          const token='0x7f708a05421a66eda41f6162e6bad4c4847ab5c9', owner='0x9f2b20a772246960810045905b7daccf960ee288';
+          const feeEndpoint='https://api.axelarscan.io/gmp/estimateITSFee';
+          const cases=[
+            {sourceChain:'Ethereum',destinationChain:'fraxtal',event:'InterchainTransfer',showDetailedFees:true,sourceTokenAddress:token},
+            {sourceChain:'ethereum',destinationChain:'fraxtal',event:'InterchainTransfer',showDetailedFees:true,sourceTokenAddress:token},
+            {sourceChain:'Ethereum',destinationChain:'fraxtal',event:'InterchainTransfer',showDetailedFees:true}
+          ];
+          for(const c of cases){
+            try{
+              const r=await fetch(feeEndpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(c),signal:AbortSignal.timeout(25000)});
+              const txt=await r.text();
+              console.log('AXELAR_ETH_FEE_QUOTE '+JSON.stringify({time:new Date().toISOString(),request:c,http:r.status,response:txt.slice(0,8500)}));
+            }catch(e){console.log('AXELAR_ETH_FEE_ERROR '+JSON.stringify({request:c,error:String(e)}))}
+          }
+          const w=x=>BigInt(x).toString(16).padStart(64,'0');
+          const bytes=x=>w(x.length/2)+x.padEnd(Math.ceil(x.length/64)*64,'0');
+          const str=x=>bytes(Array.from(x).map(c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join(''));
+          const amount=700000n*10n**18n;
+          const calldata='0xbc0ba3c5'+w(128)+w(192)+w(amount)+w(256)+str('fraxtal')+bytes(owner.toLowerCase().slice(2))+w(0);
+          const tx={from:owner,to:token,value:'0x0',data:calldata};
+          const rpcUrl='https://ethereum-rpc.publicnode.com';
+          for(const [method,params] of [
+            ['eth_estimateGas',[tx]],
+            ['eth_gasPrice',[]],
+            ['eth_feeHistory',['0x5','latest',[20,50,80]]],
+            ['eth_getBalance',[owner,'latest']]
+          ]){
+            try{
+              const r=await fetch(rpcUrl,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:2,method,params}),signal:AbortSignal.timeout(20000)});
+              const j=await r.json();
+              console.log('ETHEREUM_LIVE_GAS '+JSON.stringify({method,http:r.status,result:j.result,error:j.error}));
+            }catch(e){console.log('ETHEREUM_LIVE_GAS_ERROR '+JSON.stringify({method,error:String(e)}))}
+          }
+          JS
       - name: Install Chromium browser
         if: env.STAGE != 'research'
         run: |
