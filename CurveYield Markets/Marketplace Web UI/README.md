@@ -1,8 +1,8 @@
-# CurveYield Marketplace Web UI — Production v173 / Visual Reference v9
+# CurveYield Marketplace Web UI — Production v174 / Visual Reference v9
 
 **Start here for any CurveYield Markets website/curator page design work.**
 
-## Production v173 — current functional status
+## Production v174 — current functional status
 
 Cloudflare Worker `markets` v171 added source-bound Fraxtal vault inventory, wallet-filtered market activity and live vault Timelocks/Sentinel reads. All changes are read-only; existing transaction and deployment handlers remain authoritative. Reinspect the active Worker before editing because other agents update it concurrently.
 
@@ -13,12 +13,13 @@ Cloudflare Worker `markets` v171 added source-bound Fraxtal vault inventory, wal
 - **Current frontend JS:** [marketplace-live-v12.js](site/marketplace-live-v12.js) and [vault-ui-v12.js](site/vault-ui-v12.js); CSS stays [vault-ui-v11.css](site/vault-ui-v11.css). GitHub source files are pinned by exact commits in the live Worker, not automatically published by branch updates. Older marketplace v10/v11 and vault v11 JavaScript were replaced.
 - **Live verification:** Production `/api/vault-directory` and `/vaults` displayed the same one-vault verified historical record; `/api/vault-readiness` returned on-chain roles and timelocks for it; `/api/portfolio-activity` returned a bounded empty record for a zero-address input. No wallet signing or blockchain transactions were executed. Full latest-build mobile and end-to-end wallet QA remains outstanding.
 
-## Production v172–v173 frontend correctness updates
+## Production v172–v174 frontend correctness updates
 
 - **v172 — verified market data mapping:** The live market directory's `Supplied` column now reads `m.supply`, not `m.borrow`. Factory-created market position pages request `/api/positions?wallet=...&market=<marketId>` and require Fraxtal `chainId:252` before displaying positions.
 - **v173 — vault directory index integrity:** The live directory now reads `coverage.complete` and `warning` from `/api/vault-directory`; lack of a next-page cursor is **not** treated as proof of full coverage. RPC scan failures and missing coverage remain visible.
-- Both updates were made to the **existing** [site/marketplace-live-v12.js](site/marketplace-live-v12.js) source rather than creating duplicate frontend files. Worker `markets` pins the updated GitHub commit `afc4f31a8cf44846aadddf0b260849980fa380a9`. The v172 pin was `c1a5eb296d7f8fed02d2767e22d8a0a01131e922`.
-- Cloudflare Worker version **173** was verified active after deployment; producer APIs, actual signing and creation handlers, and other agents' opportunity collectors were preserved. Automated live wallet transaction QA is **not** claimed.
+- **v174 — Portfolio empty-state integrity:** When the per-market position API reports errors, the wallet view explicitly says coverage is incomplete rather than treating failed reads as zero balances. Portfolio totals warn when any market reads failed.
+- All updates were made to the **existing** [site/marketplace-live-v12.js](site/marketplace-live-v12.js) source rather than creating duplicate frontend files. Worker `markets` pins the updated GitHub commit `15225f18a7069609837d5824b303069cc077d50e`. Previous pins included `afc4f31a8cf44846aadddf0b260849980fa380a9` (v173) and `c1a5eb296d7f8fed02d2767e22d8a0a01131e922` (v172).
+- Cloudflare Worker version **174** was verified active after deployment; producer APIs, actual signing and creation handlers, and other agents' opportunity collectors were preserved. Automated live wallet transaction QA is **not** claimed.
 
 ## Where it runs
 
