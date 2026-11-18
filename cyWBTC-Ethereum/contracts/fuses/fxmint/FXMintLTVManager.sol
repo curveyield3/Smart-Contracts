@@ -63,7 +63,7 @@ struct FxSPEnterData { address vault; uint256 vaultAssetAmount; uint256 minShare
 struct FxSPExitData { address vault; uint256 shares; }
 struct ConvexGaugeEnterData { address childLiquidityGauge; uint256 lpTokenAmount; }
 struct ConvexGaugeExitData { address childLiquidityGauge; uint256 lpTokenAmount; }
-struct IPORSwapData { address[] targets; bytes[] data; address[] tokensToReturn; }
+struct IPORSwapData { address[] targets; bytes[] data; }
 struct IPORSwapEnterData { address tokenIn; address tokenOut; uint256 amountIn; uint256 minAmountOut; IPORSwapData data; }
 
 contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
@@ -471,10 +471,12 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         bytes[] memory callData = new bytes[](2);
         callData[0] = abi.encodeWithSignature("approve(address,uint256)", OMNI_ROUTER, amount);
         callData[1] = abi.encodeWithSignature("easyswap(address,address,uint256)", tokenIn, tokenOut, amount);
-        address[] memory returnTokens = new address[](0);
+        // Bound to the deployed Ethereum IPOR UniversalTokenSwapperFuse v0.8.26,
+        // whose verified ABI has TWO SwapData fields (targets, data). The
+        // v0.8.30 source adds tokensToReturn and uses a different selector.
         _executeOne(OMNI_SWAP_FUSE, abi.encodeWithSignature(
-            "enter((address,address,uint256,uint256,(address[],bytes[],address[])))",
-            IPORSwapEnterData(tokenIn, tokenOut, amount, 0, IPORSwapData(targets, callData, returnTokens))));
+            "enter((address,address,uint256,uint256,(address[],bytes[])))",
+            IPORSwapEnterData(tokenIn, tokenOut, amount, 0, IPORSwapData(targets, callData))));
     }
 
     function _supplyAllIdleWBTC(uint256 id) private {
