@@ -3,8 +3,8 @@
 (()=>{
 const root=document.getElementById('page'),frame=document.getElementById('appFrame');
 if(!root||!frame)return;
-const create=location.pathname==='/vaults/create',manage=/^\/vaults\/0x[a-f0-9]{40}$/i.test(location.pathname);
-if((!create&&!manage)||new URLSearchParams(location.search).get('chain')==='ethereum')return;
+const create=location.pathname==='/vaults/create',manage=/^\/vaults\/0x[a-f0-9]{40}$/i.test(location.pathname),marketCreate=location.pathname==='/create';
+if((!create&&!manage&&!marketCreate)||new URLSearchParams(location.search).get('chain')==='ethereum')return;
 let stage=1,tab='overview';try{stage=sessionStorage.getItem('cy-vault-stage')==='2'?2:1}catch{}
 for(const a of frame.querySelectorAll('a[href^="#/"]')){const h=a.getAttribute('href'),map={'#/overview':'/','#/markets':'/markets','#/vaults':'/vaults','#/portfolio/positions':'/portfolio','#/markets/create':'/create','#/vaults/create':'/vaults/create'};if(map[h])a.href=map[h];else if(h==='#/oracles'||h==='#/liquidations'){a.hidden=true;a.style.display='none'}}
 for(const section of frame.querySelectorAll('.side-section'))if(/Favorites|My Vaults/.test(section.querySelector('.section-label')?.textContent||''))section.hidden=true;
