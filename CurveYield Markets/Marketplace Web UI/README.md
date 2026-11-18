@@ -1,4 +1,4 @@
-# CurveYield Marketplace Web UI — Agent Handoff (v8 visual snapshot)
+# CurveYield Marketplace Web UI — Agent Handoff (v9 browsing visual preview)
 
 **Start here for any CurveYield Markets website/curator page design work.**
 
@@ -14,13 +14,13 @@
 
 ## Source files kept here
 
-The **exact served UI assets** were captured directly from the live Worker's `CY_CURATOR_PREVIEW_GZIP` object and preserved byte-for-byte as compressed Git blobs:
+The **v9 visual preview assets** are stored as gzip-compressed Git blobs. These are the canonical page assets for the browsing preview (not a source of live financial data):
 
 - `site/index.html.gz`
 - `site/app.css.gz`
 - `site/app.js.gz`
 
-The Worker adds these three CSS overlays **in this order** when serving `/curator-preview/app.css`:
+The new v9 `app.css.gz` already includes the approved v4-v8 layout styling and all new marketplace design styles. These legacy overlay stylesheets remain available as references, but should not be appended again when serving v9:
 
 1. `site/dashboard-density-v4.css` — ~20% denser dashboard layout; do not tighten creation pages.
 2. `site/dashboard-gutters-v5.css` — centered dashboard content with balanced side gutters.
@@ -32,7 +32,7 @@ To reconstruct an **editable, faithful standalone copy**, run from the `site` di
 gzip -dc index.html.gz > index.html
 gzip -dc app.css.gz > app.css
 gzip -dc app.js.gz > app.js
-cat dashboard-density-v4.css dashboard-gutters-v5.css page-title-center-v6.css >> app.css
+## v9 already includes the complete visual styles; do not append these twice.
 ```
 
 Now open locally with a static HTTP server, e.g. `python3 -m http.server 8000`, and navigate to `http://localhost:8000/#/markets/create`. Browser mockups use example data; development should preserve their semantics when integrating APIs and wallet transactions.
@@ -42,7 +42,7 @@ Now open locally with a static HTTP server, e.g. `python3 -m http.server 8000`, 
 ## Visual authority and required behavior
 
 - Follow `visual-authority/README.md` and `visual-authority/filename-map-v1.csv`. The 18 originally supplied Morpho curator screenshots are the placement/layout authority. CurveYield should use white and gold, not Morpho's blue.
-- The v8 design includes two-page vault creation, market creation, the same persistent configured-vault dashboard as the post-deployment guided setup dashboard, Portfolio (positions/vaults/activity), a collapse/expand sidebar and a mobile overlay menu.
+- The v9 design includes the existing two-page vault creation, market creation, persistent curator dashboard, plus **market directory, vault directory, individual market details, consumer-style vault details, Portfolio, Home**, collapsible sidebar and mobile menu.
 - The dashboard navigation pages are Overview, Allocation, Caps, Timelocks, Sentinel.
 - Responsive layouts must keep all buttons, controls, tables, and forms **within their parent bounds**, including the sidebar Create action. Tables may scroll *inside their own containers*, not overflow the page.
 - Headers: center **only the page-level title and directly adjacent subtitle**; not table headings, module headings or field labels.
@@ -56,13 +56,25 @@ This `/curator-preview` experience is a **visual preview**, with example vaults/
 
 Fraxtal is the first target chain. New live transaction integration must use verified factory/controller contracts and actual ABI and receipt evidence; never assume a mock button submits on-chain.
 
+
+## v9 browsing pages — routes and state
+
+- `#/overview` — Home; `#/markets` — variable-rate market discovery; `#/vaults` — vault discovery.
+- `#/markets/wfrax-frxusd` — example market detail (Overview / Positions / Risk / Activity).
+- `#/vaults/wfrax-prime` — example vault detail (Overview / Allocation / Performance / Risk / Activity).
+- `#/portfolio/positions`, `#/portfolio/vaults`, `#/portfolio/activity` — account portfolio visual surfaces.
+- Filters and sorting on discovery tables work client-side with **illustrative preview rows**. There are no real on-chain metrics or wallet transactions in these demo routes. The links labeled live opportunities lead to the production market-discovery experience.
+- Morpho's visual information architecture is the reference: compact page titles, directory summary and filters, dense tables, entity headers, tabs, detail panels and transaction-side rail. Brand colors are CurveYield white/gold.
+- Browser render observations: six routes checked at 320, 390, 768, 1024, 1280, and 1920px (36 route/viewport pairs), with no page-wide overflow or script errors. New visual changes require fresh browser inspection; do not treat this as permanent test coverage.
+- To avoid exceeding the large Markets Worker's ~500 KB source limit, the preview-only paths can proxy the versioned compressed assets from this GitHub folder, using Cloudflare cache. Keep regular opportunities, vault deployment, APIs and market-discovery routes unaffected. Before promoting or refactoring, confirm the currently deployed version and asset hashes.
+
 ## Editing handoff
 
 1. Read this README, the visual manifest, and the current live Worker source; inspect relevant screenshot images before changing layout.
-2. Decompress the three asset files above. Treat their resulting files as the **current served preview snapshot** and add the three CSS overlays to reconstruct its appearance.
+2. Decompress the three asset files above. Treat their resulting files as the **v9 visual source**; app.css includes the prior styling, so do not append the old CSS overlays.
 3. Make the smallest necessary UI edits. Do not introduce redundant workflows, duplicate versions, or new contract source in Contract-Automation.
 4. Browser-check reference fidelity, viewport overflow (especially Create button), collapsed/expanded sidebar, and the pages changed. No new automated test suites unless authorized.
 5. Deploy via Cloudflare Ops only after merging with the latest Worker code and preserving bindings, APIs, wallet/transaction functions and other agents' collector changes.
 6. Update the canonical source snapshot and this README when approved changes are live. Provide deployed Worker version and evidence, distinguishing preview-only from actual on-chain support.
 
-Historical ZIP versions 1–8 and local preview screenshots were generated in the ChatGPT conversation. The **original visual authority screenshot archive is now committed in this repository** at [`visual-authority/Complete CurveYield MarketPlace Visual Authority Images.zip`](visual-authority/Complete%20CurveYield%20MarketPlace%20Visual%20Authority%20Images.zip), alongside the filename/checksum mapping. The archive was moved intact from the repository root (Git blob SHA `f1c0e802502c0eb60820562a0bbf1b2e3d1ef638`, 5,597,806 bytes). Extract the images to compare visual placement; do not confuse the demonstration screenshots with Morpho source authority.
+Historical ZIP versions 1–9 and local preview screenshots were generated in the ChatGPT conversation. The **original visual authority screenshot archive is now committed in this repository** at [`visual-authority/Complete CurveYield MarketPlace Visual Authority Images.zip`](visual-authority/Complete%20CurveYield%20MarketPlace%20Visual%20Authority%20Images.zip), alongside the filename/checksum mapping. The archive was moved intact from the repository root (Git blob SHA `f1c0e802502c0eb60820562a0bbf1b2e3d1ef638`, 5,597,806 bytes). Extract the images to compare visual placement; do not confuse the demonstration screenshots with Morpho source authority.
