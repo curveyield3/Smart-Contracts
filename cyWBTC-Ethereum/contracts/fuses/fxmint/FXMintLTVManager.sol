@@ -317,8 +317,13 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         if (shareNav == 0) revert InvalidPrice();
         // Single fxUSD <-> fxSP conversion convention. No USDC/fxUSD output forecast.
         uint256 shares = Math.mulDiv(debtBudget - idleFxUSD, WAD, shareNav, Math.Rounding.Up);
-        _executeOne(CONVEX_STAKE_FUSE, abi.encodeWithSignature(
-            "exit((address,uint256))", ConvexGaugeExitData(CONVEX_GAUGE, shares)));
+        // Idle fxSP is already available for redemption. Unstake only the
+        // additional shares needed, rather than failing on an excessive gauge withdrawal.
+        uint256 idleFxspShares = IERC20(FXSP).balanceOf(VAULT);
+        if (shares > idleFxspShares) {
+            _executeOne(CONVEX_STAKE_FUSE, abi.encodeWithSignature(
+                "exit((address,uint256))", ConvexGaugeExitData(CONVEX_GAUGE, shares - idleFxspShares)));
+        }
         _executeOne(FXSP_SUPPLY_FUSE, abi.encodeWithSignature(
             "exit((address,uint256))", FxSPExitData(FXSP, shares)));
         (, uint128 unlockAt) = IFxSPNavForManager(FXSP).redeemRequests(VAULT);
