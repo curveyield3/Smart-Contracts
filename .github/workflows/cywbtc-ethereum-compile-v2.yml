@@ -55,4 +55,5 @@ jobs:
             contracts/fuses/fxmint/FXMintLTVManager.sol \
             contracts/fuses/fxmint/FXMintBorrowFuse.sol \
             contracts/fuses/fxmint/FXMintCollateralFuse.sol \
-            contracts/executors/FulfillWithdrawExecutor.sol
+            contracts/executors/FulfillWithdrawExecutor.sol \
+            contracts/price_oracle/price_feed/FXNPriceFeedEthereum_v1.sol
