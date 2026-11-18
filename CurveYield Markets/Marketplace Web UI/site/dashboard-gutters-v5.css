@@ -1,0 +1,7 @@
+/* CurveYield v5: Morpho-style centered dashboard rails; presentation only. */
+.vault-dashboard .dashboard-inner{width:min(88%,1260px);padding-inline:0}
+.vault-dashboard.new-setup .dashboard-inner{max-width:1050px}
+@media(max-width:1100px){.vault-dashboard .dashboard-inner{width:calc(100% - 56px);padding-inline:0}}
+@media(max-width:800px){.vault-dashboard .dashboard-inner{width:calc(100% - 40px)}}
+@media(max-width:760px){.vault-dashboard .dashboard-inner{width:calc(100% - 24px);padding-inline:0}}
+@media(max-width:400px){.vault-dashboard .dashboard-inner{width:calc(100% - 20px)}}

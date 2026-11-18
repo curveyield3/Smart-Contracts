@@ -1,0 +1,6 @@
+/* CurveYield v6 — center page-level titles and directly adjacent subtitles only. */
+.content-narrow > .hero-title{justify-content:center;text-align:center}
+.content-narrow > .hero-sub{text-align:center}
+.market-create-v3 > .market-heading > .market-title{justify-content:center;text-align:center}
+.market-create-v3 > .market-heading > .market-copy{text-align:center;margin-inline:auto}
+.vault-dashboard > .dashboard-inner > h1{text-align:center}
