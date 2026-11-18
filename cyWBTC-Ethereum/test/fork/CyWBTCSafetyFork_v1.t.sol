@@ -247,6 +247,9 @@ contract CyWBTCSafetyForkV1 {
 
     function _configure() private {
         _grant(100, OWNER, "grant_atomist_safe");
+        // Production currently gates deposit/mint with DEPOSITOR_ROLE=800.
+        // Grant only the fork test depositor; do not silently open the vault globally.
+        _grant(800, USER, "grant_depositor_role_to_test_user");
         _grant(200, OWNER, "grant_alpha_safe");
         _grant(200, address(ltvManager), "grant_alpha_ltv_manager");
         _grant(300, OWNER, "grant_fuse_manager_safe");
