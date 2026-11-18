@@ -25,7 +25,8 @@ jobs:
           git show 65d1023b9576a49e6de32d0b9f245d06e9c55a3b:cywbtc-ipor-source-v19/cyWBTC_IPOR_Source_v19_V7_Compiler_Repair.zip > "$RUNNER_TEMP/cywbtc-source-v19.zip"
           printf '%s  %s\n' 41a55c5f5d33d0135d0b2ebde0ad8fc558b014060c9d99b15f2bf2bc46b79947 "$RUNNER_TEMP/cywbtc-source-v19.zip" | sha256sum -c -
           unzip -q "$RUNNER_TEMP/cywbtc-source-v19.zip" -d "$ROOT"
-          mkdir -p "$ROOT/contracts/fuses/fxsp" "$ROOT/contracts/fuses/convex" "$ROOT/contracts/executors"
+          mkdir -p "$ROOT/contracts/fuses/fxsp" "$ROOT/contracts/fuses/convex" "$ROOT/contracts/executors" "$ROOT/test/fork" "$ROOT/simulation-output"
+          cp cyWBTC-Ethereum/test/fork/CyWBTCSafetyFork_v1.t.sol "$ROOT/test/fork/"
           cp -r cyWBTC-Ethereum/contracts/* "$ROOT/contracts/"
           cd "$ROOT"
           cat > foundry.toml <<'TOML'
@@ -38,6 +39,7 @@ jobs:
           evm_version = "cancun"
           optimizer = true
           optimizer_runs = 10000000
+          fs_permissions = [{ access = "read-write", path = "./simulation-output" }]
           via_ir = false
           remappings = [
             "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
@@ -57,3 +59,32 @@ jobs:
             contracts/fuses/fxmint/FXMintCollateralFuse.sol \
             contracts/executors/FulfillWithdrawExecutor.sol \
             contracts/price_oracle/price_feed/FXNPriceFeedEthereum_v1.sol
+
+      - name: Execute cyWBTC admin/user integrity checks on an isolated mainnet fork
+        shell: bash
+        env:
+          MAINNET_FORK_URL: ${{ secrets.ETHEREUM_FORK_RPC_URL }}
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/cywbtc-ethereum"
+          RPC="${MAINNET_FORK_URL:-https://ethereum-rpc.publicnode.com}"
+          cd "$ROOT"
+          mkdir -p simulation-output
+          set +e
+          forge test --fork-url "$RPC" --match-path test/fork/CyWBTCSafetyFork_v1.t.sol -vvv > fork-test.log 2>&1
+          EXIT_CODE=$?
+          set -e
+          cat fork-test.log
+          printf '{"forkTestExitCode":%s,"mainnetWrites":false,"status":"%s"}\n' "$EXIT_CODE" "$([ "$EXIT_CODE" = 0 ] && echo PASS || echo FAIL)" > simulation-output/fork-status-v1.json
+          exit "$EXIT_CODE"
+
+      - name: Retain transactional snapshots and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cywbtc-ethereum-fork-security-v1
+          path: |
+            ${{ runner.temp }}/cywbtc-ethereum/simulation-output/**
+            ${{ runner.temp }}/cywbtc-ethereum/fork-test.log
+          if-no-files-found: warn
+          retention-days: 90
