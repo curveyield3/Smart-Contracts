@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "chainId": 252,
+  "factory": "0x711bCE12269a3a496eFaABB8B9AD5A4485E08A24",
+  "event": "CreateVaultV2(address indexed owner,address indexed asset,bytes32 salt,address indexed newVaultV2)",
+  "topic0": "0x341ce009267aa0d78cc12b34155e223904a51ed49d144beb6eb8be87813edb4e",
+  "scannedFromBlock": 30000000,
+  "scannedThroughBlock": 44101401,
+  "snapshotAsOf": "2026-11-18T14:51:57Z",
+  "completeness": "Factory was verified to have no code at block 30000000. A successful full-range eth_getLogs scan of the official factory through scannedThroughBlock returned the included creation events.",
+  "entries": [
+    {
+      "address": "0xa9d7ec2b070564c787dcf702f9d1e962819d6084",
+      "owner": "0x0000000000000000000000000000000000000000",
+      "asset": "0xe3298dab984865a4eeb8890b374b764eb8b36f51",
+      "creationBlock": 31182482
+    }
+  ],
+  "validation": "The included vault was independently verified through isVaultV2(address) == true, owner() and asset() direct Fraxtal RPC reads. Current owner, curator, name, TVL and APR are not asserted by the historical event."
+}
