@@ -876,16 +876,8 @@ contract CyWBTCSafetyForkV1 {
         // Fee accrual during the cooldown can mint a few shares to the
         // official DAO recipient. User 100% exit is valid when those tiny
         // *owned* shares and their corresponding WBTC dust are the only residue.
-        uint256 feeShares = IERC20(VAULT).totalSupply();
-        address daoRecipient = address(bytes20(hex"f6a9bd8f6dc537675d499ac1ca14f2c55d8b5569"));
-        require(IERC20(VAULT).balanceOf(USER) == 0, "User shares not fully withdrawn");
-        require(feeShares <= 1_000 && IERC20(VAULT).balanceOf(daoRecipient) == feeShares,
-            "Unexpected non-DAO shares remain after user full exit");
-        State memory settled = _state();
-        require(settled.rawDebt == 0 && settled.gaugeStakedShares == 0 &&
-            settled.fxusdIdle == 0 && settled.fxspIdle == 0 && settled.wbtcIdle <= 10,
-            "Residual leveraged exposure exceeds accepted fee dust");
-        _snapshot("full_exit_only_dao_fee_dust");
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
+        _snapshot("full_exit_only_fee_account_dust");
     }
 
     function test_09_fee_admin_config_and_unauthorized_fee_guards() public {
@@ -923,8 +915,7 @@ contract CyWBTCSafetyForkV1 {
         _up();
         simulatedPriceShiftBeforeFinalizeBps = 8_000;
         _fullScheduledExit();
-        require(IERC20(VAULT).totalSupply() == 0, "Crash-exit left vault shares");
-        require(_state().rawDebt == 0, "Crash-exit left fxMINT debt");
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
         _snapshot("full_exit_after_mature_cooldown_20pct_crash");
     }
 
@@ -937,8 +928,7 @@ contract CyWBTCSafetyForkV1 {
         _up();
         simulatedPriceShiftBeforeFinalizeBps = 14_000;
         _fullScheduledExit();
-        require(IERC20(VAULT).totalSupply() == 0, "Rally-exit left vault shares");
-        require(_state().rawDebt == 0, "Rally-exit left fxMINT debt");
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
         _snapshot("full_exit_after_mature_cooldown_40pct_rally");
     }
     /// @notice A large oracle change can precede DEX repricing. In that
@@ -985,5 +975,22 @@ contract CyWBTCSafetyForkV1 {
         require(post.rawDebt == 0, "fxMINT debt persisted after shock recovery");
         require(post.gaugeStakedShares == 0, "Convex position persisted after full exit");
         _snapshot("price_shock_then_recovery_full_user_exit");
+    }
+    /// @notice Fee shares are minted to IPOR's FeeManager account rather than
+    /// directly to the DAO Safe. At full user exit this account can retain
+    /// very small accrued management-fee shares against a few WBTC satoshis.
+    function _assertUserFullyExitedWithOnlyFeeAccountDust() private view {
+        require(IERC20(VAULT).balanceOf(USER) == 0, "User has unredeemed shares");
+        (bool ok, bytes memory out) = VAULT.staticcall(abi.encodeWithSignature("getManagementFeeData()"));
+        require(ok && out.length >= 96, "IPOR management fee configuration unavailable");
+        (address feeAccount,,) = abi.decode(out, (address, uint16, uint32));
+        require(feeAccount != address(0), "Management fee account unavailable");
+        uint256 residueShares = IERC20(VAULT).totalSupply();
+        require(residueShares <= 1_000 && IERC20(VAULT).balanceOf(feeAccount) == residueShares,
+            "Unexplained residual shares after 100pct user withdrawal");
+        State memory s = _state();
+        require(s.rawDebt == 0 && s.rawCollateral == 0 && s.gaugeStakedShares == 0 &&
+            s.fxusdIdle == 0 && s.fxspIdle == 0 && s.usdcIdle == 0 && s.wbtcIdle <= 10,
+            "Residual leveraged exposure after 100pct user withdrawal");
     }
 }
