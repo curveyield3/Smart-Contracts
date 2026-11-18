@@ -29,9 +29,9 @@ contract FXNPriceFeedEthereum {
     uint256 private constant MAX_ETH_FEED_AGE = 1 days;
 
     address public constant FXN = 0x365AccFCa291e7D3914637ABf1F7635dB165Bb09;
-    address public constant WETH = 0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2;
-    address public constant FXN_WETH_POOL = 0xc15f285679a1ef2d25f53d4cbd0265e1d02f2a92;
-    address public constant ETH_USD_CHAINLINK = 0x5f4eC3Df9CbD43714FE2740f5E3616155c5b8419;
+    address public constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
+    address public constant FXN_WETH_POOL = 0xC15F285679a1Ef2d25F53D4CbD0265E1D02F2A92;
+    address public constant ETH_USD_CHAINLINK = 0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419;
 
     error InvalidPool();
     error InvalidETHFeed();
