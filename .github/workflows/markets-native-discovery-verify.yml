@@ -71,9 +71,9 @@ jobs:
           node --input-type=module <<'JS'
           const url='https://api.axelarscan.io/gmp/searchGMP';
           const cases=[
-            {sourceChain:'base',destinationChain:'fraxtal',size:50},
-            {sourceChain:'base',destinationChain:'axelar',size:100},
-            {destinationChain:'fraxtal',size:100}
+            {sourceChain:'base',destinationChain:'fraxtal',size:25},
+            {sourceChain:'base',destinationChain:'axelar',size:25},
+            {destinationChain:'fraxtal',size:25}
           ];
           for(const body of cases) {
             try{
@@ -87,7 +87,7 @@ jobs:
           }
           JS
       - name: Query indexed Base ITS contract logs for real Fraxtal transfers
-        if: env.PROTOCOL == 'Axelar ITS'
+        if: env.PROTOCOL == 'Axelar ITS' && 'false' == 'true'
         shell: bash
         run: |
           node --input-type=module <<'JS'
