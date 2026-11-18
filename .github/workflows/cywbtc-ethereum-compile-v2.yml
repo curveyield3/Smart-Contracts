@@ -75,7 +75,7 @@ jobs:
           # Their legacy compiler error must not shadow this isolated IPOR fork suite.
           rm -rf contracts/yearn
           set +e
-          forge test --fork-url "$RPC" --match-path test/fork/CyWBTCSafetyFork_v1.t.sol -vvv > fork-test.log 2>&1
+          forge test --isolate --fork-url "$RPC" --match-path test/fork/CyWBTCSafetyFork_v1.t.sol -vvv > fork-test.log 2>&1
           EXIT_CODE=$?
           set -e
           cat fork-test.log
