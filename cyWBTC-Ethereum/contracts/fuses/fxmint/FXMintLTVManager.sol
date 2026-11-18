@@ -89,6 +89,11 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     /// Therefore do not perform a second collateral exit in the same tx.
     bytes32 private constant INSTANT_FXMINT_EXIT_USED_SLOT =
         keccak256("curveyield.cywbtc.fxmint.instant-withdraw.pool-operate.used.v1");
+    // IPOR can increase a share-redemption payout after refreshing market NAV
+    // during its ten liquidity-collection attempts. fxMINT cannot be entered
+    // twice in the same tx; fund the first safe collateral release with a
+    // bounded 25% margin. All existing live debt/LTV checks remain mandatory.
+    uint256 private constant INSTANT_LIQUIDITY_MARGIN_BPS = 2_500;
     uint256 private constant COLLATERAL_RECOVERY_SWAP_BUFFER_BPS = 300;
 
     struct Addresses {
@@ -275,7 +280,9 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         if (used != 0) return;
         uint256 shortfall = uint256(params[0]);
         if (shortfall == 0) return;
-        Withdrawal memory s = _prepareWithdrawal(shortfall);
+        uint256 prefunded = shortfall + Math.mulDiv(
+            shortfall, INSTANT_LIQUIDITY_MARGIN_BPS, BPS, Math.Rounding.Up);
+        Withdrawal memory s = _prepareWithdrawal(prefunded);
         if (s.debtReduction != 0) revert DebtRepaymentRequiresScheduledWithdrawal(s.debtReduction);
         uint256 currentDebt = s.initialDebt;
         uint256 remainingRaw = _remainingRawCollateral(s.collateralReleaseWBTC, s.initialCollateral);
