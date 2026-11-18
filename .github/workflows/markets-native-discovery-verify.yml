@@ -82,9 +82,33 @@ jobs:
               let j;try{j=JSON.parse(raw)}catch{}
               const data=Array.isArray(j?.data)?j.data:[];
               const succinct=data.map(x=>({id:x._id,txHash:x.txHash,sourceChain:x.sourceChain,destinationChain:x.destinationChain,status:x.status,method:x.method,call:x.call&&{transactionHash:x.call.transactionHash,returnValues:x.call.returnValues},executed:x.executed&&{transactionHash:x.executed.transactionHash},refunded:x.refunded})).slice(0,50);
-              console.log('AXELAR_SEARCH '+JSON.stringify({query:body,status:r.status,count:data.length,total:j?.total,keys:j&&Object.keys(j),rows:succinct,rawPreview:!j?raw.slice(0,700):undefined}).slice(0,50000));
+              console.log('AXELAR_SEARCH '+JSON.stringify({query:body,status:r.status,count:data.length,total:j?.total,keys:j&&Object.keys(j),error:j?.error,code:j?.code,message:j?.message,rows:succinct,rawPreview:!j?raw.slice(0,700):undefined}).slice(0,50000));
             }catch(e){console.log('AXELAR_SEARCH_FAILED '+JSON.stringify({query:body,error:String(e)}))}
           }
+          JS
+      - name: Query indexed Base ITS contract logs for real Fraxtal transfers
+        if: env.PROTOCOL == 'Axelar ITS'
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          const endpoint='https://base.blockscout.com/api/v2/addresses/0xb5fb4be02232b1bba4dc8f81dc24c26980de9e3c/logs';
+          let next=null,total=0,matched=[],first=null;
+          try{
+            for(let page=0;page<40;page++){
+              const u=new URL(endpoint);if(next)for(const [k,v] of Object.entries(next))u.searchParams.set(k,String(v));
+              const r=await fetch(u,{signal:AbortSignal.timeout(30000)});
+              const txt=await r.text();if(!r.ok){console.log('BLOCKSCOUT_HTTP '+r.status+' '+txt.slice(0,800));break;}
+              let j;try{j=JSON.parse(txt)}catch{console.log('BLOCKSCOUT_BAD_JSON '+txt.slice(0,500));break}
+              if(!first)first={count:j.items?.length,keys:j.items?.[0]&&Object.keys(j.items[0]),sample:j.items?.[0],next:j.next_page_params};
+              const rows=j.items||[];total+=rows.length;
+              for(const x of rows) {
+                const d=JSON.stringify(x).toLowerCase();
+                if(d.includes('6672617874616c')&&d.includes('cd05f5b9'))matched.push({tx:x.tx_hash||x.transaction_hash||x.transaction?.hash,block:x.block_number,data:x.data,topics:x.topics});
+              }
+              next=j.next_page_params;if(!next||matched.length>6)break;
+            }
+            console.log('BLOCKSCOUT_ITS_LOGS '+JSON.stringify({total,first,matched,hasMore:!!next}).slice(0,35000));
+          }catch(e){console.log('BLOCKSCOUT_ERROR '+String(e))}
           JS
       - name: Install Chromium browser
         if: env.STAGE != 'research'
