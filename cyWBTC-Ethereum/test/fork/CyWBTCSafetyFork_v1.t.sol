@@ -365,13 +365,14 @@ contract CyWBTCSafetyForkV1 {
 
     /// @dev Only the existing required redemption route is installed. No swap benchmarking.
     function _configureScheduledRedeemSwap() private {
-        bytes32[] memory x = new bytes32[](6);
+        bytes32[] memory x = new bytes32[](7);
         x[0] = bytes32((uint256(1) << 248) | uint256(uint160(FXUSD)));
         x[1] = bytes32((uint256(1) << 248) | uint256(uint160(USDC)));
         x[2] = bytes32((uint256(1) << 248) | uint256(uint160(FXN)));
         x[3] = bytes32((uint256(1) << 248) | uint256(uint160(WBTC)));
         x[4] = bytes32((uint256(2) << 248) | uint256(uint160(USDC)));
         x[5] = bytes32((uint256(2) << 248) | uint256(uint160(OMNI)));
+        x[6] = bytes32((uint256(2) << 248) | uint256(uint160(WBTC)));
         _tx("substrates_existing_universal_swapper", OWNER, VAULT,
             abi.encodeWithSignature("grantMarketSubstrates(uint256,bytes32[])", 12, x), true);
         ICurveYieldRouterFork.Hop[] memory route = new ICurveYieldRouterFork.Hop[](1);
@@ -392,6 +393,27 @@ contract CyWBTCSafetyForkV1 {
         _tx("configure_existing_usdc_fxusd_curve_route", OWNER, OMNI,
             abi.encodeCall(ICurveYieldRouterFork.setRoute, (USDC, FXUSD, route)), true);
         require(ICurveYieldRouterFork(OMNI).routeLength(USDC, FXUSD) == 1, "Scheduled route not installed on fork");
+        // The same exact user-approved WBTC -> USDC 0.05% V3 -> fxUSD Curve
+        // route is needed only if native scheduled debt repayment is short.
+        ICurveYieldRouterFork.Hop[] memory collateralRecovery = new ICurveYieldRouterFork.Hop[](2);
+        collateralRecovery[0] = ICurveYieldRouterFork.Hop({
+            poolType: 2,
+            tokenOut: USDC,
+            swapContract: UNIV3_USDC_WBTC,
+            poolId: bytes32(0),
+            poolData: new bytes(0),
+            oracle: ICurveYieldRouterFork.Oracle({
+                oracleAddress: address(0),
+                readFunctionID: bytes4(0),
+                requiredInputs: new bytes(0),
+                invert: false,
+                rateDecimals: 0
+            })
+        });
+        collateralRecovery[1] = route[0];
+        _tx("configure_existing_wbtc_usdc_fxusd_repayment_route", OWNER, OMNI,
+            abi.encodeCall(ICurveYieldRouterFork.setRoute, (WBTC, FXUSD, collateralRecovery)), true);
+        require(ICurveYieldRouterFork(OMNI).routeLength(WBTC, FXUSD) == 2, "Recovery route not installed on fork");
     }
 
     function _pendingUnlock() private view returns (uint256 unlockAt) {
