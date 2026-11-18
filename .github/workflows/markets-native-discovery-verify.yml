@@ -98,7 +98,7 @@ jobs:
           cat > "$RUNNER_TEMP/market-verify/beefy-ui.mjs" <<'JS'
           import {chromium} from 'playwright';
           const browser=await chromium.launch({headless:true,args:['--disable-dev-shm-usage']});
-          const context=await browser.newContext({viewport:{width:1350,height:850}});
+          const context=await browser.newContext({viewport:{width:1350,height:850},locale:'en-US'});
           const sites=[
            'https://app.beefy.com/vault/bifi-vault',
            'https://app.beefy.finance/vault/bifi-vault',
@@ -151,7 +151,7 @@ jobs:
           if(records.length!==first.total)throw Error('Missing records');
           console.log('CATALOG '+JSON.stringify({name,found:records.length,all:first.count,sourceStatus:first.sourceStatus?.filter(x=>x.name.toLowerCase().includes(name.split(' ')[0].toLowerCase())),sourceFailures:first.sourceFailures}));
           const browser=await chromium.launch({headless:true,args:['--disable-dev-shm-usage']});
-          const context=await browser.newContext({viewport:{width:1320,height:900},serviceWorkers:'block'});
+          const context=await browser.newContext({viewport:{width:1320,height:900},locale:'en-US',serviceWorkers:'block'});
           const checked=Array(records.length);
           let index=0,screen=0;
           await Promise.all(Array.from({length:Math.min(4,Math.max(1,records.length))},async()=>{
