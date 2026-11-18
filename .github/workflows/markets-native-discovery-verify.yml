@@ -21,21 +21,24 @@ jobs:
           cd "$RUNNER_TEMP/market-verify"
           npm install --no-save --no-audit --no-fund playwright@1.56.1
           npx playwright install chromium
-      - name: Inspect Fluid fToken reward components and rate units
+      - name: Inspect Fluid fToken native and external rewards
         if: env.PROTOCOL == 'Fluid Lending'
         run: |
-          python - <<'PY'
-          import urllib.request,json
-          u='https://api.fluid.instadapp.io/v2/lending/1/tokens'
-          req=urllib.request.Request(u,headers={'accept':'application/json'})
-          with urllib.request.urlopen(req,timeout=30) as res:d=json.load(res)
-          for x in d.get('data',[]):
-            fields=('symbol','address','assetAddress','isNativeUnderlying','supplyRate','rewardsRate','totalRate','rewards','asset','totalAssets')
-            asset=x.get('asset') or {}
-            out={k:x.get(k) for k in fields if k!='asset'}
-            out['asset']={k:asset.get(k) for k in ('symbol','decimals','price','stakingApr')}
-            print('FLUID_NATIVE_RATE '+json.dumps(out),flush=True)
-          PY
+          node --input-type=module <<'JS'
+          try {
+            const res=await fetch('https://api.fluid.instadapp.io/v2/lending/1/tokens',{headers:{accept:'application/json'},signal:AbortSignal.timeout(30000)});
+            console.log('FLUID_API_HTTP '+res.status);
+            if(!res.ok)throw Error('fluid API denied request '+res.status);
+            const j=await res.json();
+            for(const v of j.data||[]){
+              const a=v.asset||{},out={symbol:v.symbol,contract:v.address,assetAddress:v.assetAddress,
+                native:v.isNativeUnderlying,supplyRate:v.supplyRate,rewardsRate:v.rewardsRate,
+                totalRate:v.totalRate,rewards:v.rewards,
+                totalAssets:v.totalAssets,asset:{symbol:a.symbol,price:a.price,decimals:a.decimals,stakingApr:a.stakingApr}};
+              console.log('FLUID_NATIVE_RATE '+JSON.stringify(out));
+            }
+          }catch(e){console.log('FLUID_RATE_INSPECTION_ERROR '+String(e));}
+          JS
       - name: Inspect full protocol listing, rates, single token identity and dapp usability
         timeout-minutes: 9
         run: |
