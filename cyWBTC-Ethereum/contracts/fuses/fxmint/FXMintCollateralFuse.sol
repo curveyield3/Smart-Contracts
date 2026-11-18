@@ -23,6 +23,9 @@ interface IFXMintCollateralPool {
 interface IFXMintRiskRegistry {
     function riskManager() external view returns (address);
 }
+interface IFXMintFullCloseFxUSD {
+    function fxUSD() external view returns (address);
+}
 interface IFXMintTargetReader {
     function targetLtvWad() external view returns (uint256);
 }
@@ -58,10 +61,14 @@ contract FXMintCollateralFuse is IFuseCommon {
     error IncorrectExecutionContext();
     error RiskManagerNotConfigured();
     error CollateralExitExceedsLtv(uint256 actualLtv, uint256 target);
+    error OnlyRegisteredRiskManager();
+    error ExcessiveRepayment(uint256 actual, uint256 maximum);
+    error ResidualDebt(uint256 debt);
 
     event FXMintPositionOpened(address indexed fuse, uint256 indexed positionId, uint256 suppliedWBTC, uint256 borrowedFxUSD);
     event FXMintCollateralAdded(address indexed fuse, uint256 indexed positionId, uint256 suppliedWBTC);
     event FXMintCollateralRemoved(address indexed fuse, uint256 indexed positionId, uint256 receivedWBTC);
+    event FXMintPositionClosed(address indexed fuse, uint256 indexed positionId, uint256 returnedWBTC, uint256 spentFXUSD);
 
     constructor(address pool_, address manager_, address wbtc_, address registry_) {
         if (pool_ == address(0) || manager_ == address(0) || wbtc_ == address(0) ||
@@ -122,6 +129,33 @@ contract FXMintCollateralFuse is IFuseCommon {
         received = IERC20(WBTC).balanceOf(address(this)) - beforeBalance;
         if (received < minReceived) revert InsufficientReceived(received, minReceived);
         emit FXMintCollateralRemoved(VERSION, positionId, received);
+    }
+
+    /// @notice Entire NFT close in exactly ONE fxMINT PoolManager.operate.
+    /// @dev The live f(x) configuration uses a tx-long transient lock and
+    ///      refuses debt=0 with nonzero collateral (ErrorDebtRatioTooSmall).
+    ///      Public scheduled fulfillment MUST repay and withdraw together.
+    ///      Only the Safe-registered manager implementation can invoke it.
+    function exitAndRepayFull(
+        uint256 positionId, uint256 amountWBTC, uint256 maxSpentFXUSD, uint256 minReceivedWBTC
+    ) external returns (uint256 received, uint256 spent) {
+        if (address(this) == VERSION) revert IncorrectExecutionContext();
+        if (msg.sender != IFXMintRiskRegistry(POSITION_REGISTRY).riskManager())
+            revert OnlyRegisteredRiskManager();
+        _onlyOwned(positionId);
+        if (amountWBTC == 0 || amountWBTC > uint256(type(int256).max)) revert InvalidAmount();
+        uint256 beforeWBTC = IERC20(WBTC).balanceOf(address(this));
+        uint256 beforeFXUSD = IERC20(IFXMintFullCloseFxUSD(POOL).fxUSD()).balanceOf(address(this));
+        IFXMintCollateralManager(MANAGER).operate(
+            POOL, positionId, -int256(amountWBTC), type(int256).min, false
+        );
+        received = IERC20(WBTC).balanceOf(address(this)) - beforeWBTC;
+        spent = beforeFXUSD - IERC20(IFXMintFullCloseFxUSD(POOL).fxUSD()).balanceOf(address(this));
+        if (received < minReceivedWBTC) revert InsufficientReceived(received, minReceivedWBTC);
+        if (spent > maxSpentFXUSD) revert ExcessiveRepayment(spent, maxSpentFXUSD);
+        (, uint256 debtAfter) = IFXMintCollateralPool(POOL).getPosition(positionId);
+        if (debtAfter != 0) revert ResidualDebt(debtAfter);
+        emit FXMintPositionClosed(VERSION, positionId, received, spent);
     }
 
     function _enforceLiveTarget(uint256 positionId) private view {
