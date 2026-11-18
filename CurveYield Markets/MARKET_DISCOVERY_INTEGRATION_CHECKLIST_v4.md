@@ -1,14 +1,30 @@
-# MARKET DISCOVERY INTEGRATION CHECKLIST — v3
+# MARKET DISCOVERY INTEGRATION CHECKLIST — v4
 
 > **Scope:** Ethereum mainnet · single-token ERC-20 deposits only  
 > **Document status:** Live source-specific verification checkpoint, plus historical implementation inventory; not a claim of exhaustive wallet-interaction testing.  
-> **Current deployed Worker:** v141 (November 18, 2026); v134 and v118 notes below are retained as historical records.
+> **Current verified Worker deployment:** v141 (November 18, 2026); the shared OmniAdapter is separately maintained on a dedicated GitHub branch. Historical v134 and v118 discovery notes are retained below.
+
+## Shared Morpho Vault V2 OmniAdapter — deployment architecture
+
+**Established CurveYield architecture:** The protocol integration list does **not** require separate vault adapters per protocol. One existing **CurveYieldOmniAdapterV8**, created for the official Morpho Vault V2, supports multiple configured market positions through `allocate(bytes,uint256,bytes4,address)`, `deallocate(bytes,uint256,bytes4,address)`, and `realAssets()`. The official Vault V2 already supplies native caps (via `idData` / `keccak256(idData)`), permissions, timelocks, accounting and allocator controls. Do not rebuild any of those systems or introduce redundant per-protocol adapter infrastructure.
+
+**Authoritative source:** [`OmniAdapter/contracts/CurveYieldOmniAdapterV8.sol` on `ethereum-omniadapter-v8-compatibility-v1`](https://github.com/curveyield3/Smart-Contracts/blob/ethereum-omniadapter-v8-compatibility-v1/OmniAdapter/contracts/CurveYieldOmniAdapterV8.sol). Its source header identifies a v10 revision while the contract name remains V8. The source is on a dedicated branch, not present on the repository's `main` branch at this checkpoint. Presence in GitHub does **not** independently confirm its deployment, installation on a specific Morpho Vault V2, configured native caps or permissions.
+
+**Explicit modes currently in source:** (1) ERC-4626 synchronous vaults including Yearn V3, IPOR instant-withdrawable paths, Fluid fTokens, CurveLend and compatible Euler products; (2) Beefy V7 / BoostHub; (3) Aave V3 / Spark; (4) Compound III; (5) Morpho Blue/core fork; (6) Aave V4 spoke; (7) Dolomite normal market; (8) Yearn V2 native vault; (9) Liquity V2 BOLD stability pool, excluding collateral reward valuation; (10) Dolomite isolated market. The adapter serves **multiple markets**, not one new contract per market.
+
+**Contract-proven limitations:** The V8 source expressly **excludes Maple and Cap**; scheduled IPOR Fusion redemption queues cannot satisfy synchronous Vault V2 deallocation; Liquity collateral-token rewards are unvalued and not approved for allocation under that mode. Fraxlend, Stake DAO lockers and some target-specific mechanisms are **not explicitly named as native adapter modes**. They must not be marked vault-allocation compatible merely because discovery indexed them or because a generic `ERC4626` mode exists. Any missing compatibility must be demonstrated against the actual existing interface before a change is proposed.
+
+**Operational division of responsibility:** Markets Worker does identity, market enumeration, APR/TVL, single-token and deposit/withdraw availability, official dapp links and discovery publication. Vault-creation / configuration UI selects the existing **OmniAdapter mode and market configuration**, installs/configures the shared adapter through native Vault V2 procedures, and applies native caps. Do **not** conflate discovery eligibility with permissioned deposit capability, available synchronous liquidity, or proven native Vault V2 allocation.
+
+**Next integration check:** reconcile the **actual target list** against this existing adapter's supported mode, calldata, share/redemption behavior and withdrawal mechanism. Where compatible, configure and use the existing adapter; where not demonstrated (notably Maple and queued IPOR), retain an explicit eligibility block. No new per-protocol adapter contract or redundant factory should be introduced without a separately demonstrated operational need.
+
+---
 
 ## Priority action checklist
 
 - [ ] **P1 — Fraxlend:** Repair the out-of-scope `count` variable and verify a complete live collection.
 - [ ] **P2 — Live validation:** Verify each active provider's runtime schema, discovered/normalized/eligible/published counts, failures, and actual protocol-specific dapp destinations.
-- [x] **P3 (current listed markets) — Deposit eligibility:** Implemented source-isolated asset/capacity checks for IPOR, Fluid, Yearn V2/V3, and CurveLend V1/V2. **Pending:** withdrawal accounting, wallet-specific limits and live transaction execution.
+- [x] **P3 (discovery eligibility) — Deposit screening:** Source-isolated asset/capacity checks exist for IPOR, Fluid, Yearn V2/V3 and CurveLend V1/V2. **Separate, not complete:** demonstrate actual OmniAdapter mode compatibility, native Vault V2 cap configuration, permission constraints and synchronous withdrawal on each allocatable market; no new per-protocol adapters.
 - [ ] **P4 — Coverage gaps:** Integrate eligible single-token Stake DAO lockers and legitimate legacy markets.
 - [ ] **P5 — Completeness:** Reconciled 698 **qualifying published** records in nine isolated feeds plus seven shared collectors, with cold-cache gaps surfaced. Full upstream enumerated market completeness remains unverified.
 - [ ] **P6 — Persistence:** Add durable per-asset snapshots and historical performance within the intended storage architecture.
