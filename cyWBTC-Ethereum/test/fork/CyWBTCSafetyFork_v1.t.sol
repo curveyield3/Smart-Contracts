@@ -1055,4 +1055,48 @@ contract CyWBTCSafetyForkV1 {
         _fullScheduledExit();
         _assertUserFullyExitedWithOnlyFeeAccountDust();
     }
+    /// @notice The nonterminal withdrawal path must reduce principal debt
+    /// safely, preserve the remaining user's position, and not strand the
+    /// subsequent 100% exit request behind native f(x) cooldown state.
+    function test_14_partial_scheduled_withdrawal_then_remaining_full_exit() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        State memory original = _state();
+        uint256 partialShares = original.userShares / 4;
+        require(partialShares > 0 && partialShares < original.userShares, "Partial setup invalid");
+        _tx("partial_user_requests_quarter_shares", USER, WITHDRAW_MANAGER,
+            abi.encodeWithSignature("requestShares(uint256)", partialShares), true);
+        _tx("partial_user_authorizes_manager", USER, VAULT,
+            abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), partialShares), true);
+        _tx("public_starts_partial_exit", PUBLIC_CALLER, address(publicExecutor),
+            abi.encodeWithSignature("InitializeFulfillWithdrawRequest(address)", USER), true);
+        uint256 unlockAt = _pendingUnlock();
+        require(unlockAt >= block.timestamp + 3600, "Missing partial cooldown");
+        State memory scheduled = _state();
+        require(scheduled.userShares == original.userShares, "Request prematurely burned user shares");
+        vm.warp(unlockAt + 2);
+        vm.roll(block.number + 20);
+        _snapshot("partial_matured_before_public_finalizations");
+        for (uint256 i; i < 8 && _pendingUnlock() != 0; i++) {
+            _tx(string.concat("public_completes_partial_step_", vm.toString(i)),
+                PUBLIC_CALLER, address(publicExecutor),
+                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+        }
+        require(_pendingUnlock() == 0, "Partial withdrawal never finalized");
+        State memory partiallyExited = _state();
+        require(partiallyExited.userShares > 0 && partiallyExited.userShares < original.userShares,
+            "Partial withdrawal did not leave correct remaining shares");
+        require(partiallyExited.userWBTC > original.userWBTC, "Partial withdrawal delivered no WBTC");
+        require(partiallyExited.rawDebt > 0 && partiallyExited.rawDebt < original.rawDebt,
+            "Partial withdrawal did not reduce fxMINT principal safely");
+        require(partiallyExited.managerLtv <= TARGET,
+            "Partial withdrawal left position above owner 60pct LTV target");
+        _snapshot("partial_exit_settled_safe");
+        _fullScheduledExit();
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
+    }
 }
