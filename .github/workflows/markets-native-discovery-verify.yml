@@ -1,0 +1,94 @@
+name: Single protocol live Markets discovery verification
+on:
+  push:
+    paths: [".github/workflows/markets-native-discovery-verify.yml"]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      PROTOCOL: "Fluid Lending"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Chromium browser
+        run: |
+          mkdir -p "$RUNNER_TEMP/market-verify"
+          cd "$RUNNER_TEMP/market-verify"
+          npm install --no-save --no-audit --no-fund playwright@1.56.1
+          npx playwright install chromium
+      - name: Inspect full protocol listing, rates, single token identity and dapp usability
+        timeout-minutes: 9
+        run: |
+          cat > "$RUNNER_TEMP/market-verify/check.mjs" <<'NODE'
+          import {chromium} from 'playwright';
+          import fs from 'node:fs';
+          const name=process.env.PROTOCOL,output=process.env.GITHUB_WORKSPACE+'/_native_verification';
+          fs.mkdirSync(output,{recursive:true});
+          async function get(offset){
+            const u='https://markets.curveyield.org/api/opportunities?protocol='+encodeURIComponent(name)+'&limit=500&offset='+offset+'&sort=tvl';
+            for(let n=0;n<4;n++){
+              try{const r=await fetch(u,{signal:AbortSignal.timeout(105000)});
+                if(!r.ok)throw Error('HTTP '+r.status);
+                const d=await r.json();
+                if(!Array.isArray(d.opportunities)||!Number.isInteger(d.total))throw Error('Invalid catalog');
+                return d;
+              }catch(e){console.log('RETRY '+n+' '+e);if(n===3)throw e;await new Promise(r=>setTimeout(r,3000))}
+            }
+          }
+          const first=await get(0),records=[...first.opportunities];
+          for(let o=500;o<first.total;o+=500){const d=await get(o);if(d.updatedAt!==first.updatedAt)throw Error('Pagination refreshed');records.push(...d.opportunities)}
+          if(records.length!==first.total)throw Error('Missing records');
+          console.log('CATALOG '+JSON.stringify({name,found:records.length,all:first.count,sourceStatus:first.sourceStatus?.filter(x=>x.name.toLowerCase().includes(name.split(' ')[0].toLowerCase())),sourceFailures:first.sourceFailures}));
+          const browser=await chromium.launch({headless:true,args:['--disable-dev-shm-usage']});
+          const context=await browser.newContext({viewport:{width:1320,height:900},serviceWorkers:'block'});
+          const checked=Array(records.length);
+          let index=0,screen=0;
+          await Promise.all(Array.from({length:Math.min(4,Math.max(1,records.length))},async()=>{
+           const p=await context.newPage();
+           while(index<records.length){
+            const i=index++,x=records[i];
+            const f={n:i+1,protocol:x.protocol,market:x.marketName,asset:x.assetSymbol,token:x.asset,contract:x.address,rate:x.lendApr,rateType:x.rateType,tvl:x.tvlUsdEstimate,url:x.dappUrl,depositMode:x.depositMode},issues=[];
+            if(x.depositMode!=='single-token'||x.additionalAssets?.length||x.lpComposition)issues.push('not-single-token');
+            if(!(x.rateType==='APR'?x.lendApr:Math.log1p(x.lendApr/100)*100)>1)issues.push('apr-below-1');
+            if(x.dappLinkType!=='detail'||!x.dappUrl)issues.push('invalid-dapp-url');
+            if(i<80){
+             try{
+              const r=await p.goto(x.dappUrl,{waitUntil:'domcontentloaded',timeout:22000});
+              await p.waitForTimeout(3500);
+              const txt=(await p.locator('body').innerText({timeout:6000}).catch(()=>'')).replace(/\s+/g,' ');
+              const ctl=await p.locator('button,[role="button"],a').evaluateAll(els=>els.filter(el=>{const s=getComputedStyle(el),b=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&b.width>0&&b.height>0}).map(el=>(el.innerText||el.getAttribute('aria-label')||'').trim().replace(/\s+/g,' ').slice(0,80)).filter(Boolean).slice(0,65)).catch(()=>[]);
+              const actions=ctl.filter(t=>/deposit|supply|start earning|connect wallet|connect|invest/i.test(t));
+              Object.assign(f,{http:r?.status(),title:await p.title().catch(()=>''),finalUrl:p.url(),tokenVisible:txt.toLowerCase().includes(x.assetSymbol.toLowerCase()),controls:actions,text:txt.slice(0,850)});
+              if(!r||r.status()>=400||/404.*not found|vault not supported|this page could not be found|this page couldn.t load/i.test(txt.slice(0,900)))issues.push('dapp-not-usable');
+              if(!f.tokenVisible)issues.push('token-not-visible');
+              if(!actions.length)issues.push('no-deposit-or-wallet-controls');
+              if((issues.length||i<2)&&screen++<12)try{const im='dapp-'+(i+1)+'.png';await p.screenshot({path:output+'/'+im,timeout:5000});f.screenshot=im}catch{}
+             }catch(e){f.error=String(e);issues.push('page-load-error')}
+             await p.goto('about:blank').catch(()=>{});
+            }
+            f.issues=issues;checked[i]=f;
+            console.log('ENTRY '+JSON.stringify(f).slice(0,1800));
+           }
+           await p.close();
+          }));
+          await context.close();await browser.close();
+          const counts={};for(const f of checked)for(const issue of f.issues)counts[issue]=(counts[issue]||0)+1;
+          const group={};for(const f of checked)group[f.asset+'@'+f.token]=(group[f.asset+'@'+f.token]||0)+1;
+          console.log('VERIFIED_SUMMARY '+JSON.stringify({protocol:name,total:checked.length,groups:group,issues:counts}));
+          fs.writeFileSync(output+'/native-verification-v1.json',JSON.stringify({protocol:name,updatedAt:first.updatedAt,entries:checked,issues:counts},null,2));
+          NODE
+          cd "$RUNNER_TEMP/market-verify"
+          node check.mjs
+      - name: Save verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-verification-v1
+          path: _native_verification/
+          if-no-files-found: warn
+          retention-days: 5
