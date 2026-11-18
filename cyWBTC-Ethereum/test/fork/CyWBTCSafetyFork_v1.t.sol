@@ -626,4 +626,126 @@ contract CyWBTCSafetyForkV1 {
         _snapshot("over_target_collateral_exit_rejected");
     }
 
+    /// @notice An ordinary user must never force immediate debt repayment or
+    /// protocol fxSP redemption by requesting all shares instantly.
+    function test_05_user_cannot_force_instant_debt_repayment_or_exit_tax() public {
+        _deploy();
+        _configure();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        State memory beforeState = _state();
+        require(beforeState.rawDebt > 0, "Precondition missing live f(x) debt");
+        _tx("user_instant_100pct_exit_rejected_without_debt_repay", USER, VAULT,
+            abi.encodeWithSignature("redeem(uint256,address,address)", beforeState.userShares, USER, USER), false);
+        State memory afterState = _state();
+        require(_sameAccounting(beforeState, afterState), "Instant rejection changed position");
+        require(afterState.rawDebt == beforeState.rawDebt, "Instant path repaid debt");
+        require(afterState.gaugeStakedShares == beforeState.gaugeStakedShares,
+            "Instant path caused forced Convex unstake / fxSP tax");
+        _snapshot("instant_exit_blocked_without_tax");
+    }
+
+    function _mockWBTCExchangePrice(uint256 numerator, uint256 denominator) private returns (uint256) {
+        require(numerator > 0 && denominator > 0, "Bad price shock");
+        address oracle = IFxMintPositionFork(FXMINT_POOL).priceOracle();
+        uint256 original = IFxMintPriceFork(oracle).getExchangePrice();
+        uint256 shifted = Math.mulDiv(original, numerator, denominator);
+        // Change the *real f(x) exchange price call* on the local fork only.
+        // This models repricing of collateral; it does not modify real mainnet.
+        vm.mockCall(oracle, abi.encodeWithSignature("getExchangePrice()"), abi.encode(shifted));
+        return shifted;
+    }
+
+    /// @notice At an appreciated WBTC price, a safe instant release must be
+    /// possible without changing debt, un-staking fxSP or incurring repayment.
+    function test_06_instant_withdraw_after_wbtc_appreciation_keeps_debt_exact() public {
+        _deploy();
+        _configure();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        _mockWBTCExchangePrice(130, 100);
+        State memory beforeState = _state();
+        require(beforeState.managerLtv < TARGET, "Positive price shock did not improve LTV");
+        // 0.002 WBTC from 0.1 WBTC collateral is small enough to remain below 60%.
+        _tx("user_instant_release_after_30pct_wbtc_appreciation", USER, VAULT,
+            abi.encodeWithSignature("withdraw(uint256,address,address)", uint256(200_000), USER, USER), true);
+        State memory afterState = _state();
+        require(afterState.rawDebt == beforeState.rawDebt, "Instant withdrawal repaid debt");
+        require(afterState.gaugeStakedShares == beforeState.gaugeStakedShares,
+            "Instant withdrawal unstaked yield / caused a tax");
+        require(afterState.fxspIdle == beforeState.fxspIdle, "Instant withdrawal used fxSP");
+        require(afterState.userWBTC > beforeState.userWBTC, "No WBTC reached user");
+        require(afterState.managerLtv <= TARGET, "Instant release violated target LTV");
+        _snapshot("positive_shock_instant_safe_no_repay");
+    }
+
+    /// @notice External price decline may put an existing position over target,
+    /// but vault actions may not further increase debt or allow a forced instant
+    /// repayment or collateral withdrawal at that shocked price.
+    function test_07_price_crashes_block_instant_exit_and_extra_leverage() public {
+        _deploy();
+        _configure();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        uint256 originalDebt = _state().rawDebt;
+        require(originalDebt > 0, "No debt to challenge against price crashes");
+        address oracle = IFxMintPositionFork(FXMINT_POOL).priceOracle();
+        uint256 initialPrice = IFxMintPriceFork(oracle).getExchangePrice();
+        uint256[4] memory shockBps = [uint256(9_500), 9_000, 8_000, 7_000];
+        for (uint256 i; i < shockBps.length; i++) {
+            vm.mockCall(oracle, abi.encodeWithSignature("getExchangePrice()"),
+                abi.encode(Math.mulDiv(initialPrice, shockBps[i], 10_000)));
+            State memory beforeState = _state();
+            require(beforeState.managerLtv > TARGET, "Price drop did not exceed the initial 60% LTV");
+            string memory label = string.concat("crash_", vm.toString(shockBps[i]));
+            _tx(string.concat(label, "_instant_exit_rejected"), USER, VAULT,
+                abi.encodeWithSignature("withdraw(uint256,address,address)", uint256(50_000), USER, USER), false);
+            // Rebalance-up must not initiate new debt when already above target.
+            FuseAction[] memory actions = new FuseAction[](1);
+            actions[0] = FuseAction(address(ltvManager),
+                abi.encodeWithSignature("rebalanceUp(uint256)", uint256(0)));
+            _tx(string.concat(label, "_rebalance_up_cannot_add_debt"), OWNER, VAULT,
+                abi.encodeWithSignature("execute((address,bytes)[])", actions), true);
+            State memory afterState = _state();
+            require(afterState.rawDebt == originalDebt, "Rebalance added debt during collateral crash");
+            require(afterState.userShares == beforeState.userShares, "Price-shock action burned shares");
+            require(afterState.gaugeStakedShares == beforeState.gaugeStakedShares,
+                "Price-shock action caused forced taxed unstake");
+            _snapshot(string.concat(label, "_verified"));
+        }
+    }
+
+    /// @notice Full withdrawal must remain possible even after repeated owner
+    /// adjustments and no-op operational cycles, not only after fresh leverage.
+    function test_08_full_scheduled_exit_after_owner_and_vault_operations() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        _tx("owner_changes_slippage_to_55bps", OWNER, address(ltvManager),
+            abi.encodeWithSignature("setWithdrawSlippageBps(uint256)", uint256(55)), true);
+        _tx("owner_restores_slippage_to_20bps", OWNER, address(ltvManager),
+            abi.encodeWithSignature("setWithdrawSlippageBps(uint256)", uint256(20)), true);
+        _tx("owner_sets_target_65pct_then_restores_60pct", OWNER, address(ltvManager),
+            abi.encodeWithSignature("setTargetLtvWad(uint256)", uint256(65e16)), true);
+        _tx("owner_restores_60pct_target", OWNER, address(ltvManager),
+            abi.encodeWithSignature("setTargetLtvWad(uint256)", TARGET), true);
+        FuseAction[] memory actions = new FuseAction[](1);
+        actions[0] = FuseAction(address(ltvManager),
+            abi.encodeWithSignature("rebalanceUp(uint256)", uint256(0)));
+        _tx("owner_rebalance_up_after_previous_complete_cycle", OWNER, VAULT,
+            abi.encodeWithSignature("execute((address,bytes)[])", actions), true);
+        actions[0] = FuseAction(address(ltvManager),
+            abi.encodeWithSignature("compound(uint256)", uint256(0)));
+        _tx("owner_compound_no_idle_fxn", OWNER, VAULT,
+            abi.encodeWithSignature("execute((address,bytes)[])", actions), true);
+        _snapshot("before_full_exit_after_operating_cycles");
+        _fullScheduledExit();
+    }
+
 }
