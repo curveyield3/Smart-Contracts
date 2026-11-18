@@ -1,5 +1,5 @@
 'use strict';
-/* CurveYield Vault UI v11: presentation-only enhancement; original vaults.js owns all transactions. */
+/* CurveYield Vault UI v12: presentation-only enhancement; original vaults.js owns all transactions. */
 (()=>{
 const root=document.getElementById('page'),frame=document.getElementById('appFrame');
 if(!root||!frame)return;
@@ -34,6 +34,34 @@ for(const a of steps.children){a.classList.toggle('active',a.dataset.step===Stri
 description.textContent=n===1?'Choose the asset, vault name, share symbol, and operator fee. No transaction is submitted on this page.':'Discover eligible lending markets and review the controller and vault deployment. Adapter onboarding, caps, and allocations occur after deployment in the permanent dashboard.'}
 controls.querySelector('[data-back]').onclick=()=>{show(1);scrollTo(0,0)};
 controls.querySelector('[data-next]').onclick=()=>{show(2);scrollTo(0,0)};show(stage)}
+
+const cySafe=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function cyVaultReadinessView(tab,el,check){
+ const address=location.pathname.split('/').pop();
+ el.innerHTML='<div class="cy-config-block"><h2>Reading live Fraxtal configuration</h2><p>Verifying the factory and on-chain roles…</p></div>';
+ try{
+  const r=await fetch('/api/vault-readiness?address='+encodeURIComponent(address)+(check?'&check='+encodeURIComponent(check):''),{cache:'no-store'}),d=await r.json();
+  if(!r.ok||!d.verified)throw Error(d.error||'Live vault configuration unavailable');
+  if(!el.isConnected||el.closest('.v-page')?.dataset.tab!==tab)return;
+  if(tab==='timelocks'){
+   el.innerHTML='<div class="cy-config-block"><h2>Vault timelocks — on-chain</h2><p>Factory-verified timelock(bytes4) and abdicated(bytes4) reads.</p>'+
+    (d.timelocks||[]).map(x=>'<div class="cy-config-row"><div><strong>'+cySafe(x.name)+'</strong><small>Selector '+cySafe(x.selector)+'</small></div><span>'+(x.seconds===null?'Unavailable':cySafe((Number(x.seconds)/86400).toLocaleString(undefined,{maximumFractionDigits:2}))+' days')+(x.abdicated===true?' · Abdicated':'')+'</span></div>').join('')+
+    '</div><div class="cy-config-block"><h2>Pending actions</h2><p>Pending-action enumeration is not yet connected. This page does not claim that no actions are queued.</p></div>';
+  }else{
+   const rows=(d.sentinelChecks||[]).map(x=>'<div class="cy-config-row"><div><strong>'+cySafe(x.address)+'</strong><small>'+(x.address?.toLowerCase()===d.owner?.toLowerCase()?'Vault owner':x.address?.toLowerCase()===d.curator?.toLowerCase()?'Vault curator':'Checked address')+'</small></div><span>'+(x.isSentinel===null?'Read unavailable':x.isSentinel?'Sentinel: yes':'Sentinel: no')+'</span></div>').join('');
+   el.innerHTML='<div class="cy-config-block"><h2>Sentinel permissions — read-only</h2><p>Only the addresses below were checked using isSentinel(address). This is not an exhaustive roster.</p>'+rows+
+    '<label class="v-field"><span>Verify another address</span><input data-cy-check placeholder="0x…" autocomplete="off" spellcheck="false"></label>'+
+    '<button type="button" class="v-secondary" data-cy-check-role>Check sentinel status</button><p data-cy-error></p></div>'+
+    '<div class="cy-config-block"><h2>Emergency actions</h2><p>Permissioned actions require exact ABI and wallet verification. No unverified transaction controls are exposed.</p></div>';
+   el.querySelector('[data-cy-check-role]')?.addEventListener('click',()=>{
+    const val=el.querySelector('[data-cy-check]')?.value?.trim();
+    if(!/^0x[0-9a-f]{40}$/i.test(val||'')){el.querySelector('[data-cy-error]').textContent='Enter a complete address.';return}
+    void cyVaultReadinessView('sentinel',el,val);
+   });
+  }
+ }catch(e){if(el.isConnected&&el.closest('.v-page')?.dataset.tab===tab)el.innerHTML='<div class="cy-config-block"><h2>On-chain data unavailable</h2><p>'+cySafe(e.message)+'</p><p>No permissions or timelocks are assumed.</p></div>'}
+}
+
 function dashboard(page){page.classList.add('cy-manage');
 const h=page.querySelector('.v-heading'),g=page.querySelector('.create-grid'),f=page.querySelector('.create-form'),summary=page.querySelector('.create-summary');
 if(!h||!g||!f)return;
@@ -52,7 +80,7 @@ deferred.hidden=v!=='timelocks'&&v!=='sentinel';note.hidden=v!=='caps';
 deferred.innerHTML=v==='timelocks'
  ?'<div class="cy-config-block"><h2>Vault Pending Actions</h2><p>The on-chain pending-action index is not yet connected. This is not a claim that no transactions are pending.</p></div><div class="cy-config-block"><h2>Vault Timelocks</h2>'+[['Add Adapter','Changes the vault adapter set'],['Increase Absolute Cap','Allows additional exposure'],['Increase Relative Cap','Changes proportional exposure'],['Allocator','Grants or revokes allocation privileges'],['Performance Fee','Changes yield-based fees'],['Management Fee','Changes annual fee rate']].map(r=>'<div class="cy-config-row"><div><strong>'+r[0]+'</strong><small>'+r[1]+'</small></div><span>Not loaded</span></div>').join('')+'</div><div class="cy-config-block"><h2>Market Adapter Timelocks</h2><p>Adapter-specific delays are shown after a verified adapter registry read is integrated.</p></div>'
  :'<div class="cy-config-block"><h2>Sentinel Addresses</h2><p>Active sentinel roles are not yet read from this vault. Do not assume any sample address is authorized.</p></div><div class="cy-config-block"><h2>Emergency Actions</h2>'+[['Decrease Absolute Cap','Reduce permitted exposure'],['Decrease Relative Cap','Reduce proportional exposure'],['Revoke Pending Action','Stop an eligible queued change']].map(r=>'<div class="cy-config-row"><div><strong>'+r[0]+'</strong><small>'+r[1]+'</small></div><span>Read-only</span></div>').join('')+'<p>No transaction controls are presented without verified authority and exact deployed ABI.</p></div><div class="cy-config-block"><h2>Recent Activity</h2><p>Sentinel action history is not indexed yet.</p></div>';
-if(summary)summary.hidden=v!=='overview';g.classList.toggle('cy-full',v!=='overview')}
+if(summary)summary.hidden=v!=='overview';g.classList.toggle('cy-full',v!=='overview');if(v==='timelocks'||v==='sentinel')void cyVaultReadinessView(v,deferred)}
 nav.querySelectorAll('button').forEach(b=>b.onclick=()=>{show(b.dataset.section);scrollTo(0,0)});show(tab)}
 function decorate(){const page=root.querySelector('.v-page');if(!page||page.dataset.cyDecorated==='11')return;page.dataset.cyDecorated='11';if(create)wizard(page);else dashboard(page)}
 new MutationObserver(()=>{if(root.querySelector('.v-page:not([data-cy-decorated="11"])'))decorate()}).observe(root,{childList:true});
