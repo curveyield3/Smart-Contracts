@@ -35,6 +35,27 @@ interface IWithdrawalRequestFork {
     function getSharesToRelease() external view returns (uint256);
 }
 
+
+interface ICurveYieldRouterFork {
+    struct Oracle {
+        address oracleAddress;
+        bytes4 readFunctionID;
+        bytes requiredInputs;
+        bool invert;
+        uint8 rateDecimals;
+    }
+    struct Hop {
+        uint16 poolType;
+        address tokenOut;
+        address swapContract;
+        bytes32 poolId;
+        bytes poolData;
+        Oracle oracle;
+    }
+    function setRoute(address tokenIn, address tokenOut, Hop[] calldata pathway) external;
+    function routeLength(address tokenIn, address tokenOut) external view returns (uint256);
+}
+
 contract CyWBTCSafetyForkV1 {
     using Math for uint256;
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
@@ -62,6 +83,8 @@ contract CyWBTCSafetyForkV1 {
     address private constant ZERO_BALANCE_FUSE = address(bytes20(hex"e9562d7bd06b43e6391c5be4b3c5f5c2bc1e06bf"));
     address private constant USD_FEED = address(bytes20(hex"02b2f2809ce74563cb4b2eca1adafb188e4ed8d7"));
     address private constant WBTC_FUNDING_HOLDER = address(bytes20(hex"7f86bf177dd4f3494b841a37e810a34dd56c829b"));
+    address private constant CURVE_USDC_FXUSD = address(bytes20(hex"5018be882dcce5e3f2f3b0913ae2096b9b3fb61f"));
+    address private constant UNIV3_USDC_WBTC = address(bytes20(hex"9a772018fbd77fcd2d25657e5c547baff3fd7d16"));
     address private constant USER = address(0xB001);
     address private constant PUBLIC_CALLER = address(0xB002);
     address private constant UNAUTHORIZED = address(0xB003);
@@ -325,6 +348,76 @@ contract CyWBTCSafetyForkV1 {
     struct InstantFuse { address fuse; bytes32[] params; }
     function structDummy() private pure {}
 
+    /// @dev Only the existing required redemption route is installed. No swap benchmarking.
+    function _configureScheduledRedeemSwap() private {
+        bytes32[] memory x = new bytes32[](6);
+        x[0] = bytes32((uint256(1) << 248) | uint256(uint160(FXUSD)));
+        x[1] = bytes32((uint256(1) << 248) | uint256(uint160(USDC)));
+        x[2] = bytes32((uint256(1) << 248) | uint256(uint160(FXN)));
+        x[3] = bytes32((uint256(1) << 248) | uint256(uint160(WBTC)));
+        x[4] = bytes32((uint256(2) << 248) | uint256(uint160(USDC)));
+        x[5] = bytes32((uint256(2) << 248) | uint256(uint160(OMNI)));
+        _tx("substrates_existing_universal_swapper", OWNER, VAULT,
+            abi.encodeWithSignature("grantMarketSubstrates(uint256,bytes32[])", 12, x), true);
+        ICurveYieldRouterFork.Hop[] memory route = new ICurveYieldRouterFork.Hop[](1);
+        route[0] = ICurveYieldRouterFork.Hop({
+            poolType: 7,
+            tokenOut: FXUSD,
+            swapContract: CURVE_USDC_FXUSD,
+            poolId: bytes32(0),
+            poolData: abi.encode(uint8(0), uint8(1)),
+            oracle: ICurveYieldRouterFork.Oracle({
+                oracleAddress: CURVE_USDC_FXUSD,
+                readFunctionID: bytes4(keccak256("price_oracle(uint256)")),
+                requiredInputs: abi.encode(uint256(0)),
+                invert: true,
+                rateDecimals: 18
+            })
+        });
+        _tx("configure_existing_usdc_fxusd_curve_route", OWNER, OMNI,
+            abi.encodeCall(ICurveYieldRouterFork.setRoute, (USDC, FXUSD, route)), true);
+        require(ICurveYieldRouterFork(OMNI).routeLength(USDC, FXUSD) == 1, "Scheduled route not installed on fork");
+    }
+
+    function _pendingUnlock() private view returns (uint256 unlockAt) {
+        (bool ok, bytes memory result) = address(ltvManager).staticcall(abi.encodeWithSignature("pendingRequest()"));
+        require(ok && result.length >= 224, "No manager pending request");
+        (, , , , , , unlockAt) = abi.decode(
+            result, (address, uint256, uint256, uint256, uint256, uint256, uint256)
+        );
+    }
+
+    function _fullScheduledExit() private {
+        uint256 allUserShares = IERC20(VAULT).balanceOf(USER);
+        require(allUserShares > 0, "No user shares before full exit");
+        _tx("user_requests_100_percent_of_shares", USER, WITHDRAW_MANAGER,
+            abi.encodeWithSignature("requestShares(uint256)", allUserShares), true);
+        (uint256 requested, uint256 endWindow, bool canWithdraw, uint256 windowSec) =
+            IWithdrawalRequestFork(WITHDRAW_MANAGER).requestInfo(USER);
+        require(requested > 0 && endWindow >= block.timestamp + 3600 && windowSec >= 3600, "Bad native IPOR request");
+        require(!canWithdraw, "Unreleased user request unexpectedly withdrawable");
+        _tx("user_authorizes_manager_share_burn", USER, VAULT,
+            abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), requested), true);
+        _tx("public_caller_starts_native_scheduled_exit", PUBLIC_CALLER, address(publicExecutor),
+            abi.encodeWithSignature("InitializeFulfillWithdrawRequest(address)", USER), true);
+        uint256 unlockAt = _pendingUnlock();
+        require(unlockAt >= block.timestamp + 3600, "No cooldown initiated");
+        _tx("public_caller_cannot_finalize_before_unlock", PUBLIC_CALLER, address(publicExecutor),
+            abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), false);
+        _snapshot("user_scheduled_cooldown_pending");
+        vm.warp(unlockAt + 2);
+        vm.roll(block.number + 20);
+        _snapshot("user_scheduled_after_cooldown");
+        _tx("any_public_caller_can_finalize_and_redeem_full_shares", UNAUTHORIZED, address(publicExecutor),
+            abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+        _snapshot("user_full_exit_final");
+        require(IERC20(VAULT).balanceOf(USER) == 0, "User did not redeem all shares");
+        require(IERC20(WBTC).balanceOf(USER) > 0, "User got no WBTC on full withdrawal");
+        State memory post = _state();
+        require(post.rawDebt == 0, "Debt left after 100% user exit");
+        require(_pendingUnlock() == 0, "Manager pending request not cleared");
+    }
+
     function _fundAndDeposit(uint256 amount) private {
         require(IERC20(WBTC).balanceOf(WBTC_FUNDING_HOLDER) >= amount,
             "Fork source lacks real WBTC liquidity");
@@ -398,4 +491,14 @@ contract CyWBTCSafetyForkV1 {
         _up();
         _snapshot("leverage_final_state");
     }
+    function test_02_user_request_public_two_button_full_scheduled_exit() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        _fullScheduledExit();
+    }
+
 }
