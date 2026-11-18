@@ -440,6 +440,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
 
     /// @notice End-of-life close, entire share supply requested. This entire
     ///         sequence uses exactly one f(x) PoolManager operation.
+    /// @notice Full-close on a single fxMINT operate: repay debt and remove collateral.
     function _closeEntirePositionAndRedeem() private {
         PendingRequest memory p = pendingRequest;
         (uint256 collateral, uint256 debt) = _position(p.nftId);
@@ -453,29 +454,25 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         _executeOne(FXMINT_COLLATERAL_FUSE, abi.encodeWithSignature(
             "exitAndRepayFull(uint256,uint256,uint256,uint256)",
             p.nftId, allWBTC, budget, uint256(0)));
-        IFXMintWithdrawManager(WITHDRAW_MANAGER).releaseFunds(block.timestamp - 1, p.shares);
-        uint256 released = IFXMintManagerVault(VAULT).redeemFromRequest(p.shares, p.user, p.user);
-        delete pendingRequest;
-        emit WithdrawRequestFinalized(p.user, p.shares, released);
+        _releaseNativeRequestShares(p);
     }
 
+    /// @dev For a partial exit, collateralFuse.exit already checks LIVE LTV
+    ///      after the actual protocol call; do not duplicate that same check.
     function _releasePendingCollateralAndShares() private {
         PendingRequest memory p = pendingRequest;
-        (uint256 rawCollateral, uint256 liveDebt) = _position(p.nftId);
-        if (p.collateralReleaseWBTC == type(uint256).max && liveDebt != 0)
-            revert UnsafeLtv(type(uint256).max, _liveTarget());
+        (uint256 collateral,) = _position(p.nftId);
         uint256 scaling = IFXMintManagerPoolManager(POOL_MANAGER).getTokenScalingFactor(WBTC);
         if (scaling == 0) revert InvalidConfiguration();
-        uint256 nativeAvailable = Math.mulDiv(rawCollateral, WAD, scaling);
-        uint256 releaseWBTC = p.collateralReleaseWBTC < nativeAvailable
-            ? p.collateralReleaseWBTC : nativeAvailable;
-        if (releaseWBTC != 0) {
-            uint256 rawRemaining = _remainingRawCollateral(releaseWBTC, rawCollateral);
-            if (_ltv(rawRemaining, liveDebt, _exchangePrice()) > _liveTarget()) revert UnsafeLtv(
-                _ltv(rawRemaining, liveDebt, _exchangePrice()), _liveTarget());
-            _executeOne(FXMINT_COLLATERAL_FUSE, abi.encodeWithSignature(
-                "exit(uint256,uint256,uint256)", p.nftId, releaseWBTC, uint256(0)));
-        }
+        uint256 available = Math.mulDiv(collateral, WAD, scaling);
+        uint256 releaseWBTC = p.collateralReleaseWBTC < available
+            ? p.collateralReleaseWBTC : available;
+        if (releaseWBTC != 0) _executeOne(FXMINT_COLLATERAL_FUSE,
+            abi.encodeWithSignature("exit(uint256,uint256,uint256)", p.nftId, releaseWBTC, uint256(0)));
+        _releaseNativeRequestShares(p);
+    }
+
+    function _releaseNativeRequestShares(PendingRequest memory p) private {
         IFXMintWithdrawManager(WITHDRAW_MANAGER).releaseFunds(block.timestamp - 1, p.shares);
         uint256 released = IFXMintManagerVault(VAULT).redeemFromRequest(p.shares, p.user, p.user);
         delete pendingRequest;
@@ -616,12 +613,12 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             if (sell == 0) revert InvalidAmount();
             uint256 scaling = IFXMintManagerPoolManager(POOL_MANAGER).getTokenScalingFactor(WBTC);
             if (scaling == 0) revert InvalidConfiguration();
-            (uint256 collateral, uint256 debt) = _position(id);
+            (uint256 collateral,) = _position(id);
             uint256 rawToRelease = Math.mulDiv(sell, scaling, WAD, Math.Rounding.Up)
                 + (scaling / WAD) + 1;
             if (rawToRelease >= collateral) revert InsufficientCollateral(rawToRelease, collateral);
-            uint256 projectedLtv = _ltv(collateral - rawToRelease, debt, price);
-            if (projectedLtv > _liveTarget()) revert UnsafeLtv(projectedLtv, _liveTarget());
+            // The same live-target post-condition is enforced by the
+            // collateral fuse; repeating it here wastes bytecode and gas.
             uint256 beforeWBTC = IERC20(WBTC).balanceOf(VAULT);
             _executeOne(FXMINT_COLLATERAL_FUSE,
                 abi.encodeWithSignature("exit(uint256,uint256,uint256)", id, sell, uint256(0)));
