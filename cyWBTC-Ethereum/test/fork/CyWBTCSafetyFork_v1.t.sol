@@ -1005,4 +1005,54 @@ contract CyWBTCSafetyForkV1 {
             s.fxusdIdle == 0 && s.fxspIdle == 0 && s.usdcIdle == 0 && s.wbtcIdle <= 100_000,
             "Residual leverage or unaccounted collateral after user exit");
     }
+    /// @notice ERC4626 mint() must work as a distinct user entry point
+    /// (not just deposit()), preserve share accounting, then allow a complete
+    /// scheduled close after all strategy assets have entered live markets.
+    function test_12_user_mint_entrypoint_and_full_withdrawal() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        uint256 funding = 10_000_000;
+        _tx("mint_user_funded_with_real_wbtc", WBTC_FUNDING_HOLDER, WBTC,
+            abi.encodeWithSignature("transfer(address,uint256)", USER, funding), true);
+        _tx("mint_user_approves_underlying", USER, WBTC,
+            abi.encodeWithSignature("approve(address,uint256)", VAULT, funding), true);
+        uint256 shares = IERC4626(VAULT).previewDeposit(funding);
+        require(shares > 0, "No mintable shares");
+        uint256 requiredAssets = IERC4626(VAULT).previewMint(shares);
+        require(requiredAssets > 0 && requiredAssets <= funding, "Invalid mint preview");
+        uint256 beforeWBTC = IERC20(WBTC).balanceOf(USER);
+        bytes memory ret = _tx("user_mint_erc4626_shares", USER, VAULT,
+            abi.encodeWithSignature("mint(uint256,address)", shares, USER), true);
+        require(abi.decode(ret,(uint256)) == requiredAssets, "Mint charged unexpected assets");
+        require(IERC20(VAULT).balanceOf(USER) == shares, "Mint did not issue shares");
+        require(beforeWBTC - IERC20(WBTC).balanceOf(USER) == requiredAssets, "Mint debit mismatch");
+        _openNft();
+        _up();
+        require(_state().managerLtv <= TARGET, "Mint-funded strategy exceeded LTV");
+        _fullScheduledExit();
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
+    }
+
+    /// @notice No third party can redeem, transfer or withdraw somebody else's
+    /// shares without allowance, including after user capital is leveraged.
+    function test_13_reject_unauthorized_user_share_spending_and_preserve_full_exit() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        uint256 shares = IERC20(VAULT).balanceOf(USER);
+        State memory initial = _state();
+        _tx("reject_third_party_redeem_user_shares", UNAUTHORIZED, VAULT,
+            abi.encodeWithSignature("redeem(uint256,address,address)", shares / 10, UNAUTHORIZED, USER), false);
+        _tx("reject_third_party_withdraw_user_assets", UNAUTHORIZED, VAULT,
+            abi.encodeWithSignature("withdraw(uint256,address,address)", uint256(10_000), UNAUTHORIZED, USER), false);
+        _tx("reject_unapproved_transfer_from_user", UNAUTHORIZED, VAULT,
+            abi.encodeWithSignature("transferFrom(address,address,uint256)", USER, UNAUTHORIZED, shares / 10), false);
+        require(_sameAccounting(initial, _state()), "Unauthorized call changed account state");
+        _fullScheduledExit();
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
+    }
 }
