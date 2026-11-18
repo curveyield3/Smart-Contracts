@@ -12,6 +12,24 @@
 - New-vault setup dashboard: https://markets.curveyield.org/curator-preview/#/vault/new/overview
 - Source of live delivery: Cloudflare Worker named **`markets`**, script routing `/curator-preview`, `/curator-preview/app.css`, `/curator-preview/app.js`.
 
+## Current production integration — Markets Worker v158
+
+The approved Morpho-inspired browsing design is now served on production routes, not merely /curator-preview. **Read this before editing the frontend.**
+
+- `/` — Marketplace Home, live navigation.
+- `/markets` and `/markets/<slug>` — Fraxtal market index and details backed by the existing `/api/markets` and `/api/activity/<slug>` on-chain API routes.
+- `/portfolio`, `/portfolio/positions`, `/portfolio/vaults`, `/portfolio/activity` — portfolio design with explicit wallet connection, using `/api/positions?wallet=...` where available. Wallet positions cover only supported Fraxtal markets. Account activity indexing remains incomplete.
+- `/vaults` — browser-saved recent vaults, clearly **not** a complete factory-vault registry; existing verified import/management links remain.
+- `/create` — existing functional market creation code, with a scoped responsive Morpho-style layout overlay.
+- `/vaults/create` and `/vaults/0x...` — original protected-controller creation and vault dashboards **remain unchanged while their visual integration is reserved for last**.
+- `/opportunities`, `/wfrax`, `/frxusd`, `/sfrxusd`, `/market/0x...` — preserved production discovery and trading flows.
+
+**Live source:** [site/marketplace-live-v10.js](site/marketplace-live-v10.js) is the exact client-side live-data integration script. The Worker injects it after the approved v9 visual app, and serves it from a **commit-pinned GitHub raw URL**. The Worker version must be changed when new script commits are activated. Do not assume an updated GitHub main branch immediately changes production.
+
+The live integration never substitutes sample APYs, rates, TVL, history, or personal holdings for chain-derived data. Unsupported features show honest empty or unavailable states. Keep existing wallet-signing and transaction code as the authority; production market details link to the preexisting verified trade routes.
+
+**Production verification performed:** Cloudflare active deployment verification, live Opera rendering for the markets index, individual market details, portfolio and saved vault directory; existing market-creation page checked visually. A complete mobile/live-wallet transaction QA pass is not yet established. Do not claim it.
+
 ## Source files kept here
 
 The **v9 visual preview assets** are stored as gzip-compressed Git blobs. These are the canonical page assets for the browsing preview (not a source of live financial data):
