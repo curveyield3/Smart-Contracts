@@ -1,6 +1,17 @@
-# CurveYield Marketplace Web UI — Production v164 / Visual Reference v9
+# CurveYield Marketplace Web UI — Production v171 / Visual Reference v9
 
 **Start here for any CurveYield Markets website/curator page design work.**
+
+## Production v171 — current functional status
+
+Cloudflare Worker `markets` v171 added source-bound Fraxtal vault inventory, wallet-filtered market activity and live vault Timelocks/Sentinel reads. All changes are read-only; existing transaction and deployment handlers remain authoritative. Reinspect the active Worker before editing because other agents update it concurrently.
+
+- **Vault directory:** `/vaults` uses `/api/vault-directory`. This reads the immutable historical factory event snapshot in [site/fraxtal-vault-factory-index.json](site/fraxtal-vault-factory-index.json), validated against the actual Fraxtal Vault V2 factory `0x711bCE12269a3a496eFaABB8B9AD5A4485E08A24`, plus newer on-chain factory `CreateVaultV2` logs. The snapshot covers blocks 30,000,000 through 44,101,401. One factory-created vault was found (`0xa9d7ec2b070564c787dcf702f9d1e962819d6084`) and independently checked using `isVaultV2`, `owner`, `asset`. The live API subsequently returned complete coverage through block 44,101,597. Preserve explicit scan coverage, tail gaps and errors; never claim an incomplete index is complete.
+- **Do not rely on Morpho REST vaults-v2 with chain 252:** Morpho API `/v0/vaults-v2?chain_ids=252` returned HTTP 400 (`Unsupported chain_id`). The verified factory event source is required.
+- **Portfolio Activity:** `/portfolio/activity` requests `/api/portfolio-activity?wallet=<address>`. It filters events by indexed position owner for the three primary Fraxtal Morpho markets across the last 24,000 blocks. Exact transaction hashes and blocks are returned; it is **not** complete wallet history.
+- **Vault Timelocks/Sentinel:** `/vaults/<address>` uses `/api/vault-readiness?address=<address>` in the existing dashboard tabs for factory verification and direct `timelock(bytes4)`, `abdicated(bytes4)`, `isSentinel(address)`, owner/curator and adapter count reads. A supplied address can be checked as a sentinel. Pending-action enumeration and a complete sentinel roster are **not** implemented; no new transaction controls.
+- **Current frontend JS:** [marketplace-live-v12.js](site/marketplace-live-v12.js) and [vault-ui-v12.js](site/vault-ui-v12.js); CSS stays [vault-ui-v11.css](site/vault-ui-v11.css). GitHub source files are pinned by exact commits in the live Worker, not automatically published by branch updates. Older marketplace v10/v11 and vault v11 JavaScript were replaced.
+- **Live verification:** Production `/api/vault-directory` and `/vaults` displayed the same one-vault verified historical record; `/api/vault-readiness` returned on-chain roles and timelocks for it; `/api/portfolio-activity` returned a bounded empty record for a zero-address input. No wallet signing or blockchain transactions were executed. Full latest-build mobile and end-to-end wallet QA remains outstanding.
 
 ## Where it runs
 
@@ -12,22 +23,22 @@
 - New-vault setup dashboard: https://markets.curveyield.org/curator-preview/#/vault/new/overview
 - Source of live delivery: Cloudflare Worker named **`markets`**, script routing `/curator-preview`, `/curator-preview/app.css`, `/curator-preview/app.js`.
 
-## Current production integration — Markets Worker v164
+## Historical production integration — Markets Worker v164 (superseded by v171)
 
 The approved Morpho-inspired browsing design is now served on production routes, not merely /curator-preview. **Read this before editing the frontend.**
 
 - `/` — Marketplace Home, live navigation.
 - `/markets` and `/markets/<slug>` — Fraxtal market index and details backed by the existing `/api/markets` and `/api/activity/<slug>` on-chain API routes.
 - `/portfolio`, `/portfolio/positions`, `/portfolio/vaults`, `/portfolio/activity` — portfolio design with explicit wallet connection, using `/api/positions?wallet=...` where available. Wallet positions cover only supported Fraxtal markets. Account activity indexing remains incomplete.
-- `/vaults` — browser-saved recent vaults, clearly **not** a complete factory-vault registry; existing verified import/management links remain.
+- `/vaults` — **at v164 only**, browser-saved recent vaults; **v171 uses the on-chain factory event snapshot plus live updates** as described above.
 - `/create` — existing functional market creation, now in the same Morpho-style collapsible sidebar and responsive white/gold form shell as the other pages. Its original market-creation wallet and transaction generator remain unchanged.
 - `/vaults/create` — original protected-controller deployment logic now appears inside the approved **two-step Fraxtal creation UI** (vault identity → adapter/review). The original v10 controller deployment, wallet signing, fee payment, receipt verification, and resume safeguards are still the authoritative handlers.
-- `/vaults/0x...` — the approved permanent vault-management dashboard is live with Overview, Allocation, Caps, Timelocks, and Sentinel tabs. Existing on-chain fee/operator, dead-deposit, lending market discovery, adapter and cap actions remain in place; Timelocks/Sentinel display the approved information layout but **cannot yet read or submit permissioned actions** until source-bound ABI integration.
+- `/vaults/0x...` — the approved permanent vault-management dashboard is live with Overview, Allocation, Caps, Timelocks, and Sentinel tabs. Existing on-chain fee/operator, dead-deposit, lending market discovery, adapter and cap actions remain in place; Timelocks/Sentinel were layout-only at v164; v171 includes factory-verified read-only ABI calls, but still no new permissioned actions.
 - `/opportunities`, `/wfrax`, `/frxusd`, `/sfrxusd`, `/market/0x...` — preserved production discovery and trading flows.
 
-**Vault UI assets:** [site/vault-ui-v11.js](site/vault-ui-v11.js) and [site/vault-ui-v11.css](site/vault-ui-v11.css), committed and loaded via the pinned GitHub revision through Worker routes `/assets/vault-ui-v11.js` and `.css`. These enhance layout only; the original `VAULT_CLIENT` still owns all wallet and contract interaction logic. The enhanced Fraxtal vault shell falls back to the original vault HTML when the template cannot be retrieved. The Ethereum legacy query variant is intentionally unchanged.
+**Historical v164 vault UI assets:** vault-ui-v11.js (replaced by v12) and [site/vault-ui-v11.css](site/vault-ui-v11.css), committed and loaded via the pinned GitHub revision through Worker routes `/assets/vault-ui-v11.js` and `.css`. These enhance layout only; the original `VAULT_CLIENT` still owns all wallet and contract interaction logic. The enhanced Fraxtal vault shell falls back to the original vault HTML when the template cannot be retrieved. The Ethereum legacy query variant is intentionally unchanged.
 
-**Live source:** [site/marketplace-live-v10.js](site/marketplace-live-v10.js) is the exact client-side live-data integration script. The Worker injects it after the approved v9 visual app, and serves it from a **commit-pinned GitHub raw URL**. The Worker version must be changed when new script commits are activated. Do not assume an updated GitHub main branch immediately changes production.
+**Historical v164 live source:** marketplace-live-v10.js (replaced by v12) is the exact client-side live-data integration script. The Worker injects it after the approved v9 visual app, and serves it from a **commit-pinned GitHub raw URL**. The Worker version must be changed when new script commits are activated. Do not assume an updated GitHub main branch immediately changes production.
 
 
 **Important asset pin:** Worker v164 serves vault and market-creation sidebar enhancements from exact GitHub revision `57d15cffe6c471d48e4ffbde856719d441b39eb9` through `CY_VAULT_UI_V11`. A previous deployment initially served an earlier asset which exposed preview Favorites; the pin and section hiding were corrected and independently verified on the live `/create` page. Always check the deployed asset response, not just the GitHub branch, after a visual update.
