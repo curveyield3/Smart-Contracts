@@ -9,13 +9,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
-      PROTOCOL: "Fluid Lending" # v93 active external rewards + staking APR
+      PROTOCOL: "Euler EVK"
+      STAGE: "research"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
       - name: Install Chromium browser
+        if: env.STAGE != 'research'
         run: |
           mkdir -p "$RUNNER_TEMP/market-verify"
           cd "$RUNNER_TEMP/market-verify"
@@ -39,7 +41,32 @@ jobs:
             }
           }catch(e){console.log('FLUID_RATE_INSPECTION_ERROR '+String(e));}
           JS
+      - name: Inspect live Euler native EVK response schema and positive vaults
+        if: env.PROTOCOL == 'Euler EVK'
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          const base='https://v3.euler.finance/v3/evk/vaults?chainId=1&limit=100&offset=';
+          const arr=[];
+          for(let off=0;off<500;off+=100){
+            const r=await fetch(base+off,{signal:AbortSignal.timeout(30000)});
+            if(!r.ok)throw Error('Euler HTTP '+r.status);
+            const j=await r.json();
+            if(off===0)console.log('EULER_META '+JSON.stringify(j.meta));
+            arr.push(...(j.data||[]));
+            if(off+100>=j.meta.total)break;
+          }
+          let good=arr.filter(v=>Number(v.totalSupplyUsd)>10000 && Number(v.supplyApy)>0.0001);
+          good.sort((a,b)=>Number(b.totalSupplyUsd)-Number(a.totalSupplyUsd));
+          for(let v of good.slice(0,22)){
+            console.log('EULER_VAULT '+JSON.stringify({address:v.address,asset:v.asset,name:v.name,apy:v.supplyApy,
+             tvl:v.totalSupplyUsd,isEscrow:v.isEscrow,vaultType:v.vaultType,visibility:v.visibility,
+             snapshotTimestamp:v.snapshotTimestamp,status:v.status,totalAssets:v.totalAssets}));
+          }
+          console.log('EULER_RESEARCH_SUMMARY '+JSON.stringify({sampled:arr.length,positive:good.length,visibilityKeys:Array.from(new Set(arr.flatMap(v=>Object.keys(v.visibility||{}))))}));
+          JS
       - name: Inspect full protocol listing, rates, single token identity and dapp usability
+        if: env.STAGE != 'research'
         timeout-minutes: 9
         run: |
           cat > "$RUNNER_TEMP/market-verify/check.mjs" <<'NODE'
