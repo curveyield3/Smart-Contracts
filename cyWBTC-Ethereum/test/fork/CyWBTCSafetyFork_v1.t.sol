@@ -109,6 +109,8 @@ contract CyWBTCSafetyForkV1 {
         uint256 usdcIdle;
         uint256 fxnIdle;
         uint256 fxspIdle;
+        uint256 gaugeStakedShares;
+        uint256 fxspNavWad;
         uint256 userShares;
         uint256 userWBTC;
         uint256 positionId;
@@ -135,6 +137,14 @@ contract CyWBTCSafetyForkV1 {
         s.usdcIdle = IERC20(USDC).balanceOf(VAULT);
         s.fxnIdle = IERC20(FXN).balanceOf(VAULT);
         s.fxspIdle = IERC20(FXSP).balanceOf(VAULT);
+        (bool regOk, bytes memory childData) = REGISTRY.staticcall(
+            abi.encodeWithSignature("vaultMap(uint256,address)", uint256(37), VAULT));
+        if (regOk && childData.length == 32) {
+            address child = abi.decode(childData, (address));
+            if (child != address(0)) s.gaugeStakedShares = IERC20(GAUGE).balanceOf(child);
+        }
+        (bool navOk, bytes memory navData) = FXSP.staticcall(abi.encodeWithSignature("nav()"));
+        if (navOk && navData.length >= 32) s.fxspNavWad = abi.decode(navData, (uint256));
         s.userShares = IERC20(VAULT).balanceOf(USER);
         s.userWBTC = IERC20(WBTC).balanceOf(USER);
         s.sharesReserved = IWithdrawalRequestFork(WITHDRAW_MANAGER).getSharesToRelease();
@@ -164,6 +174,8 @@ contract CyWBTCSafetyForkV1 {
         vm.serializeUint(k, "vaultIdleUSDC", s.usdcIdle);
         vm.serializeUint(k, "vaultIdleFXN", s.fxnIdle);
         vm.serializeUint(k, "vaultIdleFXSP", s.fxspIdle);
+        vm.serializeUint(k, "convexPersonalGaugeFxspShares", s.gaugeStakedShares);
+        vm.serializeUint(k, "fxspNavWad", s.fxspNavWad);
         vm.serializeUint(k, "userShares", s.userShares);
         vm.serializeUint(k, "userWBTC", s.userWBTC);
         vm.serializeUint(k, "fxMintPositionId", s.positionId);
@@ -180,6 +192,7 @@ contract CyWBTCSafetyForkV1 {
         return a.totalAssets == b.totalAssets && a.totalSupply == b.totalSupply
             && a.wbtcIdle == b.wbtcIdle && a.fxusdIdle == b.fxusdIdle
             && a.usdcIdle == b.usdcIdle && a.fxnIdle == b.fxnIdle && a.fxspIdle == b.fxspIdle
+            && a.gaugeStakedShares == b.gaugeStakedShares
             && a.userShares == b.userShares && a.userWBTC == b.userWBTC
             && a.positionId == b.positionId && a.rawCollateral == b.rawCollateral
             && a.rawDebt == b.rawDebt && a.sharesReserved == b.sharesReserved;
@@ -499,6 +512,23 @@ contract CyWBTCSafetyForkV1 {
         _openNft();
         _up();
         _fullScheduledExit();
+    }
+
+    function test_03_direct_alpha_borrow_must_not_bypass_target_ltv() public {
+        _deploy();
+        _configure();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        uint256 beforeLtv = _state().managerLtv;
+        require(beforeLtv <= TARGET, "Initial over-target position");
+        FuseAction[] memory actions = new FuseAction[](1);
+        actions[0] = FuseAction(address(borrowFuse),
+            abi.encodeWithSignature("enter(uint256,uint256,uint256)", balanceFuse.positionId(), uint256(100e18), uint256(0)));
+        _tx("reject_alpha_direct_borrow_above_target", OWNER, VAULT,
+            abi.encodeWithSignature("execute((address,bytes)[])", actions), false);
+        require(_state().managerLtv == beforeLtv, "Direct borrow bypassed target");
+        _snapshot("over_target_borrow_rejected");
     }
 
 }
