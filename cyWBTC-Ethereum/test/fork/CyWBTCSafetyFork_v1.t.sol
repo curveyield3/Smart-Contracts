@@ -212,7 +212,7 @@ contract CyWBTCSafetyForkV1 {
         ltvManager = new FXMintLTVManager(a, TARGET);
         publicExecutor = new FulfillWithdrawExecutor(address(ltvManager));
         require(ltvManager.targetLtvWad() == TARGET, "60% LTV constructor failed");
-        require(publicExecutor.MANAGER() == address(ltvManager), "Wrong public manager");
+        require(address(publicExecutor.MANAGER()) == address(ltvManager), "Wrong public manager");
         _snapshot("deploy_after");
     }
 
