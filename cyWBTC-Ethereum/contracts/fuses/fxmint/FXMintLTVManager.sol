@@ -451,6 +451,12 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         _executeOne(FXMINT_COLLATERAL_FUSE, abi.encodeWithSignature(
             "exitAndRepayFull(uint256,uint256,uint256)",
             p.nftId, budget, uint256(0)));
+        // The IPOR vault prices idle fxUSD in totalAssets even after the
+        // final fxMINT debt is closed. A 100%-share redemption must first
+        // settle that remaining non-WBTC exposure into the WBTC underlying,
+        // or redeemFromRequest can attempt to transfer more WBTC than exists.
+        uint256 residualFxUSD = IERC20(FXUSD).balanceOf(VAULT);
+        if (residualFxUSD != 0) _swap(FXUSD, WBTC, residualFxUSD);
         _releaseNativeRequestShares(p);
     }
 
