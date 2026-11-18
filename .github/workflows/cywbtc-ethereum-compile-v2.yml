@@ -1,0 +1,55 @@
+name: cyWBTC Ethereum IPOR source compile v2
+on:
+  push:
+    paths:
+      - 'cyWBTC-Ethereum/contracts/**'
+      - '.github/workflows/cywbtc-ethereum-compile-v2.yml'
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Compile v19-derived Ethereum contracts without via-ir
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT="$RUNNER_TEMP/cywbtc-ethereum"
+          mkdir -p "$ROOT"
+          unzip -q 'cywbtc-ipor-source-v19/cyWBTC_IPOR_Source_v19_V7_Compiler_Repair.zip' -d "$ROOT"
+          mkdir -p "$ROOT/contracts/fuses/fxsp" "$ROOT/contracts/fuses/convex" "$ROOT/contracts/executors"
+          cp -r cyWBTC-Ethereum/contracts/* "$ROOT/contracts/"
+          cd "$ROOT"
+          cat > foundry.toml <<'TOML'
+          [profile.default]
+          src = "contracts"
+          out = "out"
+          libs = ["lib"]
+          solc_version = "0.8.30"
+          auto_detect_solc = false
+          evm_version = "cancun"
+          optimizer = true
+          optimizer_runs = 10000000
+          via_ir = false
+          remappings = [
+            "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+            "forge-std/=lib/forge-std/src/",
+            "@tokenized-strategy/=lib/tokenized-strategy/",
+            "@yearn-vaults/=lib/yearn-vaults/"
+          ]
+          TOML
+          forge build --sizes \
+            contracts/fuses/fxsp/FxSPSupplyFuse.sol \
+            contracts/fuses/fxsp/FxSPCurveBalanceFuse.sol \
+            contracts/fuses/convex/ConvexFXGaugeSupplyFuse.sol \
+            contracts/fuses/convex/ConvexFXGaugeBalanceFuse.sol \
+            contracts/fuses/fxmint/FXMintBalanceFuse.sol \
+            contracts/fuses/fxmint/FXMintLTVManager.sol \
+            contracts/fuses/fxmint/FXMintBorrowFuse.sol \
+            contracts/fuses/fxmint/FXMintCollateralFuse.sol \
+            contracts/executors/FulfillWithdrawExecutor.sol
