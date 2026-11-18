@@ -9,8 +9,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
-      PROTOCOL: "Beefy Vaults"
-      STAGE: "verify"
+      PROTOCOL: "Compound III"
+      STAGE: "research"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -221,10 +221,20 @@ jobs:
            'function getUtilization() view returns(uint256)',
            'function getSupplyRate(uint256) view returns(uint64)',
            'function totalSupply() view returns(uint256)',
-           'function isSupplyPaused() view returns(bool)'
+           'function isSupplyPaused() view returns(bool)',
+           'function isWithdrawPaused() view returns(bool)',
+           'function latestRoundData() view returns(uint80,int256,uint256,uint256,uint80)',
+           'function decimals() view returns(uint8)',
+           'function stEthPerToken() view returns(uint256)'
           ]);
-          console.log('COMET_SELECTORS '+JSON.stringify(Object.fromEntries(['baseToken','baseScale','baseTokenPriceFeed','getPrice','getUtilization','getSupplyRate','totalSupply','isSupplyPaused'].map(k=>[k,I.getFunction(k).selector]))));
+          console.log('COMET_SELECTORS '+JSON.stringify(Object.fromEntries(['baseToken','baseScale','baseTokenPriceFeed','getPrice','getUtilization','getSupplyRate','totalSupply','isSupplyPaused','isWithdrawPaused','latestRoundData','decimals','stEthPerToken'].map(k=>[k,I.getFunction(k).selector]))));
           const read=async(to,method,...args)=>I.decodeFunctionResult(method,await call(to,I.encodeFunctionData(method,args)))[0];
+          const ethUsd='0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419',btcUsd='0xf4030086522a5beea4988f8ca5b36dbc97bee88c';
+          for(const [n,a] of [['ETHUSD',ethUsd],['BTCUSD',btcUsd]]){
+           const v=await read(a,'latestRoundData'),dec=await read(a,'decimals');
+           console.log('COMET_CHAINLINK '+JSON.stringify({name:n,decimals:Number(dec),price:Number(v[1])/10**Number(dec),updatedAt:Number(v[3])}));
+          }
+          console.log('COMET_WSTETH_RATIO '+String(await read('0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0','stEthPerToken')));
           for(const n of names){
            const url='https://raw.githubusercontent.com/compound-finance/comet/main/deployments/mainnet/'+encodeURIComponent(n)+'/roots.json';
            try{
@@ -239,8 +249,9 @@ jobs:
             const price=await read(comet,'getPrice',priceFeed);
             const apr=Number(rate)/1e18*31536000*100;
             const supply=Number(total)/Number(scale),tvl=supply*Number(price)/1e8;
+            const exitPaused=await read(comet,'isWithdrawPaused');
             console.log('COMET_MARKET '+JSON.stringify({name:n,comet,token,scale:String(scale),priceFeed,
-             utilization:Number(util)/1e18,apr,price:Number(price)/1e8,supply,tvl,paused,
+             utilization:Number(util)/1e18,apr,price:Number(price)/1e8,supply,tvl,paused,exitPaused,
              eligible:!paused&&apr>1&&tvl>100}));
            }catch(e){console.log('COMET_ERROR '+n+' '+String(e))}
           }
