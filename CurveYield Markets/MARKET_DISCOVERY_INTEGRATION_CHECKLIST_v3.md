@@ -1,19 +1,57 @@
-# MARKET DISCOVERY INTEGRATION CHECKLIST — v2
+# MARKET DISCOVERY INTEGRATION CHECKLIST — v3
 
 > **Scope:** Ethereum mainnet · single-token ERC-20 deposits only  
-> **Document status:** Deployed-code capability inventory, **not** independently verified live discovery counts.  
-> **Worker:** v116 discovery review; latest deployed v118 carries forward that discovery subsystem alongside curator-UI changes.
+> **Document status:** Live source-specific verification checkpoint, plus historical implementation inventory; not a claim of exhaustive wallet-interaction testing.  
+> **Current deployed Worker:** v141 (November 18, 2026); v134 and v118 notes below are retained as historical records.
 
 ## Priority action checklist
 
 - [ ] **P1 — Fraxlend:** Repair the out-of-scope `count` variable and verify a complete live collection.
 - [ ] **P2 — Live validation:** Verify each active provider's runtime schema, discovered/normalized/eligible/published counts, failures, and actual protocol-specific dapp destinations.
-- [ ] **P3 — Deposit eligibility:** Complete single-token deposit checks for IPOR, Fluid, Yearn, and CurveLend.
+- [x] **P3 (current listed markets) — Deposit eligibility:** Implemented source-isolated asset/capacity checks for IPOR, Fluid, Yearn V2/V3, and CurveLend V1/V2. **Pending:** withdrawal accounting, wallet-specific limits and live transaction execution.
 - [ ] **P4 — Coverage gaps:** Integrate eligible single-token Stake DAO lockers and legitimate legacy markets.
-- [ ] **P5 — Completeness:** Add provider pagination/completeness checks and reconcile enumerated counts.
+- [ ] **P5 — Completeness:** Reconciled 698 **qualifying published** records in nine isolated feeds plus seven shared collectors, with cold-cache gaps surfaced. Full upstream enumerated market completeness remains unverified.
 - [ ] **P6 — Persistence:** Add durable per-asset snapshots and historical performance within the intended storage architecture.
 
 **Verification milestone:** report, for **each** source, **markets discovered → markets successfully normalized → eligible single-token markets → published markets with working dapp destinations**. Keep unknown numbers explicitly unknown.
+
+---
+
+## Verified deployment checkpoint — 2026-11-18 (Worker v141)
+
+**Live authoritative status:** At approximately **11:37 UTC**, after independently refreshing the expired CurveLend feed, `GET https://markets.curveyield.org/api/opportunities/status` returned **698 qualifying single-token-market listings**, **16 protocol/version categories**, **698 source-bound market-specific dapp URLs**, **0 missing primary links**, **0 source failures**, **0 coverage warnings**, and `partial:false`. Distinguish **source-bound URL correctness** from independently browser-verified or wallet-executed interaction: not all 698 URLs have been individually exercised. The page `/opportunities` displayed 698/698 and rendered the first **100** rows, with further rows paginated.
+
+### Architecture and Cloudflare recovery
+
+- **Worker v140:** reduced the main discovery refresh to seven independent collectors: Curve LP composition (supporting filter), Aave V3, Aave V4, Euler EVK, Beefy vaults, SparkLend and Compound III. The live main-only status returned **76** opportunities with no failures. **Do not equate 76 with the full combined catalog.**
+- **Nine source-bounded feeds:** Stake DAO, IPOR, Fluid, Yearn V2/V3, CurveLend V1/V2, Maple Syrup, Morpho Blue, Morpho Vault V1 and Morpho Vault V2. Every feed was verified individually from a live endpoint. Their public URLs are `/api/opportunities/status?source=stakedao`, `ipor`, `fluid`, `yearn`, `curvelend`, `maple`, `morphoblue`, `morphov1`, and `morphov2` (same hostname).
+- **Worker v141:** the ordinary `/api/opportunities`, `/api/opportunities/status`, and asset-scoped `/api/ethereum-lending-markets` combine independently verified **warm** edge-cache snapshots with the main seven-collector set. No additional provider RPCs are issued by this aggregation. If a snapshot is cold, expired or invalid, the API explicitly reports a coverage gap and `partial:true`, rather than silently declaring a complete result.
+- **Caching:** Cloudflare memory + edge cache, 900-second TTL. No R2 or durable storage writes were added. This does not yet satisfy per-asset historical storage or provider completeness invariants.
+- **UI:** cached source datasets override the corresponding base rows and cannot be silently replaced by stale unverified values; page visibly paginates 100 rows. Fraxlend remains quarantined. Curator dashboard v4 and market-creation interfaces were preserved.
+
+### Source-specific qualification outcome
+
+| Source | Live source candidates checked | Passed gate | Published qualifying markets | Qualifications |
+| --- | ---: | ---: | ---: | --- |
+| **Yearn V2 and V3** | **371** | **237** | **110** (V2 **64**, V3 **46**) | V2 verifies native `token()`, `availableDepositLimit()`, `emergencyShutdown()==false`; V3 verifies ERC-4626 `asset()` and `maxDeposit(receiver)>0`. **134** rejected by these checks. Source-specific pages; individual wallet actions remain untested. |
+| **CurveLend V1 and V2** | **32** | **32** | **19** (V1 **13**, V2 **6**) | ERC-4626 underlying and positive maxDeposit verified; official controller-derived vault URLs. Actual wallet transactions not executed. |
+| **Morpho Blue** | Not independently quantified before filtering | Not separately quantified | **241** | Native GraphQL market ID and lending asset identity, TVL, APY and market-specific Morpho route; independent source returned no failures. |
+| **Morpho Vault V1** | Not independently quantified before filtering | Not separately quantified | **74** | Native GraphQL vault-address identity, underlying, rate and exact vault-specific link; isolated source returned no failures. |
+| **Morpho Vault V2** | Not independently quantified before filtering | Not separately quantified | **136** | Same dedicated V2 source and contract-specific routes; isolated source returned no failures. |
+| **Maple Syrup (restricted)** | **3** | **0** for unpermissioned sentinel receiver | **0** unrestricted deposit opportunities | Maple's documented lender authorization/allowlisting is mandatory; router `authorizeAndDeposit` requires eligible signature and withdrawals may enter a queue. **Do not** present these as universally accessible vault deposits. |
+| **Stake DAO native lockers** | Three approved Ethereum native locker candidates from 14 cross-chain records | **3** source-qualified | **3** | CRV/YB/FXN; irreversible principal lock in exchange for sdTokens, **not** an ordinary redeemable vault. |
+| **IPOR Fusion** | **62** | **60** | **34** in independently verified snapshot | Asset and maxDeposit checked; live dapp URLs. |
+| **Fluid Lending** | **5** | **5** | **5** | Correct ERC-4626 underlying and maxDeposit, all five published. |
+| **Fraxlend — quarantined** | **59** registered, ABI-decoded and priced | Capacity-qualified subset, but front-end route invalid | **0** verified interactive markets | Official new/old app routes did not reliably select intended pair; analytics at `https://facts.frax.finance/fraxlend/pairs/<pair-address>` can confirm the pair, but analytics alone is **not** an interactive deposit route. |
+
+**Total reconciled categories:** Aave V3 15; SparkLend 6; Compound III 4; Aave V4 19; Euler EVK 13; Beefy Vaults 19; Morpho Blue 241; Morpho Vault V1 74; Morpho Vault V2 136; Yearn V2 64; Yearn V3 46; CurveLend V1 13; CurveLend V2 6; IPOR Fusion 34; Fluid Lending 5; Stake DAO Lockers 3. Sum **698**.
+
+**Still open:** Obtain genuinely interactive pair-exact Fraxlend dapp routes, verify Maple's authorization flow in the relevant wallet/adapter context (without weakening global screening), check ERC-4626 withdrawal liquidity and share accounting across vault types, perform per-market browser interaction verification, establish complete provider-enumeration counts, and implement per-asset durable historical snapshots within user-specified R2 limits.
+
+**Authoritative references:**
+- [Curve lending-vault ERC-4626 functions](https://docs.curve.finance/developer/lending/contracts/vault/)
+- [Yearn V2 Vault source](https://github.com/yearn/yearn-vaults-v2/blob/master/contracts/Vault.vy)
+- [Maple frontend integration and authorization](https://github.com/maple-labs/maple-docs/blob/master/integrate/ethereum-mainnet/frontend-integration.md)
 
 ---
 
