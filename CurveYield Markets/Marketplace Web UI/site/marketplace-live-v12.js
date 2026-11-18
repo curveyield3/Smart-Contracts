@@ -1,5 +1,5 @@
 'use strict';
-/* CurveYield Marketplace live layer v11 — only verified API and browser-saved data.
+/* CurveYield Marketplace live layer v12 — only verified API and browser-saved data.
    Does not handle signatures, contract writes or pretend to be a complete vault registry. */
 (()=>{
 if(!document.body.hasAttribute('data-cy-live'))return;
@@ -75,11 +75,11 @@ async function vaultDirectory(){
  }
  try{await loadPage(null)}catch(e){error=String(e.message||e)}
  function show(){
-  const rows=indexed.map(v=>({address:v.address,name:v.name||v.symbol||'Vault V2',asset:v.asset,source:'Morpho index'}));
+  const rows=indexed.map(v=>({address:v.address,name:v.name||v.symbol||'Vault V2',asset:v.asset,source:'Factory events'}));
   for(const v of saved)if(!known.has(v.address.toLowerCase()))rows.push({address:v.address,name:v.name||'Vault V2',source:'Browser-saved'});
   paint('<div class="x-explorer">'+header('Vaults','Browse indexed Fraxtal Vault V2 contracts and saved addresses.')+'<div class="x-content">'+
-   '<div class="x-summary"><div><span>Indexed vaults loaded</span><strong>'+indexed.length+'</strong><small>'+(cursor?'Additional pages available':available?'Index page set complete':'Index unavailable')+'</small></div><a class="x-summary-link" href="/vaults/create">Create Vault ↗</a></div>'+
-   warn(available?'Morpho API entries match the official Fraxtal factory address; each contract is rechecked when opened.':'Index unavailable: '+error+'. Browser-saved vaults appear below.')+
+   '<div class="x-summary"><div><span>Factory event vaults loaded</span><strong>'+indexed.length+'</strong><small>'+(cursor?'Additional pages available':available?'Index page set complete':'Index unavailable')+'</small></div><a class="x-summary-link" href="/vaults/create">Create Vault ↗</a></div>'+
+   warn(available?'Entries come from official Fraxtal factory CreateVaultV2 event logs. If coverage is partial, load earlier pages. Each contract is verified when opened.':'Index unavailable: '+error+'. Browser-saved vaults appear below.')+
    '<label>Search <input type="search" data-cy-vsearch placeholder="Vault name or address"></label>'+
    '<div class="x-table-scroll"><table class="x-table"><thead><tr><th>Vault</th><th>Asset contract</th><th>Source</th><th>Open</th></tr></thead><tbody>'+
    rows.map(v=>'<tr data-cy-vrow data-name="'+esc((v.name+' '+v.address).toLowerCase())+'"><td>'+esc(v.name)+'<small>'+esc(trunc(v.address))+'</small></td><td>'+esc(trunc(v.asset))+'</td><td>'+esc(v.source)+'</td><td><a href="/vaults/'+esc(v.address)+'">Verify & open →</a></td></tr>').join('')+
