@@ -470,7 +470,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         targets[1] = OMNI_ROUTER;
         bytes[] memory callData = new bytes[](2);
         callData[0] = abi.encodeWithSignature("approve(address,uint256)", OMNI_ROUTER, amount);
-        callData[1] = abi.encodeWithSignature("easyswap(address,address,uint256)", tokenIn, tokenOut, amount);
+        callData[1] = abi.encodeWithSignature("swap(address,address,uint256)", tokenIn, tokenOut, amount);
         // Bound to the deployed Ethereum IPOR UniversalTokenSwapperFuse v0.8.26,
         // whose verified ABI has TWO SwapData fields (targets, data). The
         // v0.8.30 source adds tokensToReturn and uses a different selector.
