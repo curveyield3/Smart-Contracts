@@ -10,7 +10,7 @@ Screenshot groups:
 - New Vault Configuration — overview/tutorial, allocation, caps, timelocks, sentinel.
 - Configured Vault Management — overview, allocation, caps, timelocks, sentinel.
 
-**Availability:** The screenshot image bytes were supplied in the original ChatGPT artifact `Complete CurveYield MarketPlace Visual Authority Images.zip`. The GitHub repository currently contains this filename/checksum manifest, not the screenshot binaries. Obtain the archive when visual comparison requires it; do not confuse the demo browser screenshots with the Morpho authority.
+**Availability:** The original screenshot binaries are now committed here in [`Complete CurveYield MarketPlace Visual Authority Images.zip`](Complete%20CurveYield%20MarketPlace%20Visual%20Authority%20Images.zip), next to the filename/checksum manifest. The archive was moved intact from repository root: Git blob SHA `f1c0e802502c0eb60820562a0bbf1b2e3d1ef638` (5,597,806 bytes). Extract and inspect the actual screenshots for visual comparisons; do not confuse demo browser screenshots with the Morpho authority.
 
 Implemented CurveYield design decisions include: white/gold palette, centered **top page titles only**, denser dashboard content (v4), balanced dashboard gutters (v5), overflow/clipping protection, and v8 collapsible sidebar / mobile drawer / portfolio.
 
