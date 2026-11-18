@@ -1,0 +1,205 @@
+{
+  "version": "v1",
+  "recordDateUTC": "2026-11-18",
+  "deployer": "0x064256591313eeb86a84a5cbcc4c6460791b96dd",
+  "network": "Fraxtal",
+  "chainId": 252,
+  "contracts": [
+    {
+      "role": "Vault factory controller",
+      "contractName": "CurveYieldProtectedVaultController",
+      "address": "0x33d0fc6db3f50a4f0133817a59cedea639d0c942",
+      "explorer": "https://fraxscan.com/address/0x33d0fc6db3f50a4f0133817a59cedea639d0c942#code",
+      "network": "Fraxtal",
+      "chainId": 252,
+      "deployment": {
+        "deployer": "0x064256591313eeb86a84a5cbcc4c6460791b96dd",
+        "txHash": "0x204bd7255a3b02c8df02337fc1daed7664d8fa730fe404ed319255da0ea6275b",
+        "nonce": 90,
+        "blockNumber": 44036056,
+        "utc": "2026-11-17T02:33:43.000Z",
+        "receiptStatus": "1"
+      },
+      "verifiedRuntime": {
+        "verified": true,
+        "codeHash": "0xa29971bb60cc59e3a9cc71fffcaf8aca26a7916b052329a704bb4849e09416ec",
+        "bytecodeBytes": 14834,
+        "compiler": "v0.8.28+commit.7893614a",
+        "optimizerUsed": "1",
+        "optimizerRuns": 200,
+        "evmVersion": "cancun",
+        "proxy": false,
+        "constructorArgumentsHex": "000000000000000000000000064256591313eeb86a84a5cbcc4c6460791b96dd00000000000000000000000047623c62f281807d615eeb4a2ceee9d97f9d3c490000000000000000000000000000000000000000000000000de0b6b3a7640000",
+        "reportedSourceCodeBytes": 32559,
+        "sourceTruncated": false
+      },
+      "sourcePaths": [
+        "sources/src/CurveYieldProtectedVaultController-v8.sol"
+      ],
+      "input": "build-inputs/CurveYieldProtectedVaultController-v8_verified_v1.json",
+      "abi": "abi/CurveYieldProtectedVaultController_abi_v1.json"
+    },
+    {
+      "role": "Market fee splitter",
+      "contractName": "CurveYieldMorphoFeeSplitterV3",
+      "address": "0x5f19be0378fb06ebacdf6eb2fdc2af15db38d198",
+      "explorer": "https://fraxscan.com/address/0x5f19be0378fb06ebacdf6eb2fdc2af15db38d198#code",
+      "network": "Fraxtal",
+      "chainId": 252,
+      "deployment": {
+        "deployer": "0x064256591313eeb86a84a5cbcc4c6460791b96dd",
+        "txHash": "0xc99174971d473dac500342462eb2df3238bb5738be422fbcb869871cecec67ef",
+        "nonce": 82,
+        "blockNumber": 44032281,
+        "utc": "2026-11-17T00:27:53.000Z",
+        "receiptStatus": "1"
+      },
+      "verifiedRuntime": {
+        "verified": true,
+        "codeHash": "0x4a32333f039babca83e649bbd2d47f6f6e59a6df2c9d09e4175e957496e46c9e",
+        "bytecodeBytes": 6448,
+        "compiler": "v0.8.30+commit.73712a01",
+        "optimizerUsed": "1",
+        "optimizerRuns": 200,
+        "evmVersion": "cancun",
+        "proxy": false,
+        "constructorArgumentsHex": "000000000000000000000000cce2862aed7f2248063c3dcf6906582166c2b6ca000000000000000000000000c715fc8944d565e27cc5598d8aeabb42e4ce71a000000000000000000000000047623c62f281807d615eeb4a2ceee9d97f9d3c4900000000000000000000000047623c62f281807d615eeb4a2ceee9d97f9d3c49",
+        "reportedSourceCodeBytes": 86693,
+        "sourceTruncated": false
+      },
+      "sourcePaths": [
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldMorphoOwnerAndSplitterV5.sol",
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldMorphoIRMsV6.sol",
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldTriggerMasterIRMV3.sol",
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldMorphoIRMFactoriesV6.sol"
+      ],
+      "input": "build-inputs/CurveYieldMorphoOwnerAndSplitterV5_verified_v1.json",
+      "abi": "abi/CurveYieldMorphoFeeSplitterV3_abi_v1.json"
+    },
+    {
+      "role": "Market governance controller",
+      "contractName": "CurveYieldMorphoOwnerV3",
+      "address": "0xc715fc8944d565e27cc5598d8aeabb42e4ce71a0",
+      "explorer": "https://fraxscan.com/address/0xc715fc8944d565e27cc5598d8aeabb42e4ce71a0#code",
+      "network": "Fraxtal",
+      "chainId": 252,
+      "deployment": {
+        "deployer": "0x064256591313eeb86a84a5cbcc4c6460791b96dd",
+        "txHash": "0xdaba4cfbc3719c08caa408b3de16e6dbf23685e66c67bd66912c74b06c74ae92",
+        "nonce": 81,
+        "blockNumber": 44032247,
+        "utc": "2026-11-17T00:26:45.000Z",
+        "receiptStatus": "1"
+      },
+      "verifiedRuntime": {
+        "verified": true,
+        "codeHash": "0xde3f8145933b1dff81a9fb9fa92ff39097b6dca3234104e4a0f0d3b7b664e82d",
+        "bytecodeBytes": 2773,
+        "compiler": "v0.8.30+commit.73712a01",
+        "optimizerUsed": "1",
+        "optimizerRuns": 200,
+        "evmVersion": "cancun",
+        "proxy": false,
+        "constructorArgumentsHex": "000000000000000000000000cce2862aed7f2248063c3dcf6906582166c2b6ca00000000000000000000000047623c62f281807d615eeb4a2ceee9d97f9d3c49",
+        "reportedSourceCodeBytes": 86693,
+        "sourceTruncated": false
+      },
+      "sourcePaths": [
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldMorphoOwnerAndSplitterV5.sol",
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldMorphoIRMsV6.sol",
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldTriggerMasterIRMV3.sol",
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldMorphoIRMFactoriesV6.sol"
+      ],
+      "input": "build-inputs/CurveYieldMorphoOwnerAndSplitterV5_verified_v1.json",
+      "abi": "abi/CurveYieldMorphoOwnerV3_abi_v1.json"
+    },
+    {
+      "role": "Lending adapter factory",
+      "contractName": "CurveYieldLendingMarketAdapterFactoryV1",
+      "address": "0x3d36d5a098881e34d391b01032126c1ee802b31c",
+      "explorer": "https://fraxscan.com/address/0x3d36d5a098881e34d391b01032126c1ee802b31c#code",
+      "network": "Fraxtal",
+      "chainId": 252,
+      "deployment": {
+        "deployer": "0x064256591313eeb86a84a5cbcc4c6460791b96dd",
+        "txHash": "0xd19c5a21cf18cb7718ebbf5bb0992f68b25ba7b28b69b9d14585a33c4f47db03",
+        "nonce": 59,
+        "blockNumber": 44030238,
+        "utc": "2026-11-16T23:19:47.000Z",
+        "receiptStatus": "1"
+      },
+      "verifiedRuntime": {
+        "verified": true,
+        "codeHash": "0xb24a2c45fc84989d4220be3359652a7f082c5c492d9adda74a11ad10e17599e7",
+        "bytecodeBytes": 5632,
+        "compiler": "v0.8.28+commit.7893614a",
+        "optimizerUsed": "1",
+        "optimizerRuns": 200,
+        "evmVersion": "cancun",
+        "proxy": false,
+        "constructorArgumentsHex": "000000000000000000000000711bce12269a3a496efaabb8b9ad5a4485e08a24000000000000000000000000f3c9bdab17b7016fbe3b77d17b1602a7db93ac660000000000000000000000008c22ebc8f9b96ceac97ea21c53f3b27ef2f45e57",
+        "reportedSourceCodeBytes": 8704,
+        "sourceTruncated": false
+      },
+      "sourcePaths": [
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldLendingMarketAdapterV1.sol"
+      ],
+      "input": "build-inputs/CurveYieldLendingMarketAdapterV1_verified_v1.json",
+      "abi": "abi/CurveYieldLendingMarketAdapterFactoryV1_abi_v1.json"
+    },
+    {
+      "role": "Omni IRM factory",
+      "contractName": "CurveYieldOmniIRMFactoryV2",
+      "address": "0x1ccd1b85b720f59efe1a485a0f1249c122bd1e77",
+      "explorer": "https://fraxscan.com/address/0x1ccd1b85b720f59efe1a485a0f1249c122bd1e77#code",
+      "network": "Fraxtal",
+      "chainId": 252,
+      "deployment": {
+        "deployer": "0x064256591313eeb86a84a5cbcc4c6460791b96dd",
+        "txHash": "0xa77a972bca952fa9824b2edbe642ac090611e0f5be5075afa89a11fabb74d289",
+        "nonce": 89,
+        "blockNumber": 44033740,
+        "utc": "2026-11-17T01:16:31.000Z",
+        "receiptStatus": "1"
+      },
+      "verifiedRuntime": {
+        "verified": true,
+        "codeHash": "0xcbc990b94cb172d21e3fb03dd1cadef98680ba9e9ebb7a9509feb0624781e23f",
+        "bytecodeBytes": 1316,
+        "compiler": "v0.8.30+commit.73712a01",
+        "optimizerUsed": "1",
+        "optimizerRuns": 200,
+        "evmVersion": "cancun",
+        "proxy": false,
+        "constructorArgumentsHex": "000000000000000000000000c715fc8944d565e27cc5598d8aeabb42e4ce71a0",
+        "reportedSourceCodeBytes": 130918,
+        "sourceTruncated": true
+      },
+      "sourcePaths": [
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldMorphoIRMsV6.sol",
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldMorphoIRMsV7.sol",
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldTriggerMasterIRMV3.sol",
+        "sources/github-native-sim/morpho-fraxtal-v1/CurveYieldMorphoIRMFactoriesV6.sol"
+      ],
+      "input": "build-inputs/CurveYieldOmniIRMFactoryV2_reconstructed_v1.json",
+      "abi": "abi/CurveYieldOmniIRMFactoryV2_abi_v1.json"
+    }
+  ],
+  "originalSolidityFiles": 7,
+  "provenance": {
+    "fullVerifiedExplorerInputs": [
+      "ctrl",
+      "owner",
+      "split",
+      "adapter"
+    ],
+    "OmniIRMFactoryV2": "Explorer source payload truncated to 100000 of 130918 bytes. Three complete original Solidity files retained. Fourth original file recovered from separately verified MorphoOwnerV3 source; 9461 escaped source-prefix characters match exactly. Rebuilt Standard JSON uses verified observable optimizer and EVM settings but is not asserted identical to original compilation input.",
+    "reconstructedOmniBuildInput": true,
+    "testsNotExecuted": true,
+    "activeWorkerConfigurationUnverified": true
+  },
+  "notes": [
+    "The adapter factory is not proof of a separately deployed OmniAdapter instance.",
+    "Omni IRM factory is not an Omni LTV factory."
+  ]
+}
