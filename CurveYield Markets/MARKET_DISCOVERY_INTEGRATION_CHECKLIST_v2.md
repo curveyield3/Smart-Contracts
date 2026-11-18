@@ -1,4 +1,4 @@
-# MARKET DISCOVERY INTEGRATION CHECKLIST — v1
+# MARKET DISCOVERY INTEGRATION CHECKLIST — v2
 
 > **Scope:** Ethereum mainnet · single-token ERC-20 deposits only  
 > **Document status:** Deployed-code capability inventory, **not** independently verified live discovery counts.  
@@ -16,6 +16,27 @@
 **Verification milestone:** report, for **each** source, **markets discovered → markets successfully normalized → eligible single-token markets → published markets with working dapp destinations**. Keep unknown numbers explicitly unknown.
 
 ---
+
+## Integration checkpoint — 2026-11-18 (Worker v134)
+
+**Production state:** v134 deployed. This is a verified source-level milestone for three protocol paths, **not** proof that all protocol markets have been exhaustively enumerated or that every destination has undergone end-to-end wallet-interaction testing. The older v118 inventory below is retained as a historical baseline, not a current description of every collector.
+
+| Protocol | Source enumeration / eligibility evidence | Public discovery behavior | Remaining qualification |
+| --- | --- | --- | --- |
+| **Stake DAO native lockers** | The official locker feed includes 14 multi-chain/legacy records; three directly identified Ethereum input-token lockers (CRV, YB, FXN) passed eligibility. Official mint/depositor contract and locker pages were checked. Dedicated `?source=stakedao` returned **3**, zero source failures, 3 exact locker pages. | These three are merged into the Markets opportunities UI. Governance assets are permanently locked when minted into sdTokens; **not suitable for unrestricted vault deposits/withdrawals** and not approved as automatic vault allocations. | Verify on-chain per-locker mint permissions and current gauge reward availability; legacy/LP lockers remain excluded. |
+| **IPOR Fusion** | Dedicated `?source=ipor` checked ERC-4626 `asset()` and `maxDeposit(0x…dead)` for **62** source candidates: **60** positive/matching, **2** excluded; **34** published after TVL/APR/link filters in the checked snapshot, with zero source failures. A later base-catalog snapshot had 35 before the next source refresh. | Source-verified vault set is merged into the UI; unverified base rows are excluded when live source verification succeeds. | Provider pagination/completeness and every wallet-level deposit, withdrawal, and individual dapp UI still require further validation. |
+| **Fluid Lending fTokens** | Dedicated `?source=fluid` checked ERC-4626 underlying and `maxDeposit(0x…dead)` for **5** fTokens; **5 accepted**, **0 rejected**; **5** eligible published, 5 contract-specific Fluid URLs, zero source failures. | Source-verified fToken rows are merged into the UI, suppressing base-only rows that do not pass on-chain checks. | Full lending-cap/withdrawability reconciliation and individual wallet-interaction checks remain. |
+| **Fraxlend — still blocked** | Fixed original out-of-scope `count` reference; source-only live registry enumerated **59** pairs, decoded and priced all 59, with six apparent yield/TVL candidates before strict link review. | **Quarantined from verified listings in v132+**: a sampled app.frax.finance pair link displayed a different asset/collateral market than requested. Pair-level discovery diagnostics remain available, but no candidate is counted as an actually verified direct dapp destination. | Find and independently confirm a working contract-specific **interactive** pair URL for every publishable pair, plus any lender whitelist and deposit-state restrictions. |
+
+**Cross-source runtime issue:** A primary status read returned **681** markets across **16** protocols at 10:04 UTC with zero failures; a separate page refresh exposed failures in Morpho and Maple from the Cloudflare 50-external-subrequest limit. Treat a normal-catalog count as potentially partial; never infer source exhaustiveness from a successful collector block. The normal API and additional isolated source feeds are separate, while the public UI merges their results.
+
+**Source diagnostics:** `/api/opportunities/status?source=stakedao`, `?source=ipor`, `?source=fluid`, `?source=fraxlend` on `https://markets.curveyield.org`.
+
+**Current work still required:** Fraxlend correct dapp routing; stable bounded-subrequest source discovery/reconciliation; complete deposit/withdraw eligibility for Yearn, CurveLend, Maple, etc.; durable per-asset catalog/history; end-to-end destination and live transaction-interaction verification where authorized.
+
+---
+
+## Baseline assessment retained from v118
 
 ## CurveYield Markets — protocol integration inventory
 
