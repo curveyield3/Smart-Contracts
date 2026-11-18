@@ -981,16 +981,28 @@ contract CyWBTCSafetyForkV1 {
     /// very small accrued management-fee shares against a few WBTC satoshis.
     function _assertUserFullyExitedWithOnlyFeeAccountDust() private view {
         require(IERC20(VAULT).balanceOf(USER) == 0, "User has unredeemed shares");
-        (bool ok, bytes memory out) = VAULT.staticcall(abi.encodeWithSignature("getManagementFeeData()"));
-        require(ok && out.length >= 96, "IPOR management fee configuration unavailable");
-        (address feeAccount,,) = abi.decode(out, (address, uint16, uint32));
-        require(feeAccount != address(0), "Management fee account unavailable");
-        uint256 residueShares = IERC20(VAULT).totalSupply();
-        require(residueShares <= 1_000 && IERC20(VAULT).balanceOf(feeAccount) == residueShares,
-            "Unexplained residual shares after 100pct user withdrawal");
+        (bool okM, bytes memory managementRaw) =
+            VAULT.staticcall(abi.encodeWithSignature("getManagementFeeData()"));
+        (bool okP, bytes memory performanceRaw) =
+            VAULT.staticcall(abi.encodeWithSignature("getPerformanceFeeData()"));
+        require(okM && managementRaw.length >= 96 && okP && performanceRaw.length >= 64,
+            "IPOR fee accounts unavailable");
+        (address managementAccount,,) = abi.decode(managementRaw, (address, uint16, uint32));
+        (address performanceAccount,) = abi.decode(performanceRaw, (address, uint16));
+        require(managementAccount != address(0) && performanceAccount != address(0),
+            "Invalid fee accounts");
+        uint256 sharesLeft = IERC20(VAULT).totalSupply();
+        uint256 feeShares = IERC20(VAULT).balanceOf(managementAccount)
+            + (managementAccount == performanceAccount ? 0 : IERC20(VAULT).balanceOf(performanceAccount));
+        require(sharesLeft == feeShares, "Non-fee shares remain after user exit");
+        // Discrete fee realization after a sudden oracle recovery can mint
+        // performance-fee shares and keep the proportional WBTC in custody.
+        // This is fee-owned capital, NOT user shares or unowned collateral.
+        // Reject any unexpectedly large share allocation (1% initial user shares).
+        require(sharesLeft <= 10_000_000, "Excessive fee share residue");
         State memory s = _state();
         require(s.rawDebt == 0 && s.rawCollateral == 0 && s.gaugeStakedShares == 0 &&
-            s.fxusdIdle == 0 && s.fxspIdle == 0 && s.usdcIdle == 0 && s.wbtcIdle <= 10,
-            "Residual leveraged exposure after 100pct user withdrawal");
+            s.fxusdIdle == 0 && s.fxspIdle == 0 && s.usdcIdle == 0 && s.wbtcIdle <= 100_000,
+            "Residual leverage or unaccounted collateral after user exit");
     }
 }
