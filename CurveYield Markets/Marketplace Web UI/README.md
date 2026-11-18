@@ -1,4 +1,4 @@
-# CurveYield Marketplace Web UI — Agent Handoff (v9 browsing visual preview)
+# CurveYield Marketplace Web UI — Production v161 / Visual Reference v9
 
 **Start here for any CurveYield Markets website/curator page design work.**
 
@@ -12,7 +12,7 @@
 - New-vault setup dashboard: https://markets.curveyield.org/curator-preview/#/vault/new/overview
 - Source of live delivery: Cloudflare Worker named **`markets`**, script routing `/curator-preview`, `/curator-preview/app.css`, `/curator-preview/app.js`.
 
-## Current production integration — Markets Worker v158
+## Current production integration — Markets Worker v161
 
 The approved Morpho-inspired browsing design is now served on production routes, not merely /curator-preview. **Read this before editing the frontend.**
 
@@ -21,14 +21,17 @@ The approved Morpho-inspired browsing design is now served on production routes,
 - `/portfolio`, `/portfolio/positions`, `/portfolio/vaults`, `/portfolio/activity` — portfolio design with explicit wallet connection, using `/api/positions?wallet=...` where available. Wallet positions cover only supported Fraxtal markets. Account activity indexing remains incomplete.
 - `/vaults` — browser-saved recent vaults, clearly **not** a complete factory-vault registry; existing verified import/management links remain.
 - `/create` — existing functional market creation code, with a scoped responsive Morpho-style layout overlay.
-- `/vaults/create` and `/vaults/0x...` — original protected-controller creation and vault dashboards **remain unchanged while their visual integration is reserved for last**.
+- `/vaults/create` — original protected-controller deployment logic now appears inside the approved **two-step Fraxtal creation UI** (vault identity → adapter/review). The original v10 controller deployment, wallet signing, fee payment, receipt verification, and resume safeguards are still the authoritative handlers.
+- `/vaults/0x...` — the approved permanent vault-management dashboard is live with Overview, Allocation, Caps, Timelocks, and Sentinel tabs. Existing on-chain fee/operator, dead-deposit, lending market discovery, adapter and cap actions remain in place; Timelocks/Sentinel display the approved information layout but **cannot yet read or submit permissioned actions** until source-bound ABI integration.
 - `/opportunities`, `/wfrax`, `/frxusd`, `/sfrxusd`, `/market/0x...` — preserved production discovery and trading flows.
+
+**Vault UI assets:** [site/vault-ui-v11.js](site/vault-ui-v11.js) and [site/vault-ui-v11.css](site/vault-ui-v11.css), committed and loaded via the pinned GitHub revision through Worker routes `/assets/vault-ui-v11.js` and `.css`. These enhance layout only; the original `VAULT_CLIENT` still owns all wallet and contract interaction logic. The enhanced Fraxtal vault shell falls back to the original vault HTML when the template cannot be retrieved. The Ethereum legacy query variant is intentionally unchanged.
 
 **Live source:** [site/marketplace-live-v10.js](site/marketplace-live-v10.js) is the exact client-side live-data integration script. The Worker injects it after the approved v9 visual app, and serves it from a **commit-pinned GitHub raw URL**. The Worker version must be changed when new script commits are activated. Do not assume an updated GitHub main branch immediately changes production.
 
 The live integration never substitutes sample APYs, rates, TVL, history, or personal holdings for chain-derived data. Unsupported features show honest empty or unavailable states. Keep existing wallet-signing and transaction code as the authority; production market details link to the preexisting verified trade routes.
 
-**Production verification performed:** Cloudflare active deployment verification, live Opera rendering for the markets index, individual market details, portfolio and saved vault directory; existing market-creation page checked visually. A complete mobile/live-wallet transaction QA pass is not yet established. Do not claim it.
+**Production verification performed:** Worker v161 deployment and on-chain API route presence checked; live Opera rendering verified market index and detail, Portfolio, saved-vault index, market creation, and two-stage protected vault creation / management chrome. The dashboard was rendered using an explicitly non-deployed placeholder address to inspect layout only. No wallet signatures or transactions were executed, and no on-chain Timelocks/Sentinel actions were verified. Fresh mobile checks on the deployed build remain outstanding.
 
 ## Source files kept here
 
