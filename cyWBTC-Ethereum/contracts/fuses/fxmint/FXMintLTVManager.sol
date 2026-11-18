@@ -320,33 +320,39 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         uint256 debtBudget = _repayBudget(s.debtReduction);
         uint256 idleFxUSD = IERC20(FXUSD).balanceOf(VAULT);
         if (idleFxUSD >= debtBudget) revert InvalidAmount(); // no delayed redemption required
-        uint256 shareNav = IFxSPNavForManager(FXSP).nav();
-        if (shareNav == 0) revert InvalidPrice();
-        // Single fxUSD <-> fxSP conversion convention. No USDC/fxUSD output forecast.
-        uint256 shares = Math.mulDiv(debtBudget - idleFxUSD, WAD, shareNav, Math.Rounding.Up);
-        // The live stake can be BELOW the full debt repayment budget because
-        // fxSP/Convex entrance costs and fxMINT borrow/repay fees exist.
-        // Never attempt to unstake more than the actually redeemable shares.
-        uint256 idleFxspShares = IERC20(FXSP).balanceOf(VAULT);
-        address registry = IFXMintConvexReader(CONVEX_STAKE_FUSE).REGISTRY();
-        address personal = IFXMintConvexRegistry(registry).vaultMap(37, VAULT);
-        uint256 staked = personal == address(0) ? 0 : IERC20(CONVEX_GAUGE).balanceOf(personal);
-        uint256 availableShares = idleFxspShares + staked;
-        if (shares > availableShares) shares = availableShares;
-        if (shares == 0) revert InsufficientLiquidity(debtBudget, 0);
-        if (shares > idleFxspShares) {
-            _executeOne(CONVEX_STAKE_FUSE, abi.encodeWithSignature(
-                "exit((address,uint256))", ConvexGaugeExitData(CONVEX_GAUGE, shares - idleFxspShares)));
-        }
-        _executeOne(FXSP_SUPPLY_FUSE, abi.encodeWithSignature(
-            "exit((address,uint256))", FxSPExitData(FXSP, shares)));
-        (, uint128 unlockAt) = IFxSPNavForManager(FXSP).redeemRequests(VAULT);
-        if (unlockAt < block.timestamp + FXSP_COOLDOWN) revert InvalidConfiguration();
+        (uint256 shares, uint256 unlockAt) = _requestExistingFxsp(
+            debtBudget - idleFxUSD, debtBudget);
         pendingRequest = PendingRequest({
             user: user, shares: r.shares, nftId: s.id, debtReduction: s.debtReduction,
             collateralReleaseWBTC: s.collateralReleaseWBTC, fxspShares: shares, unlockAt: unlockAt
         });
         emit WithdrawRequestInitialized(user, r.shares, shares, unlockAt);
+    }
+
+    /// @dev Isolated so public request bookkeeping remains within the non-viaIR
+    ///      compiler stack budget. Caps to real idle + Convex-personal staked fxSP.
+    function _requestExistingFxsp(uint256 neededFxUSD, uint256 requiredBudget)
+        private returns (uint256 shares, uint256 unlockAt)
+    {
+        uint256 nav = IFxSPNavForManager(FXSP).nav();
+        if (nav == 0) revert InvalidPrice();
+        shares = Math.mulDiv(neededFxUSD, WAD, nav, Math.Rounding.Up);
+        uint256 idle = IERC20(FXSP).balanceOf(VAULT);
+        address registry = IFXMintConvexReader(CONVEX_STAKE_FUSE).REGISTRY();
+        address personal = IFXMintConvexRegistry(registry).vaultMap(37, VAULT);
+        uint256 staked = personal == address(0) ? 0 : IERC20(CONVEX_GAUGE).balanceOf(personal);
+        uint256 availableShares = idle + staked;
+        if (shares > availableShares) shares = availableShares;
+        if (shares == 0) revert InsufficientLiquidity(requiredBudget, 0);
+        if (shares > idle) {
+            _executeOne(CONVEX_STAKE_FUSE, abi.encodeWithSignature(
+                "exit((address,uint256))", ConvexGaugeExitData(CONVEX_GAUGE, shares - idle)));
+        }
+        _executeOne(FXSP_SUPPLY_FUSE, abi.encodeWithSignature(
+            "exit((address,uint256))", FxSPExitData(FXSP, shares)));
+        (, uint128 matureAt) = IFxSPNavForManager(FXSP).redeemRequests(VAULT);
+        unlockAt = uint256(matureAt);
+        if (unlockAt < block.timestamp + FXSP_COOLDOWN) revert InvalidConfiguration();
     }
 
     /// @notice The SECOND permissionless button. No input and no separate execution state machine.
