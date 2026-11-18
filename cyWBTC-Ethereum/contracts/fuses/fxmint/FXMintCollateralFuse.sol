@@ -64,6 +64,7 @@ contract FXMintCollateralFuse is IFuseCommon {
     error OnlyRegisteredRiskManager();
     error ExcessiveRepayment(uint256 actual, uint256 maximum);
     error ResidualDebt(uint256 debt);
+    error ResidualCollateral(uint256 rawCollateral);
 
     event FXMintPositionOpened(address indexed fuse, uint256 indexed positionId, uint256 suppliedWBTC, uint256 borrowedFxUSD);
     event FXMintCollateralAdded(address indexed fuse, uint256 indexed positionId, uint256 suppliedWBTC);
@@ -137,24 +138,27 @@ contract FXMintCollateralFuse is IFuseCommon {
     ///      Public scheduled fulfillment MUST repay and withdraw together.
     ///      Only the Safe-registered manager implementation can invoke it.
     function exitAndRepayFull(
-        uint256 positionId, uint256 amountWBTC, uint256 maxSpentFXUSD, uint256 minReceivedWBTC
+        uint256 positionId, uint256 maxSpentFXUSD, uint256 minReceivedWBTC
     ) external returns (uint256 received, uint256 spent) {
         if (address(this) == VERSION) revert IncorrectExecutionContext();
         if (msg.sender != IFXMintRiskRegistry(POSITION_REGISTRY).riskManager())
             revert OnlyRegisteredRiskManager();
         _onlyOwned(positionId);
-        if (amountWBTC == 0 || amountWBTC > uint256(type(int256).max)) revert InvalidAmount();
+        address stable = IFXMintFullCloseFxUSD(POOL).fxUSD();
         uint256 beforeWBTC = IERC20(WBTC).balanceOf(address(this));
-        uint256 beforeFXUSD = IERC20(IFXMintFullCloseFxUSD(POOL).fxUSD()).balanceOf(address(this));
+        uint256 beforeFXUSD = IERC20(stable).balanceOf(address(this));
+        // Both type(int256).min values are documented protocol sentinels:
+        // withdraw MAX collateral and repay MAX debt in one operate/lock.
         IFXMintCollateralManager(MANAGER).operate(
-            POOL, positionId, -int256(amountWBTC), type(int256).min, false
+            POOL, positionId, type(int256).min, type(int256).min, false
         );
         received = IERC20(WBTC).balanceOf(address(this)) - beforeWBTC;
-        spent = beforeFXUSD - IERC20(IFXMintFullCloseFxUSD(POOL).fxUSD()).balanceOf(address(this));
+        spent = beforeFXUSD - IERC20(stable).balanceOf(address(this));
         if (received < minReceivedWBTC) revert InsufficientReceived(received, minReceivedWBTC);
         if (spent > maxSpentFXUSD) revert ExcessiveRepayment(spent, maxSpentFXUSD);
-        (, uint256 debtAfter) = IFXMintCollateralPool(POOL).getPosition(positionId);
-        if (debtAfter != 0) revert ResidualDebt(debtAfter);
+        (uint256 afterCollateral, uint256 afterDebt) = IFXMintCollateralPool(POOL).getPosition(positionId);
+        if (afterDebt != 0) revert ResidualDebt(afterDebt);
+        if (afterCollateral != 0) revert ResidualCollateral(afterCollateral);
         emit FXMintPositionClosed(VERSION, positionId, received, spent);
     }
 
