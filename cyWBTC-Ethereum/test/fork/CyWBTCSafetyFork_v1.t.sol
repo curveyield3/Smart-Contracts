@@ -122,7 +122,7 @@ contract CyWBTCSafetyForkV1 {
                 uint256 price = IFxMintPriceFork(IFxMintPositionFork(FXMINT_POOL).priceOracle()).getExchangePrice();
                 uint256 collateralUsd = Math.mulDiv(s.rawCollateral, price, 1e18);
                 s.managerLtv = collateralUsd == 0 ? (s.rawDebt > 0 ? type(uint256).max : 0)
-                    : Math.mulDiv(s.rawDebt, 1e18, collateralUsd, Math.Rounding.Ceil);
+                    : Math.mulDiv(s.rawDebt, 1e18, collateralUsd, Math.Rounding.Up);
             }
         }
     }
