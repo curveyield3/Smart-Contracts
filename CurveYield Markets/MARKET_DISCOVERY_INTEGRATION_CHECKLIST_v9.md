@@ -1,4 +1,35 @@
-# MARKET DISCOVERY INTEGRATION CHECKLIST — v8
+# MARKET DISCOVERY INTEGRATION CHECKLIST — v9
+
+> **Scope:** Ethereum mainnet, direct-asset market discovery, strategy-aware withdrawal capacity.
+> **Latest verified production Worker:** v180 (November 18, 2026).
+> **Smart contracts:** No source modification, deployment or contract test in this round; read-only blockchain views and Cloudflare Worker collector updates only.
+> **Live:** https://markets.curveyield.org/opportunities and https://markets.curveyield.org/api/opportunities/status
+
+## Corrective checkpoint: zero idle balance ≠ zero withdrawable assets (v177–v180)
+
+**Live fully warmed production verification:** **708** qualifying opportunities; **708** exact-route market-specific links, **zero** source failures, **zero** unresolved links, **zero** coverage warnings, `partial:false`. Individual Cloudflare edge caches can temporarily be cold after deployment and report lower counts with explicit partial warnings; refresh each isolated source before declaring a complete count. Morpho Blue decreased from 242 to 241 between live snapshots, offsetting the newly qualified Euler Earn market.
+
+### Euler Earn — new source-native integration
+
+- Source: official Ethereum [Euler Earn API](https://v3.euler.finance/v3/earn/vaults?chainId=1&limit=100) and exact [per-vault details](https://v3.euler.finance/v3/earn/vaults/1/0xb4a2fc3adaf3bfa8fcba2a6fdaa200de106b8825). The collector enumerated **12** Ethereum Earn vaults and published **1** passing >=5% current APY, >=$100,000 TVL, source-reported immediately accessible strategy liquidity, exact official dapp page and onchain asset/totalAssets/maxDeposit checks. Worker v179 fixed an intermittent public Ethereum RPC failure by adding a third provider.
+- **InfiniFi Markets, USDC:** contract `0xb4a2fc3adaf3bfa8fcba2a6fdaa200de106b8825`. Official API on November 18: **~9.16% APY**, **~$142,160 TVL**, **~$44,125 accessible from strategies** despite **zero idle USDC**. Independent Ethereum calls to `maxWithdrawFromStrategy(address)` on its four configured withdrawal strategies reported one strategy at **44,132.286437 USDC** and the other three at **zero** at that sampled block. `asset()`, `totalAssets()`, and `maxDeposit(address)` were read independently and consistent with the official API.
+- Official market interaction and analytics: https://app.euler.finance/earn/0xb4a2fc3adaf3bfa8fcba2a6fdaa200de106b8825?network=ethereum (page personally inspected). **The v176 default high-quality page filter requires >=$1m TVL, so this valid ~$142k market appears in the exploratory >=$100k / >=5% tier or unfiltered list, not the default tier.**
+- **Withdrawal methodology:** Euler Earn withdraws from its configured strategy queue, limited by each strategy's `maxWithdraw` and tracked allocation; a zero direct ERC-20 vault balance is not grounds for exclusion. The API's `availableAssets` is a live *estimate/upper bound*, not an end-to-end transaction guarantee; a strategy may revert or liquidity may change before redemption.
+
+### Harvest Finance — corrected exclusion classification
+
+- The Harvest collector still publishes **2** source-qualified markets (USDT and WETH) from 117 indexed Ethereum records and 13 preliminary candidates. Worker v180 now records **11 as `pendingStrategyWithdrawalVerification`**, not “unavailable withdrawal liquidity” or “failed zero-idle liquidity.”
+- Example: Harvest fWBTC/IPOR wBTC Dollar Carry, ERC-4626 address `0x0d39D6ef06a3a5c2408db195d9af2ea7a8d52b92`, advertises **5.5% APY** at **~$6.5k TVL**. Onchain WBTC held directly by the vault was **zero**, but a source-indexed actual share holder `0x792871ad947a5118e7d4d38a75183d0831aefee6` held `0.10076455` vault shares and the vault's `maxWithdraw(holder)` returned **0.10099063 WBTC**. This is positive owner-specific withdrawal allowance, not proof of actual successfully executed redemption; strategy-level withdrawal availability has not been established. **Remain pending, not yet published**, especially given very small TVL.
+- Never use `maxWithdraw(address(0))` or an address with no shares to measure market-wide liquidity. It is owner-specific. Review underlying strategies and withdrawal queues (or source-backed verified available liquidity), and label unavailable evidence as **unknown/pending**, not liquidity=0.
+
+### Universal discovery implications
+
+**Do not reject a vault solely on its idle token balance.** Qualify the same-asset withdrawal path using strategy configuration, synchronous redeemability, source-reported available liquidity and appropriate onchain view evidence. Report idle separately as a lower bound. A positive `maxWithdraw` view does not by itself prove an execution succeeds or that all shares are redeemable. This rule applies to Euler Earn, Harvest, Silo, Yearn, Morpho and other managed vault architectures, subject to each protocol's actual implementation. Maintain >1% native source yield, correct direct deposit token identity, exact vault-specific working dapp links and honest partial coverage reporting. No adapter/contract edits were authorized.
+
+---
+
+## Historical quality-first checkpoint (v8, retained for provenance)
+
 
 > **Scope:** Ethereum mainnet, verified single-ERC-20 deposit assets and source-specific opportunity discovery
 > **Status:** Worker v176 deployed November 18, 2026. Smart-contract changes remain paused.
