@@ -7,9 +7,10 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 25
     env:
-      PROTOCOL: "all" # one-time complete live catalog refresh
+      PROTOCOL: "all" # complete direct-USDC dapp verification
+      ASSET: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
       STAGE: "verify"
     steps:
       - uses: actions/checkout@v4
@@ -304,7 +305,7 @@ jobs:
           node compound-ui.mjs
       - name: Inspect full protocol listing, rates, single token identity and dapp usability
         if: env.STAGE == 'verify'
-        timeout-minutes: 9
+        timeout-minutes: 25
         run: |
           cat > "$RUNNER_TEMP/market-verify/check.mjs" <<'NODE'
           import {chromium} from 'playwright';
@@ -312,7 +313,8 @@ jobs:
           const name=process.env.PROTOCOL,output=process.env.GITHUB_WORKSPACE+'/_native_verification';
           fs.mkdirSync(output,{recursive:true});
           async function get(offset){
-            const u='https://markets.curveyield.org/api/opportunities?protocol='+encodeURIComponent(name)+'&limit=500&offset='+offset+'&sort=tvl';
+            const asset=process.env.ASSET||'';
+            const u='https://markets.curveyield.org/api/opportunities?protocol='+encodeURIComponent(name)+(asset?'&asset='+encodeURIComponent(asset):'')+'&limit=500&offset='+offset+'&sort=tvl';
             for(let n=0;n<4;n++){
               try{const r=await fetch(u,{signal:AbortSignal.timeout(105000)});
                 if(!r.ok)throw Error('HTTP '+r.status);
@@ -339,14 +341,14 @@ jobs:
             if(x.depositMode!=='single-token'||x.additionalAssets?.length||x.lpComposition)issues.push('not-single-token');
             if(!(x.rateType==='APR'?x.lendApr:Math.log1p(x.lendApr/100)*100)>1)issues.push('apr-below-1');
             if(x.dappLinkType!=='detail'||!x.dappUrl)issues.push('invalid-dapp-url');
-            if(i<80){
+            if(i<records.length){
              try{
               const r=await p.goto(x.dappUrl,{waitUntil:'domcontentloaded',timeout:22000});
               await p.waitForTimeout(10500);
               const txt=(await p.locator('body').innerText({timeout:6000}).catch(()=>'')).replace(/\s+/g,' ');
               const ctl=await p.locator('button,[role="button"],a').evaluateAll(els=>els.filter(el=>{const s=getComputedStyle(el),b=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&b.width>0&&b.height>0}).map(el=>(el.innerText||el.getAttribute('aria-label')||'').trim().replace(/\s+/g,' ').slice(0,80)).filter(Boolean).slice(0,65)).catch(()=>[]);
               const actions=ctl.filter(t=>/deposit|supply|start earning|connect wallet|connect|invest/i.test(t));
-              Object.assign(f,{http:r?.status(),title:await p.title().catch(()=>''),finalUrl:p.url(),tokenVisible:txt.toLowerCase().includes(x.assetSymbol.toLowerCase()),controls:actions,text:txt.slice(0,850)});
+              Object.assign(f,{http:r?.status(),title:await p.title().catch(()=>''),finalUrl:p.url(),tokenVisible:txt.toLowerCase().includes(x.assetSymbol.toLowerCase()),controls:actions,text:txt.slice(0,5000)});
               if(!r||r.status()>=400||/404.*not found|vault not supported|this page could not be found|this page couldn.t load/i.test(txt.slice(0,900)))issues.push('dapp-not-usable');
               if(!f.tokenVisible)issues.push('token-not-visible');
               if(!actions.length)issues.push('no-deposit-or-wallet-controls');
@@ -355,7 +357,7 @@ jobs:
              await p.goto('about:blank').catch(()=>{});
             }
             f.issues=issues;checked[i]=f;
-            console.log('ENTRY '+JSON.stringify(f).slice(0,1800));
+            console.log('ENTRY '+JSON.stringify(f).slice(0,6000));
            }
            await p.close();
           }));
