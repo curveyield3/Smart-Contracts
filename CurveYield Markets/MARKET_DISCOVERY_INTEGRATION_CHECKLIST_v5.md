@@ -1,8 +1,26 @@
-# MARKET DISCOVERY INTEGRATION CHECKLIST — v4
+# MARKET DISCOVERY INTEGRATION CHECKLIST — v5
 
 > **Scope:** Ethereum mainnet · single-token ERC-20 deposits only  
 > **Document status:** Live source-specific verification checkpoint, plus historical implementation inventory; not a claim of exhaustive wallet-interaction testing.  
-> **Current verified Worker deployment:** v141 (November 18, 2026); the shared OmniAdapter is separately maintained on a dedicated GitHub branch. Historical v134 and v118 discovery notes are retained below.
+> **Current verified Worker deployment:** v143 (November 18, 2026); the shared OmniAdapter is separately maintained on its dedicated GitHub branch. Historical v141, v134 and v118 discovery notes are retained below.
+
+## Current qualification correction — Worker v143 (2026-11-18)
+
+**User-mandated rule:** Required underlying-token locks, cooldowns, queue-based redemptions or inability to synchronously withdraw the same deposit asset disqualify a market from CurveYield's qualifying opportunities list. A freely tradable receipt token is **not** equivalent to direct underlying redemption. Do not exclude an entire protocol merely because one of its product types has restrictions.
+
+**Stake DAO products are not equivalent:**
+
+- **CRV, FXN and YB Liquid Lockers:** The original governance tokens are locked permanently and converted to liquid sdTokens. The UI's `Unstake` action returns sdTokens from the rewards gauge; it does not redeem the original CRV/FXN/YB. These three markets are **disqualified**, even though the sdTokens can be traded through secondary markets.
+- **vlSDT:** Explicit eight-week withdrawal queue; disqualified under the no-withdrawal-delay rule.
+- **Stake DAO V2 RewardVault strategies:** Standard ERC-4626 `deposit`/`withdraw` interfaces, which can fit the existing OmniAdapter's ERC-4626 mode where exact same-asset synchronous exit is confirmed. The official strategy inventory predominantly accepts **LP tokens**; these still require the single-asset/non-LP filter, asset match, current capacity, on-chain withdrawal behavior, APR/TVL and exact dapp links before publication. **Do not blacklist redeemable RewardVaults just because Liquid Lockers are disqualified.**
+
+**Deployed Worker adjustment:** v143 adds a narrow `Stake DAO Lockers` rejection inside the existing `opEligibleDiscovery` predicate. It does not disable or remove Stake DAO strategy discovery infrastructure, alter OmniAdapter contracts, or create a new per-protocol adapter.
+
+**Live verification after refreshing source caches:** `/api/opportunities/status?source=stakedao` returned **0** eligible lockers, no source failures; combined `/api/opportunities/status` returned **695** eligible listings across **15** protocol/version categories, **695** source-bound market-specific links, `partial:false`, **0** failures, **0** coverage gaps and **0** missing links. The 698-row figure from v141 is **historical and superseded**, reflecting three now-disqualified governance lockers. Individual dapp links and vault withdrawal transactions are not all wallet-executed.
+
+**Official evidence:** [Stake DAO Liquid Lockers](https://docs.stakedao.org/liquidlockers), [Stake DAO CRV locker — conversion irreversible](https://app.stakedao.org/lockers/crv), [Stake DAO vlSDT withdrawal queue](https://docs.stakedao.org/guides/stake-vlsdt), [Stake DAO V2 RewardVault integration](https://docs.stakedao.org/developers/strategies).
+
+---
 
 ## Shared Morpho Vault V2 OmniAdapter — deployment architecture
 
@@ -25,8 +43,8 @@
 - [ ] **P1 — Fraxlend:** Repair the out-of-scope `count` variable and verify a complete live collection.
 - [ ] **P2 — Live validation:** Verify each active provider's runtime schema, discovered/normalized/eligible/published counts, failures, and actual protocol-specific dapp destinations.
 - [x] **P3 (discovery eligibility) — Deposit screening:** Source-isolated asset/capacity checks exist for IPOR, Fluid, Yearn V2/V3 and CurveLend V1/V2. **Separate, not complete:** demonstrate actual OmniAdapter mode compatibility, native Vault V2 cap configuration, permission constraints and synchronous withdrawal on each allocatable market; no new per-protocol adapters.
-- [ ] **P4 — Coverage gaps:** Integrate eligible single-token Stake DAO lockers and legitimate legacy markets.
-- [ ] **P5 — Completeness:** Reconciled 698 **qualifying published** records in nine isolated feeds plus seven shared collectors, with cold-cache gaps surfaced. Full upstream enumerated market completeness remains unverified.
+- [ ] **P4 — Coverage gaps:** Identify and verify **unrestricted synchronous-withdrawal Stake DAO RewardVault strategies** and legitimate legacy markets. Stake DAO's permanent governance Liquid Lockers are disqualified.
+- [ ] **P5 — Completeness:** Reconciled **695 currently eligible published** entries in nine isolated feeds plus seven shared collectors (v143), with cold-cache gaps surfaced. The prior 698 included three disqualified Liquid Lockers. Full upstream enumerated market completeness remains unverified.
 - [ ] **P6 — Persistence:** Add durable per-asset snapshots and historical performance within the intended storage architecture.
 
 **Verification milestone:** report, for **each** source, **markets discovered → markets successfully normalized → eligible single-token markets → published markets with working dapp destinations**. Keep unknown numbers explicitly unknown.
