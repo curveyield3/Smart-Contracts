@@ -1,8 +1,38 @@
-# MARKET DISCOVERY INTEGRATION CHECKLIST — v6
+# MARKET DISCOVERY INTEGRATION CHECKLIST — v7
+
+> **Scope:** Ethereum mainnet · single-token ERC-20 deposits only
+> **Document status:** Verified protocol-discovery checkpoint; no smart-contract modifications or execution testing in this round.
+> **Current verified Worker deployment:** v170 (November 18, 2026); v168–v169 source integrations preserved by concurrent UI/Fraxtal updates.
+> **Live aggregate verification:** [Markets status](https://markets.curveyield.org/api/opportunities/status) and [opportunities](https://markets.curveyield.org/opportunities).
+
+## Current integration checkpoint — November 18, 2026 (Worker v170)
+
+**Verified combined production state after refreshing all 14 isolated source caches:** **708 qualifying opportunities** in **20 protocol/version categories**; **708 source-bound market-specific links**, **0 missing links**, **0 source failures**, **0 coverage warnings**, `partial:false`. Link counts are route-validator results; they are not individual wallet-executed deposit/withdrawal verification. Baseline before these four incremental additions: 704 qualified.
+
+| Collector | Inventory / gate | Qualifying markets | Deposit tokens | Verification and limitations |
+| --- | --- | ---: | --- | --- |
+| Spark Savings V2 (extended in v166) | Official registry plus existing savings REST; on-chain ERC-4626 asset, totalAssets, maxDeposit, per-second VSR for spETH/spPYUSD; actual idle underlying balance | **4 total, +2 added** | USDC, USDT, WETH, PYUSD | spETH 1.85% APY, ~$48.93m TVL, ~$4.45m idle WETH; spPYUSD 3.80% APY, ~$36.5k TVL, ~$36.5k idle PYUSD. Exact product-specific Spark savings routes. Larger withdrawals may need liquidity intents. |
+| Harvest Finance (integrated v169) | 117 Ethereum records from official Harvest API; 13 active mainstream assets with >1% estimated APY and >$100 TVL; Ethereum Multicall3 checks ERC-4626 asset, totalAssets, maxDeposit and idle underlying; 11 failed liquidity/TVL matching | **2 added** | USDT, WETH | Steakhouse Prime V2 USDT 2.58% APY, ~$183.9k TVL / ~$5.35k idle; KPK Yield V2 WETH 2.48% APY, ~$165.1k TVL / ~$4.88k idle. Both exact Harvest supply/revert dapp pages personally checked. |
+| Silo V3 (v151) | 276 Ethereum market records plus 4 managed vaults; only source-validated managed vaults | **1** | USDC | Optima managed vault, exact Silo product URL; isolated markets excluded without proven frontend + immediate withdrawal |
+| Gearbox passive pools (v145) | 16 official Ethereum passive pools; onchain rates, fee, capacity and idle liquidity | **1** | WBTC | Instant APR and 7d trailing app APY differ; only verified-qualified market published |
+| Sky Savings (v155) | sUSDS SSR and sDAI DSR, Ethereum onchain rates, ERC-4626 asset/capacity | **2** | USDS, DAI | Both product-specific Spark-hosted Sky pages |
+
+**Harvest disqualification:** the attractive `ipor_BTCD_WBTC` Harvest vault (reported 5.5% APY, ~$6.5k TVL) was identified and its exact UI checked, **but not published** because it failed the minimum immediately idle underlying liquidity / onchain TVL reconciliation gates. Do not interpret 5.5% as usable WBTC vault capacity.
+
+**Economic and execution caveats:** >1% yield is an eligibility snapshot, not a guaranteed realized rate; count of qualifying markets does not prove market exhaustiveness. An ERC-4626 ABI plus idle underlying balance is not a successful execution of a full withdrawal; exact-asset synchronous withdrawal remains subject to runtime conditions. The shared OmniAdapter has **not** been modified, compiled, deployed, or fork-tested in this discovery-only round. Do not mark these markets compatible with live Morpho Vault V2 allocations without separate authorization and verification.
+
+**Source-specific diagnostics:** `?source=spark`, `harvest`, `silo`, `sky`, `gearbox` on `/api/opportunities/status`; standard cache TTL 900 seconds. Cold caches report explicit coverage gaps until individually refreshed; zero-gap status is a warm-source snapshot. Harvest qualifies only exact asset-address verified Ethereum single-ERC20 vaults with >=$1,000 idle liquidity and >=0.5% of onchain TVL idle. Price quotes and source TVL are rechecked, with fail-closed outcomes.
+
+**Next integrations (no contract changes):** pursue additional native, liquid, exact-same-token ERC-4626 sources with emphasis on WBTC and wstETH. Exclude multi-token LPs, token conversions, queued/locked redemption, missing exact dapp pages, and 0/near-0 yield. Revalidate existing collector completeness rather than increasing names without verified listings.
+
+---
+
+## Historical checkpoints and original integration inventory
+
 
 > **Scope:** Ethereum mainnet · single-token ERC-20 deposits only  
 > **Document status:** Live source-specific verification checkpoint, plus historical implementation inventory; not a claim of exhaustive wallet-interaction testing.  
-> **Current verified Worker deployment:** v145 (November 18, 2026); the shared OmniAdapter is separately maintained on its dedicated GitHub branch. Historical v143, v141, v134 and v118 discovery notes are retained below.
+> **Historical verified Worker deployment:** v145 (November 18, 2026); now superseded by the current v170 checkpoint above. The shared OmniAdapter is separately maintained on its dedicated branch.
 
 ## Widely used vault assets — priority checkpoint (Worker v145, 2026-11-18)
 
