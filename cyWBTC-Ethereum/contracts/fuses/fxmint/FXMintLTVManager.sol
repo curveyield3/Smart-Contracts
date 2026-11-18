@@ -34,6 +34,7 @@ interface IFXMintManagerPositionRegistry {
 interface IFXMintManagerConfig {
     function targetLtvWad() external view returns (uint256);
     function withdrawSlippageBps() external view returns (uint256);
+    function isFinalizingScheduledWithdrawal() external view returns (bool);
 }
 interface IFXMintManagerVault {
     function executeInternal(FuseAction[] calldata actions) external;
@@ -223,6 +224,12 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         targetLtvWad = target;
     }
 
+    /// @notice True only while the manager is executing an already-pending
+    ///         scheduled withdrawal. No additional storage or executor authority.
+    function isFinalizingScheduledWithdrawal() external view returns (bool) {
+        return address(this) == VERSION && _status == 2 && pendingRequest.user != address(0);
+    }
+
     function setWithdrawSlippageBps(uint256 bps) external {
         _onlyOwnerImplementation();
         if (bps < MIN_SLIPPAGE_BPS || bps > MAX_SLIPPAGE_BPS) revert InvalidSlippage(bps);
@@ -234,6 +241,11 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     ///      params[0] is only the WBTC shortfall after idle vault WBTC. Never repay debt here.
     function instantWithdraw(bytes32[] calldata params) external override {
         _onlyVaultDelegatecall();
+        // IPOR redeemFromRequest() asks its instant queue for BOTH the requested
+        // assets and already-released reserved assets. While _finalize() is
+        // redeeming an already-funded scheduled request, a second fxMINT exit
+        // would be unnecessary and could revert on the LTV guard.
+        if (IFXMintManagerConfig(VERSION).isFinalizingScheduledWithdrawal()) return;
         if (params.length != 1) revert InvalidAmount();
         uint256 shortfall = uint256(params[0]);
         if (shortfall == 0) return;
