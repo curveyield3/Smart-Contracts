@@ -49,3 +49,14 @@ body[data-cy-vault] .cy-risk-note{background:#fff8e9;color:#88651f;padding:13px 
 body[data-cy-vault] [hidden]{display:none!important}
 @media(max-width:1100px){body[data-cy-vault] .cy-manage .create-grid{grid-template-columns:1fr;width:min(92%,1100px)}body[data-cy-vault] .cy-manage .create-summary{order:2}}
 @media(max-width:760px){body[data-cy-vault] .v-page{padding:12px 13px 40px}body[data-cy-vault] .cy-manage .create-grid{width:100%}body[data-cy-vault] .cy-create .create-card,body[data-cy-vault] .cy-manage .create-card{padding:16px 13px}body[data-cy-vault] .cy-create .v-field{grid-template-columns:minmax(0,1fr)}body[data-cy-vault] .cy-create .v-field small{grid-column:1}body[data-cy-vault] .cy-dashboard-tabs{justify-content:flex-start}body[data-cy-vault] .cy-stage-controls button{width:100%}}
+
+/* Timelock and sentinel source-bound information layout; no fake values. */
+body[data-cy-vault] .cy-not-yet{padding:0;border:0;background:transparent}
+body[data-cy-vault] .cy-config-block{background:#fff;border:1px solid #dadddf;border-radius:9px;margin:0 0 20px;padding:18px 23px}
+body[data-cy-vault] .cy-config-block h2{font-size:16px;font-weight:650;margin:0 0 10px}
+body[data-cy-vault] .cy-config-block p{font-size:12px;line-height:1.6;color:#80868d;margin:8px 0 14px}
+body[data-cy-vault] .cy-config-row{display:flex;justify-content:space-between;align-items:center;gap:15px;padding:12px 0;border-top:1px solid #e9eced;min-width:0}
+body[data-cy-vault] .cy-config-row strong{display:block;font-size:12px;font-weight:640;color:#252a2f}
+body[data-cy-vault] .cy-config-row small{font-size:11px;display:block;color:#848a90;margin-top:3px;line-height:1.4}
+body[data-cy-vault] .cy-config-row>span{font-size:11px;color:#868c92;background:#f0f1f2;border-radius:7px;padding:6px 8px;white-space:nowrap}
+@media(max-width:480px){body[data-cy-vault] .cy-config-block{padding:16px 12px}body[data-cy-vault] .cy-config-row{align-items:flex-start}body[data-cy-vault] .cy-config-row>span{white-space:normal;text-align:right}}
