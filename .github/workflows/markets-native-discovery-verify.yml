@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
-      PROTOCOL: "Beefy Vaults" # v104 exclude YieldBasis staked receipt tokens
+      PROTOCOL: "all" # one-time complete live catalog refresh
       STAGE: "verify"
     steps:
       - uses: actions/checkout@v4
