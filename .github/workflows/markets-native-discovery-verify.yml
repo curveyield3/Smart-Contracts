@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 12
     env:
       PROTOCOL: "SparkLend"
-      STAGE: "research"
+      STAGE: "verify"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -126,7 +126,7 @@ jobs:
           cd "$RUNNER_TEMP/market-verify"
           node beefy-ui.mjs
       - name: Research SparkLend native reserves via official addresses provider
-        if: env.PROTOCOL == 'SparkLend'
+        if: env.PROTOCOL == 'SparkLend' && env.STAGE == 'research'
         timeout-minutes: 4
         run: |
           mkdir -p "$RUNNER_TEMP/market-verify"
