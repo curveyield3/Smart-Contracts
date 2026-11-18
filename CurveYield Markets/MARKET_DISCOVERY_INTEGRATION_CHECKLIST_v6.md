@@ -1,8 +1,38 @@
-# MARKET DISCOVERY INTEGRATION CHECKLIST — v5
+# MARKET DISCOVERY INTEGRATION CHECKLIST — v6
 
 > **Scope:** Ethereum mainnet · single-token ERC-20 deposits only  
 > **Document status:** Live source-specific verification checkpoint, plus historical implementation inventory; not a claim of exhaustive wallet-interaction testing.  
-> **Current verified Worker deployment:** v143 (November 18, 2026); the shared OmniAdapter is separately maintained on its dedicated GitHub branch. Historical v141, v134 and v118 discovery notes are retained below.
+> **Current verified Worker deployment:** v145 (November 18, 2026); the shared OmniAdapter is separately maintained on its dedicated GitHub branch. Historical v143, v141, v134 and v118 discovery notes are retained below.
+
+## Widely used vault assets — priority checkpoint (Worker v145, 2026-11-18)
+
+**Priority principle:** Expand useful, single-ERC20, immediately withdrawable deposits for **USDC, USDT, WETH, WBTC, DAI, USDS and wstETH**, prioritizing assets with the fewest real options (WBTC and wstETH) and protocols with live yields above 1%, sufficient accessible liquidity, verified asset identity, and exact interactive market pages. The existing Morpho Vault V2 OmniAdapter's shared execution modes should be reused wherever compatible, without new per-protocol adapters.
+
+**Verified live asset counts (full combined API, after source refresh):**
+
+| Asset | Qualified Ethereum options at v145 | Operational priority |
+| --- | ---: | --- |
+| USDC | 275 | Add only genuinely distinct liquid options; baseline broad |
+| USDT | 76 | Expand selective high-quality lenders |
+| WETH | 51 | More fee-free, immediately liquid alternatives |
+| DAI | 17 | Add common-asset savings and lending |
+| USDS | 11 | Add fee-free savings and lending where confirmed |
+| WBTC | **10** | **High priority:** limited options; v145 added one Gearbox pool |
+| wstETH | **2** | **High priority:** very limited options; separate IPOR feed gained a new candidate during refresh |
+
+**New protocol: Gearbox passive Ethereum ERC-4626 pools — Worker v145.** The dedicated `?source=gearbox` endpoint enumerated **16** Ethereum mainnet pool records from [Gearbox's official pool registry](https://github.com/Gearbox-protocol/static/blob/main/src/pools/index.ts), decoded **16**, obtained price/decimal data for **16**, rejected **15** under the current APR/liquidity/zero-fee criteria, and published **1** qualifying pool. All underlying, TVL, current supply APR (RAY, incentives excluded), `maxDeposit`, `availableLiquidity` and `withdrawFee` are read from live Ethereum contracts. The pipeline requires APR above 1%, more than $100 in TVL, **at least $1,000 of unborrowed immediately available USD liquidity**, at least **0.5% of TVL liquid**, and a **zero withdrawal fee**. These are conservative discovery filters, not guarantees of withdrawability for arbitrarily large positions.
+
+- **New WBTC option:** Gearbox Gami Labs WBTC pool `0x683FAf5BAFd88d4c383cCaf3d61C26AF2E164409`, ~**1.458% current instantaneous onchain supply APR**, ~$208,187 TVL and ~$50,811 unborrowed liquidity on the sampled block.
+- **Verified exact dapp page:** [Gearbox Gami Labs WBTC Deposit / Withdraw](https://app.gearbox.finance/earn/lp/1/0x683FAf5BAFd88d4c383cCaf3d61C26AF2E164409). Its app displayed **0.54% trailing 7-day net APY** during inspection; this **is not the same metric or measurement window** as the instant onchain 1.458% APR. Preserve both labels, never represent the instantaneous rate as a 7-day average.
+- **Adapter:** Standard Gearbox passive pools implement ERC-4626 and document immediate withdrawals **subject to available unborrowed liquidity**. They are candidates for the shared OmniAdapter's ERC-4626 mode; no vault-specific allocation or wallet transaction was executed.
+
+**Unified API verification:** After restoring warm source caches, `GET /api/opportunities/status` returned **698** qualifying entries in **16** protocol/version categories, `partial:false`, **0** source failures, **0** coverage gaps, and **698** source-bound links with **0** missing. The increase from v143's 695 is **+1 Gearbox WBTC listing** plus **+2 IPOR Fusion entries** that became qualifying during the fresh provider snapshot; do not attribute the extra IPOR listings to Gearbox.
+
+**Stake DAO clarification (user-established):** Do **not** mistake the operator-side CRV/FXN/YB-to-sdToken liquid-locker conversion for the user-facing **sdCRV, sdFXN and sdYB staking/gauge contracts**. A staking deposit already denominated in an sdToken may be independently withdrawable in that **same sdToken** without exiting its underlying governance lock. Classify those as separate markets only after verifying staking-token identity, same-token immediate unstaking, APR, capacity and exact gauge UI. **vlSDT remains excluded** because of its eight-week withdrawal delay. Stake DAO's sdToken staking is **low priority** relative to broadly used vault assets; the governance locker conversion remains excluded.
+
+**Next research and integration target:** Additional Gearbox-compatible pools when their rates and liquidity rise, then Silo V3 Ethereum ERC-4626 lending/vault opportunities for mainstream assets using the [official Silo V3 API](https://docs.silo.finance/docs/developers/apis/api-overview/) and exact Silo vault pages. Examine legacy Aave V2 and Compound II only where live APR exceeds 1%, deposits remain enabled, and genuine immediately-withdrawable liquidity exists; avoid old/sunset markets with near-zero rates. Do not import anonymous DeFiLlama rows without independent native identity and correct contract-specific dapp routing.
+
+---
 
 ## Current qualification correction — Worker v143 (2026-11-18)
 
@@ -43,8 +73,8 @@
 - [ ] **P1 — Fraxlend:** Repair the out-of-scope `count` variable and verify a complete live collection.
 - [ ] **P2 — Live validation:** Verify each active provider's runtime schema, discovered/normalized/eligible/published counts, failures, and actual protocol-specific dapp destinations.
 - [x] **P3 (discovery eligibility) — Deposit screening:** Source-isolated asset/capacity checks exist for IPOR, Fluid, Yearn V2/V3 and CurveLend V1/V2. **Separate, not complete:** demonstrate actual OmniAdapter mode compatibility, native Vault V2 cap configuration, permission constraints and synchronous withdrawal on each allocatable market; no new per-protocol adapters.
-- [ ] **P4 — Coverage gaps:** Identify and verify **unrestricted synchronous-withdrawal Stake DAO RewardVault strategies** and legitimate legacy markets. Stake DAO's permanent governance Liquid Lockers are disqualified.
-- [ ] **P5 — Completeness:** Reconciled **695 currently eligible published** entries in nine isolated feeds plus seven shared collectors (v143), with cold-cache gaps surfaced. The prior 698 included three disqualified Liquid Lockers. Full upstream enumerated market completeness remains unverified.
+- [ ] **P4 — Mainstream asset discovery first:** Expand WBTC/wstETH/USDS/DAI and other common ERC-20 markets through native protocol sources, beginning with Gearbox and Silo. Stake DAO sdToken gauge staking is a separate, lower-priority category; its operator locker conversion and vlSDT are excluded.
+- [ ] **P5 — Completeness:** Reconciled **698 currently eligible** entries in ten isolated native feeds (including Gearbox) plus seven shared collectors (v145), with cold-cache gaps surfaced. The v143 baseline was 695. Full upstream enumeration and individual transaction verification remain unverified.
 - [ ] **P6 — Persistence:** Add durable per-asset snapshots and historical performance within the intended storage architecture.
 
 **Verification milestone:** report, for **each** source, **markets discovered → markets successfully normalized → eligible single-token markets → published markets with working dapp destinations**. Keep unknown numbers explicitly unknown.
