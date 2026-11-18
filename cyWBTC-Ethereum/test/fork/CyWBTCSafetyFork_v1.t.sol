@@ -459,19 +459,21 @@ contract CyWBTCSafetyForkV1 {
         _tx("any_public_caller_can_redeem_fxsp_and_partially_repay", UNAUTHORIZED, address(publicExecutor),
             abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
         _snapshot("scheduled_after_first_finalize_tx");
-        uint8 currentStage = _pendingStage();
-        if (currentStage == 1) {
-            _tx("another_public_caller_can_release_safe_recovery_collateral", PUBLIC_CALLER, address(publicExecutor),
-                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
-            require(_pendingStage() == 2, "Recovery collateral stage not reached");
-            _snapshot("scheduled_after_recovery_collateral_tx");
-            _tx("public_caller_can_complete_debt_repayment", UNAUTHORIZED, address(publicExecutor),
-                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
-            require(_pendingStage() == 3, "Final debt repayment stage not reached");
-            _snapshot("scheduled_after_debt_repayment_tx");
-        } else require(currentStage == 3, "Unexpected scheduled withdrawal stage");
-        _tx("public_caller_can_finally_redeem_all_user_shares", PUBLIC_CALLER, address(publicExecutor),
-            abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+        if (IERC20(VAULT).balanceOf(USER) != 0) {
+            uint8 currentStage = _pendingStage();
+            if (currentStage == 1) {
+                _tx("another_public_caller_can_release_safe_recovery_collateral", PUBLIC_CALLER, address(publicExecutor),
+                    abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+                require(_pendingStage() == 2, "Recovery collateral stage not reached");
+                _snapshot("scheduled_after_recovery_collateral_tx");
+                _tx("public_caller_completes_atomic_debt_and_collateral_close", UNAUTHORIZED, address(publicExecutor),
+                    abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+                _snapshot("scheduled_after_atomic_position_close_tx");
+            } else if (currentStage == 3) {
+                _tx("public_caller_can_finally_redeem_all_user_shares", PUBLIC_CALLER, address(publicExecutor),
+                    abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+            } else revert("Unexpected scheduled withdrawal stage");
+        }
         _snapshot("user_full_exit_final");
         require(IERC20(VAULT).balanceOf(USER) == 0, "User did not redeem all shares");
         require(IERC20(WBTC).balanceOf(USER) > 0, "User got no WBTC on full withdrawal");
