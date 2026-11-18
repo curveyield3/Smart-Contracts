@@ -444,16 +444,13 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     function _closeEntirePositionAndRedeem() private {
         PendingRequest memory p = pendingRequest;
         (uint256 collateral, uint256 debt) = _position(p.nftId);
-        uint256 scaling = IFXMintManagerPoolManager(POOL_MANAGER).getTokenScalingFactor(WBTC);
-        if (scaling == 0) revert InvalidConfiguration();
-        uint256 allWBTC = Math.mulDiv(collateral, WAD, scaling);
-        if (allWBTC == 0) revert InvalidAmount();
+        if (collateral == 0) revert InvalidAmount();
         uint256 budget = _repayBudget(debt);
         uint256 availableFxUSD = IERC20(FXUSD).balanceOf(VAULT);
         if (availableFxUSD < budget) revert InsufficientFxUSDForRepayment(budget, availableFxUSD);
         _executeOne(FXMINT_COLLATERAL_FUSE, abi.encodeWithSignature(
-            "exitAndRepayFull(uint256,uint256,uint256,uint256)",
-            p.nftId, allWBTC, budget, uint256(0)));
+            "exitAndRepayFull(uint256,uint256,uint256)",
+            p.nftId, budget, uint256(0)));
         _releaseNativeRequestShares(p);
     }
 
