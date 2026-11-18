@@ -9,8 +9,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
-      PROTOCOL: "SparkLend" # v99 canonical /markets/ route
-      STAGE: "verify"
+      PROTOCOL: "Compound III"
+      STAGE: "research"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -185,6 +185,64 @@ jobs:
                 rawSupplyCap:cap[0].toString(),decimals:dec,
                 eligible:enabled&&!frozen&&!paused&&interest>1&&tvl>100}));
             }catch(e){console.log('SPARK_RESERVE_ERROR '+asset.symbol+' '+String(e))}
+          }
+          JS
+      - name: Research current Compound Comet base-token deposits and on-chain utilization APR
+        if: env.PROTOCOL == 'Compound III' && env.STAGE == 'research'
+        timeout-minutes: 4
+        run: |
+          mkdir -p "$RUNNER_TEMP/market-verify"
+          cd "$RUNNER_TEMP/market-verify"
+          npm install --no-save --no-audit --no-fund ethers@6.15.0
+          node --input-type=module <<'JS'
+          import {Interface} from 'ethers';
+          const reg=await fetch('https://api.github.com/repos/compound-finance/comet/contents/deployments/mainnet',{headers:{accept:'application/vnd.github+json','user-agent':'CurveYield-native-discovery'},signal:AbortSignal.timeout(25000)});
+          if(!reg.ok)throw Error('GitHub deployment list '+reg.status);
+          const names=(await reg.json()).filter(x=>x.type==='dir').map(x=>x.name);
+          console.log('COMET_DEPLOYMENT_DIRS '+JSON.stringify(names));
+          const rpcUrls=['https://ethereum-rpc.publicnode.com','https://eth.llamarpc.com','https://eth.drpc.org'];
+          let pref=0;
+          async function call(to,data){
+           let err;
+           for(let n=0;n<rpcUrls.length;n++){
+            const i=(pref+n)%rpcUrls.length;
+            try{
+             const r=await fetch(rpcUrls[i],{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_call',params:[{to,data,gas:'0x1c9c380'},'latest']}),signal:AbortSignal.timeout(17000)});
+             const j=await r.json();if(!r.ok||j.error||typeof j.result!=='string')throw Error('RPC error '+JSON.stringify(j.error||j).slice(0,130));pref=i;return j.result;
+            }catch(e){err=e}
+           }
+           throw err;
+          }
+          const I=new Interface([
+           'function baseToken() view returns(address)',
+           'function baseScale() view returns(uint64)',
+           'function baseTokenPriceFeed() view returns(address)',
+           'function getPrice(address) view returns(uint256)',
+           'function getUtilization() view returns(uint256)',
+           'function getSupplyRate(uint256) view returns(uint64)',
+           'function totalSupply() view returns(uint256)',
+           'function isSupplyPaused() view returns(bool)'
+          ]);
+          console.log('COMET_SELECTORS '+JSON.stringify(Object.fromEntries(['baseToken','baseScale','baseTokenPriceFeed','getPrice','getUtilization','getSupplyRate','totalSupply','isSupplyPaused'].map(k=>[k,I.getFunction(k).selector]))));
+          const read=async(to,method,...args)=>I.decodeFunctionResult(method,await call(to,I.encodeFunctionData(method,args)))[0];
+          for(const n of names){
+           const url='https://raw.githubusercontent.com/compound-finance/comet/main/deployments/mainnet/'+encodeURIComponent(n)+'/roots.json';
+           try{
+            const r=await fetch(url,{signal:AbortSignal.timeout(23000)});
+            if(!r.ok)throw Error('manifest HTTP '+r.status);
+            const root=await r.json(),comet=root.comet;
+            if(!/^0x[a-fA-F0-9]{40}$/.test(comet||''))continue;
+            const [token,scale,priceFeed,util,total,paused]=await Promise.all([
+             read(comet,'baseToken'),read(comet,'baseScale'),read(comet,'baseTokenPriceFeed'),
+             read(comet,'getUtilization'),read(comet,'totalSupply'),read(comet,'isSupplyPaused')]);
+            const rate=await read(comet,'getSupplyRate',util);
+            const price=await read(comet,'getPrice',priceFeed);
+            const apr=Number(rate)/1e18*31536000*100;
+            const supply=Number(total)/Number(scale),tvl=supply*Number(price)/1e8;
+            console.log('COMET_MARKET '+JSON.stringify({name:n,comet,token,scale:String(scale),priceFeed,
+             utilization:Number(util)/1e18,apr,price:Number(price)/1e8,supply,tvl,paused,
+             eligible:!paused&&apr>1&&tvl>100}));
+           }catch(e){console.log('COMET_ERROR '+n+' '+String(e))}
           }
           JS
       - name: Inspect full protocol listing, rates, single token identity and dapp usability
