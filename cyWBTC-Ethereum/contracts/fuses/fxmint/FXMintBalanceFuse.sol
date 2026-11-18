@@ -37,6 +37,9 @@ contract FXMintBalanceFuse is IFuseCommon, IMarketBalanceFuse {
     address public immutable FXUSD;
 
     uint256 public positionId;
+    /// @notice Single risk-policy authority shared by the delegated collateral/borrow paths.
+    /// @dev Stored in the deployed registry, NOT in PlasmaVault delegatecall storage.
+    address public riskManager;
 
     error ZeroAddress();
     error Unauthorized();
@@ -47,9 +50,11 @@ contract FXMintBalanceFuse is IFuseCommon, IMarketBalanceFuse {
     error MustExecuteThroughPlasmaVault();
     error NoMintedPosition();
     error EmptyPosition(uint256 positionId);
+    error InvalidRiskManager();
 
     event PositionIdConfigured(uint256 indexed oldPositionId, uint256 indexed newPositionId);
     event LatestMintedPositionRegistered(address indexed plasmaVault, uint256 indexed positionId);
+    event RiskManagerSet(address indexed prior, address indexed current);
 
     /// @param vault_ Exact PlasmaVault whose fxMINT position is reported.
     /// @param admin_ Safe authorized to register a position ID during bootstrap/recovery.
@@ -75,6 +80,20 @@ contract FXMintBalanceFuse is IFuseCommon, IMarketBalanceFuse {
         address poolManager = pool.poolManager();
         if (poolManager == address(0)) revert ZeroAddress();
         FXMINT_POOL_MANAGER = poolManager;
+    }
+
+    /// @notice Safe-controlled rotation of the one manager that defines the vault's live LTV target.
+    /// @dev Explicitly validates the manager belongs to this exact vault/registry.
+    function setRiskManager(address manager_) external {
+        if (msg.sender != ADMIN) revert Unauthorized();
+        if (manager_.code.length == 0) revert InvalidRiskManager();
+        (bool ok1, bytes memory va) = manager_.staticcall(abi.encodeWithSignature("VAULT()"));
+        (bool ok2, bytes memory re) = manager_.staticcall(abi.encodeWithSignature("POSITION_REGISTRY()"));
+        if (!ok1 || !ok2 || va.length != 32 || re.length != 32 ||
+            abi.decode(va, (address)) != VAULT || abi.decode(re, (address)) != address(this))
+            revert InvalidRiskManager();
+        emit RiskManagerSet(riskManager, manager_);
+        riskManager = manager_;
     }
 
     /// @notice Register a newly minted position from *within* PlasmaVault.execute().
