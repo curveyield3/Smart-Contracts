@@ -65,21 +65,21 @@ async function marketDetail(id,tab){
 async function marketPosition(id,m){if(!account||!Q('[data-live-pos]'))return;try{const query='/api/positions?wallet='+encodeURIComponent(account)+(okId(id)?'&market='+encodeURIComponent(id):'');const r=await fetch(query,{cache:'no-store'});if(!r.ok)throw Error('Position API HTTP '+r.status);const d=await r.json();if(d.chainId!==252)throw Error('Position response chain mismatch');const p=d.positions?.[id.toLowerCase()]??d.positions?.[id];if(!p||p.error)throw Error(p?.error||'Position not returned');Q('[data-live-pos]').innerHTML=kv('Supplied',f(p.supplyAssets)+' '+marketName(m))+kv('Borrowed',f(p.debtAssets)+' '+marketName(m))+kv('Collateral',f(p.collateral)+' '+collateral(m))+kv('LTV',pct(p.ltv));}catch(err){Q('[data-live-pos]').innerHTML=blank('Position unavailable',err.message)}}
 async function vaultDirectory(){
  loading('Vaults');
- const saved=vaultRecords(),indexed=[],known=new Set();let cursor=null,available=false,error='';
+ const saved=vaultRecords(),indexed=[],known=new Set();let cursor=null,available=false,error='',coverage=null,indexWarning='';
  async function loadPage(next){
   const url='/api/vault-directory'+(next?'?cursor='+encodeURIComponent(next):'');
   const r=await fetch(url,{cache:'no-store'}),d=await r.json();
   if(!r.ok||!d.available||d.chainId!==252||!Array.isArray(d.vaults))throw Error(d.error||'Index provider unavailable');
   for(const v of d.vaults)if(okAddress(v.address)&&!known.has(v.address.toLowerCase())){known.add(v.address.toLowerCase());indexed.push(v)}
-  cursor=d.cursor||null;available=true;
+  cursor=d.cursor||null;available=true;coverage=d.coverage||null;indexWarning=String(d.warning||'');
  }
  try{await loadPage(null)}catch(e){error=String(e.message||e)}
  function show(){
   const rows=indexed.map(v=>({address:v.address,name:v.name||v.symbol||'Vault V2',asset:v.asset,source:'Factory events'}));
   for(const v of saved)if(!known.has(v.address.toLowerCase()))rows.push({address:v.address,name:v.name||'Vault V2',source:'Browser-saved'});
   paint('<div class="x-explorer">'+header('Vaults','Browse indexed Fraxtal Vault V2 contracts and saved addresses.')+'<div class="x-content">'+
-   '<div class="x-summary"><div><span>Factory event vaults loaded</span><strong>'+indexed.length+'</strong><small>'+(cursor?'Additional pages available':available?'Index page set complete':'Index unavailable')+'</small></div><a class="x-summary-link" href="/vaults/create">Create Vault ↗</a></div>'+
-   warn(available?'Entries come from official Fraxtal factory CreateVaultV2 event logs. If coverage is partial, load earlier pages. Each contract is verified when opened.':'Index unavailable: '+error+'. Browser-saved vaults appear below.')+
+   '<div class="x-summary"><div><span>Factory event vaults loaded</span><strong>'+indexed.length+'</strong><small>'+(cursor?'Additional pages available':!available?'Index unavailable':coverage?.complete===true?'Factory history covered':'Coverage incomplete or unverified')+'</small></div><a class="x-summary-link" href="/vaults/create">Create Vault ↗</a></div>'+
+   warn(available?'Official Fraxtal CreateVaultV2 events. '+(coverage?.complete===true?'Reported history coverage is complete.':'Coverage is partial or unverified; other vaults may be missing.')+(indexWarning?' Index warning: '+indexWarning:'')+(error?' Additional error: '+error:''):'Index unavailable: '+error+'. Browser-saved vaults appear below.')+
    '<label>Search <input type="search" data-cy-vsearch placeholder="Vault name or address"></label>'+
    '<div class="x-table-scroll"><table class="x-table"><thead><tr><th>Vault</th><th>Asset contract</th><th>Source</th><th>Open</th></tr></thead><tbody>'+
    rows.map(v=>'<tr data-cy-vrow data-name="'+esc((v.name+' '+v.address).toLowerCase())+'"><td>'+esc(v.name)+'<small>'+esc(trunc(v.address))+'</small></td><td>'+esc(trunc(v.asset))+'</td><td>'+esc(v.source)+'</td><td><a href="/vaults/'+esc(v.address)+'">Verify & open →</a></td></tr>').join('')+
