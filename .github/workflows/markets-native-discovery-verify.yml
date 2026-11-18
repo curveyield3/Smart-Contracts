@@ -10,7 +10,7 @@ jobs:
     timeout-minutes: 12
     env:
       PROTOCOL: "Beefy Vaults" # v96 exact official vault eligibility gate
-      STAGE: "diagnose"
+      STAGE: "verify"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -164,7 +164,7 @@ jobs:
             if(i<80){
              try{
               const r=await p.goto(x.dappUrl,{waitUntil:'domcontentloaded',timeout:22000});
-              await p.waitForTimeout(3500);
+              await p.waitForTimeout(10500);
               const txt=(await p.locator('body').innerText({timeout:6000}).catch(()=>'')).replace(/\s+/g,' ');
               const ctl=await p.locator('button,[role="button"],a').evaluateAll(els=>els.filter(el=>{const s=getComputedStyle(el),b=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&b.width>0&&b.height>0}).map(el=>(el.innerText||el.getAttribute('aria-label')||'').trim().replace(/\s+/g,' ').slice(0,80)).filter(Boolean).slice(0,65)).catch(()=>[]);
               const actions=ctl.filter(t=>/deposit|supply|start earning|connect wallet|connect|invest/i.test(t));
