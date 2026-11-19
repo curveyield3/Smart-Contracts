@@ -385,6 +385,13 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             && performanceAccount != managementAccount) {
             feeShares += IERC20(VAULT).balanceOf(performanceAccount);
         }
+        // IPOR charges deposit AND native request fees in VAULT shares to
+        // WithdrawManager itself, not to the DAO management/performance accounts.
+        // These are fee-owned shares, not an active investor position.
+        if (WITHDRAW_MANAGER != user && WITHDRAW_MANAGER != managementAccount
+            && WITHDRAW_MANAGER != performanceAccount) {
+            feeShares += IERC20(VAULT).balanceOf(WITHDRAW_MANAGER);
+        }
         return feeShares <= supply && requestedShares == supply - feeShares;
     }
 
