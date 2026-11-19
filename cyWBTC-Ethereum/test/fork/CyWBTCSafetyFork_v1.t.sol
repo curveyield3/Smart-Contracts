@@ -488,26 +488,21 @@ contract CyWBTCSafetyForkV1 {
             _driveShockedRequestWithSafeRecovery();
             return;
         }
-        // f(x) PoolConfiguration uses a transaction-long transient lock:
-        // each finalize invocation can use at most ONE fxMINT operate.
-        _tx("any_public_caller_can_redeem_fxsp_and_partially_repay", UNAUTHORIZED, address(publicExecutor),
-            abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
-        _snapshot("scheduled_after_first_finalize_tx");
-        if (IERC20(VAULT).balanceOf(USER) != 0) {
-            uint8 currentStage = _pendingStage();
-            if (currentStage == 1) {
-                _tx("another_public_caller_can_release_safe_recovery_collateral", PUBLIC_CALLER, address(publicExecutor),
-                    abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
-                require(_pendingStage() == 2, "Recovery collateral stage not reached");
-                _snapshot("scheduled_after_recovery_collateral_tx");
-                _tx("public_caller_completes_atomic_debt_and_collateral_close", UNAUTHORIZED, address(publicExecutor),
-                    abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
-                _snapshot("scheduled_after_atomic_position_close_tx");
-            } else if (currentStage == 3) {
-                _tx("public_caller_can_finally_redeem_all_user_shares", PUBLIC_CALLER, address(publicExecutor),
-                    abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
-            } else revert("Unexpected scheduled withdrawal stage");
+        // f(x) PoolConfiguration permits at most one operate per transaction.
+        // A prior partial exit can leave a tiny management-fee share supply,
+        // changing the final request from a totalSupply equality into a
+        // staged repay/collateral release sequence. Keep advancing the actual
+        // on-chain pending stage until it clears; never mistake a successful
+        // intermediate call for a completed user redemption.
+        for (uint256 i; i < 8 && _pendingUnlock() != 0; ++i) {
+            uint8 stage = _pendingStage();
+            require(stage <= 3, "Invalid pending stage during final exit");
+            _tx(string.concat("public_advances_full_exit_stage_", vm.toString(i)),
+                i % 2 == 0 ? UNAUTHORIZED : PUBLIC_CALLER, address(publicExecutor),
+                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+            _snapshot(string.concat("full_exit_after_stage_", vm.toString(stage)));
         }
+        require(_pendingUnlock() == 0, "Final user request not fully settled");
         _snapshot("user_full_exit_final");
         require(IERC20(VAULT).balanceOf(USER) == 0, "User did not redeem all shares");
         require(IERC20(WBTC).balanceOf(USER) > 0, "User got no WBTC on full withdrawal");
