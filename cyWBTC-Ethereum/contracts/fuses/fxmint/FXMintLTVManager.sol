@@ -39,6 +39,7 @@ interface IFXMintManagerConfig {
 interface IFXMintManagerVault {
     function executeInternal(FuseAction[] calldata actions) external;
     function execute(FuseAction[] calldata actions) external;
+    function updateMarketsBalances(uint256[] calldata marketIds) external returns (uint256);
     function redeemFromRequest(uint256 shares, address receiver, address owner) external returns (uint256);
     function getManagementFeeData() external view returns (address, uint16, uint32);
     function getPerformanceFeeData() external view returns (address, uint16);
@@ -340,6 +341,18 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         if (user == address(0) || r.shares == 0 ||
             r.endWithdrawWindowTimestamp <= block.timestamp + FXSP_COOLDOWN ||
             IERC20(VAULT).allowance(user, VERSION) < r.shares) revert InvalidWithdrawRequest(user);
+
+        // Vault totalAssets() reflects IPOR's last recorded market balances,
+        // which can lag real f(x) prices during a WBTC rally and subsequent
+        // reversal. Recompute the strategy NAV before quoting share redemption;
+        // otherwise a safe instant exit can make a later 100% exit appear to
+        // require MORE WBTC than remains as collateral.
+        uint256[] memory markets = new uint256[](4);
+        markets[0] = MARKET_ID; // fxMINT NFT net of debt
+        markets[1] = 17; // Convex personal vault
+        markets[2] = 16; // idle fxSP
+        markets[3] = 7; // idle stablecoin and reward positions
+        IFXMintManagerVault(VAULT).updateMarketsBalances(markets);
 
         uint256 desiredWBTC = IERC4626(VAULT).convertToAssets(r.shares);
         uint256 idleWBTC = IERC20(WBTC).balanceOf(VAULT);
