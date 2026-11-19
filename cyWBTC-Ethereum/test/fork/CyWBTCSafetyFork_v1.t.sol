@@ -992,6 +992,12 @@ contract CyWBTCSafetyForkV1 {
         uint256 sharesLeft = IERC20(VAULT).totalSupply();
         uint256 feeShares = IERC20(VAULT).balanceOf(managementAccount)
             + (managementAccount == performanceAccount ? 0 : IERC20(VAULT).balanceOf(performanceAccount));
+        // IPOR's deposit fee and request fee accrue as shares held by its
+        // WithdrawManager. They remain legitimately owned protocol capital,
+        // not unredeemed user shares or a still-leveraged open position.
+        if (WITHDRAW_MANAGER != managementAccount && WITHDRAW_MANAGER != performanceAccount) {
+            feeShares += IERC20(VAULT).balanceOf(WITHDRAW_MANAGER);
+        }
         require(sharesLeft == feeShares, "Non-fee shares remain after user exit");
         // Discrete fee realization after a sudden oracle recovery can mint
         // performance-fee shares and keep the proportional WBTC in custody.
