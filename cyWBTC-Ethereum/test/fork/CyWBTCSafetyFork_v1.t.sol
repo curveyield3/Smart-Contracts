@@ -1226,4 +1226,46 @@ contract CyWBTCSafetyForkV1 {
             && finalState.gaugeStakedShares == 0, "Last investor exit left leverage or staked assets");
         _snapshot("both_investors_complete_exits");
     }
+
+    /// @notice Exercise the SUCCESS path of owner-initiated deleveraging after
+    ///      a BTC drawdown. Funds originate as real fxUSD on an isolated fork;
+    ///      no mocks or token-mint shortcuts are needed for the repayment asset.
+    ///      No Convex unstake/tax may occur, and subsequent full redemption must work.
+    function test_18_admin_rebalance_down_at_crash_price_then_full_user_exit() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        State memory initial = _state();
+        require(initial.rawDebt > 0 && initial.managerLtv <= TARGET,
+            "Initial live debt missing");
+        // This source is a liquid Curve fxUSD/USDC pool holding real fxUSD
+        // on the fork. Only fork state changes; no transfer is broadcast.
+        uint256 sponsorFxUSD = 1_000e18;
+        require(IERC20(FXUSD).balanceOf(CURVE_USDC_FXUSD) >= sponsorFxUSD,
+            "No fxUSD funding liquidity at forked block");
+        _tx("fork_funds_idle_fxusd_for_safe_deleveraging", CURVE_USDC_FXUSD, FXUSD,
+            abi.encodeWithSignature("transfer(address,uint256)", VAULT, sponsorFxUSD), true);
+        _shockWBTC(9_000);
+        State memory beforeDeleverage = _state();
+        require(beforeDeleverage.managerLtv > TARGET,
+            "10pct crash did not exceed configured LTV");
+        _vaultManagerAction("owner_deleverages_with_idle_stable_only",
+            abi.encodeWithSignature("rebalanceDown()"));
+        State memory afterDeleverage = _state();
+        require(afterDeleverage.rawDebt < beforeDeleverage.rawDebt
+            && afterDeleverage.managerLtv <= TARGET,
+            "Successful rebalanceDown did not restore safe LTV");
+        require(afterDeleverage.gaugeStakedShares == beforeDeleverage.gaugeStakedShares,
+            "Admin deleverage prematurely unstaked tax-sensitive Convex principal");
+        require(afterDeleverage.rawCollateral == beforeDeleverage.rawCollateral,
+            "Admin deleverage withdrew collateral");
+        _snapshot("admin_successfully_deleveraged_10pct_crash");
+        vm.clearMockedCalls();
+        _snapshot("admin_deleverage_after_market_price_recovery");
+        _fullScheduledExit();
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
+    }
 }
