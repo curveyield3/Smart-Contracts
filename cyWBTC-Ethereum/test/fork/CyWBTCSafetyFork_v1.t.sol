@@ -1094,4 +1094,48 @@ contract CyWBTCSafetyForkV1 {
         _fullScheduledExit();
         _assertUserFullyExitedWithOnlyFeeAccountDust();
     }
+
+    /// @notice Successful user instant-withdrawals must not strand the remaining
+    /// capital after a market-price rebound back to the original live price.
+    function test_15_safe_instant_withdraw_then_final_user_exit_after_price_recovery() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        uint256 debt = _state().rawDebt;
+        _shockWBTC(15_000);
+        _tx("rally_user_instant_withdraw_before_final_exit", USER, VAULT,
+            abi.encodeWithSignature("withdraw(uint256,address,address)", uint256(100_000), USER, USER), true);
+        State memory afterInstant = _state();
+        require(afterInstant.rawDebt == debt && afterInstant.managerLtv <= TARGET,
+            "Rally instant exit repaid debt or exceeded LTV");
+        vm.clearMockedCalls();
+        _snapshot("rally_returned_to_normal_price_before_final_exit");
+        _fullScheduledExit();
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
+    }
+
+    /// @notice Real deposit and native request fees must not break the
+    /// scheduled full exit or make the user pay two withdrawal fees.
+    function test_16_fee_enabled_deposit_leverage_and_complete_user_exit() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _tx("owner_set_deposit_fee_before_funded_lifecycle", OWNER, FEE_MANAGER,
+            abi.encodeWithSignature("setDepositFee(uint256)", uint256(4e15)), true);
+        _tx("owner_set_scheduled_request_fee_before_funded_lifecycle", OWNER, WITHDRAW_MANAGER,
+            abi.encodeWithSignature("updateRequestFee(uint256)", uint256(45e14)), true);
+        _tx("owner_set_regular_withdraw_fee_before_funded_lifecycle", OWNER, WITHDRAW_MANAGER,
+            abi.encodeWithSignature("updateWithdrawFee(uint256)", uint256(45e14)), true);
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        State memory beforeExit = _state();
+        require(beforeExit.managerLtv <= TARGET, "Fee-enabled leverage exceeded target");
+        _fullScheduledExit();
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
+        _snapshot("fee_enabled_full_user_exit_final");
+    }
 }
