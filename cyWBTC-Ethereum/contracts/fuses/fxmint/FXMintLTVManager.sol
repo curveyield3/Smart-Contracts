@@ -378,7 +378,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         uint256 idleFxUSD = IERC20(FXUSD).balanceOf(VAULT);
         if (idleFxUSD >= debtBudget) revert InvalidAmount(); // no delayed redemption required
         (uint256 shares, uint256 unlockAt) = _requestExistingFxsp(
-            debtBudget - idleFxUSD, debtBudget);
+            debtBudget - idleFxUSD, debtBudget, s.collateralReleaseWBTC == type(uint256).max);
         pendingRequest = PendingRequest({
             user: user, shares: r.shares, nftId: s.id, debtReduction: s.debtReduction,
             collateralReleaseWBTC: s.collateralReleaseWBTC, fxspShares: shares, unlockAt: unlockAt, stage: 0
@@ -418,7 +418,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
 
     /// @dev Isolated so public request bookkeeping remains within the non-viaIR
     ///      compiler stack budget. Caps to real idle + Convex-personal staked fxSP.
-    function _requestExistingFxsp(uint256 neededFxUSD, uint256 requiredBudget)
+    function _requestExistingFxsp(uint256 neededFxUSD, uint256 requiredBudget, bool fullExit)
         private returns (uint256 shares, uint256 unlockAt)
     {
         uint256 nav = IFxSPNavForManager(FXSP).nav();
@@ -429,7 +429,12 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         address personal = IFXMintConvexRegistry(registry).vaultMap(37, VAULT);
         uint256 staked = personal == address(0) ? 0 : IERC20(CONVEX_GAUGE).balanceOf(personal);
         uint256 availableShares = idle + staked;
-        if (shares > availableShares) shares = availableShares;
+        // At the last investor exit all remaining Convex/fxSP principal must
+        // become liquid WBTC, not merely the shares needed to repay fxMINT debt.
+        // Leaving staked assets behind makes ERC4626 redeemFromRequest attempt
+        // to pay their NAV without the underlying WBTC in vault custody.
+        if (fullExit) shares = availableShares;
+        else if (shares > availableShares) shares = availableShares;
         if (shares == 0) revert InsufficientLiquidity(requiredBudget, 0);
         if (shares > idle) {
             _executeOne(CONVEX_STAKE_FUSE, abi.encodeWithSignature(
