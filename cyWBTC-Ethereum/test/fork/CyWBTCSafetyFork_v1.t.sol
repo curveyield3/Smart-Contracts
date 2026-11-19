@@ -291,6 +291,9 @@ contract CyWBTCSafetyForkV1 {
         _grant(800, USER, "grant_depositor_role_to_test_user");
         _grant(200, OWNER, "grant_alpha_safe");
         _grant(200, address(ltvManager), "grant_alpha_ltv_manager");
+        // Only the already-validating scheduled-withdraw manager may refresh
+        // balances before pricing a real user's authorized withdrawal request.
+        _grant(1000, address(ltvManager), "grant_nav_refresh_ltv_manager");
         _grant(300, OWNER, "grant_fuse_manager_safe");
         _grant(900, OWNER, "grant_instant_config_safe");
         _grant(901, OWNER, "grant_request_fee_safe");
