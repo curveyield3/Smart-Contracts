@@ -103,6 +103,8 @@ contract CyWBTCSafetyForkV1 {
     FulfillWithdrawExecutor private publicExecutor;
     FXNPriceFeedEthereum private fxnFeed;
 
+    struct FeeRecipientFork { address recipient; uint256 feeValue; }
+
     struct State {
         uint256 totalAssets;
         uint256 totalSupply;
@@ -1267,5 +1269,51 @@ contract CyWBTCSafetyForkV1 {
         _snapshot("admin_deleverage_after_market_price_recovery");
         _fullScheduledExit();
         _assertUserFullyExitedWithOnlyFeeAccountDust();
+    }
+
+    /// @notice Test the actual owner fee splits, not merely DAO defaults.
+    ///      Both fee setters must update the live IPOR vault rates through its
+    ///      canonical FeeManager and survive a fully leveraged user lifecycle.
+    function test_19_owner_supplementary_fee_splits_and_complete_user_exit() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        FeeRecipientFork[] memory recipients = new FeeRecipientFork[](1);
+        recipients[0] = FeeRecipientFork(OWNER, 70); // 0.7% owner + 0.3% DAO
+        _tx("safe_configures_owner_management_fee_70bps", OWNER, FEE_MANAGER,
+            abi.encodeWithSignature("updateManagementFee((address,uint256)[])", recipients), true);
+        recipients[0] = FeeRecipientFork(OWNER, 600); // 6% owner + 2% DAO
+        _tx("safe_configures_owner_performance_fee_600bps", OWNER, FEE_MANAGER,
+            abi.encodeWithSignature("updatePerformanceFee((address,uint256)[])", recipients), true);
+
+        (bool ok, bytes memory ret) = FEE_MANAGER.staticcall(
+            abi.encodeWithSignature("getTotalManagementFee()"));
+        require(ok && abi.decode(ret, (uint256)) == 100,
+            "Management fee total must be exactly 1 percent");
+        (ok, ret) = FEE_MANAGER.staticcall(
+            abi.encodeWithSignature("getTotalPerformanceFee()"));
+        require(ok && abi.decode(ret, (uint256)) == 800,
+            "Performance fee total must be exactly 8 percent");
+        (ok, ret) = FEE_MANAGER.staticcall(
+            abi.encodeWithSignature("getManagementFeeRecipients()"));
+        require(ok, "Management fee recipient read reverted");
+        FeeRecipientFork[] memory ownerManagement = abi.decode(ret, (FeeRecipientFork[]));
+        require(ownerManagement.length == 1 && ownerManagement[0].recipient == OWNER &&
+            ownerManagement[0].feeValue == 70, "Owner management fee recipient incorrect");
+        (ok, ret) = FEE_MANAGER.staticcall(
+            abi.encodeWithSignature("getPerformanceFeeRecipients()"));
+        require(ok, "Performance fee recipient read reverted");
+        FeeRecipientFork[] memory ownerPerformance = abi.decode(ret, (FeeRecipientFork[]));
+        require(ownerPerformance.length == 1 && ownerPerformance[0].recipient == OWNER &&
+            ownerPerformance[0].feeValue == 600, "Owner performance fee recipient incorrect");
+
+        _snapshot("owner_supplementary_fees_verified");
+        _fundAndDeposit(10_000_000);
+        _openNft();
+        _up();
+        require(_state().managerLtv <= TARGET, "Fee-configured leverage violated target");
+        _fullScheduledExit();
+        _assertUserFullyExitedWithOnlyFeeAccountDust();
+        _snapshot("owner_fees_full_user_exit_final");
     }
 }
