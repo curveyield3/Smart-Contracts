@@ -354,17 +354,25 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         markets[3] = 7; // idle stablecoin and reward positions
         IFXMintManagerVault(VAULT).updateMarketsBalances(markets);
 
-        uint256 desiredWBTC = IERC4626(VAULT).convertToAssets(r.shares);
-        uint256 idleWBTC = IERC20(WBTC).balanceOf(VAULT);
-        if (desiredWBTC <= idleWBTC) revert InvalidAmount(); // use native instant redemption instead
-        Withdrawal memory s = _prepareWithdrawal(desiredWBTC - idleWBTC);
-        if (s.debtReduction == 0) revert InvalidAmount(); // this path is exclusively for debt repayment
-        // When the requested shares are ALL outstanding shares, the fxMINT
-        // position must close completely. Leaving an 11 fxUSD residual debt
-        // against near-zero collateral made the original 100% exit impossible.
+        Withdrawal memory s;
         if (_isEntireUserCapitalExit(user, r.shares)) {
+            // Full user exit is NOT a partial collateral withdrawal. A vault
+            // holding idle stablecoins can have NAV greater than its fxMINT
+            // collateral alone; estimating gross NFT release from that NAV
+            // incorrectly reverts InsufficientCollateral. Closing the whole
+            // position must instead repay its actual debt and withdraw all
+            // remaining NFT collateral in a single protocol operation.
+            s.id = _positionId();
+            (s.initialCollateral, s.initialDebt) = _position(s.id);
+            if (s.initialCollateral == 0 || s.initialDebt == 0) revert InvalidAmount();
             s.debtReduction = s.initialDebt;
-            s.collateralReleaseWBTC = type(uint256).max; // full-position sentinel
+            s.collateralReleaseWBTC = type(uint256).max;
+        } else {
+            uint256 desiredWBTC = IERC4626(VAULT).convertToAssets(r.shares);
+            uint256 idleWBTC = IERC20(WBTC).balanceOf(VAULT);
+            if (desiredWBTC <= idleWBTC) revert InvalidAmount();
+            s = _prepareWithdrawal(desiredWBTC - idleWBTC);
+            if (s.debtReduction == 0) revert InvalidAmount();
         }
         uint256 debtBudget = _repayBudget(s.debtReduction);
         uint256 idleFxUSD = IERC20(FXUSD).balanceOf(VAULT);
