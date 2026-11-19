@@ -40,6 +40,8 @@ interface IFXMintManagerVault {
     function executeInternal(FuseAction[] calldata actions) external;
     function execute(FuseAction[] calldata actions) external;
     function redeemFromRequest(uint256 shares, address receiver, address owner) external returns (uint256);
+    function getManagementFeeData() external view returns (address, uint16, uint32);
+    function getPerformanceFeeData() external view returns (address, uint16);
 }
 interface IFXMintWithdrawManager {
     struct WithdrawRequestInfo {
@@ -347,7 +349,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         // When the requested shares are ALL outstanding shares, the fxMINT
         // position must close completely. Leaving an 11 fxUSD residual debt
         // against near-zero collateral made the original 100% exit impossible.
-        if (r.shares == IERC20(VAULT).totalSupply()) {
+        if (_isEntireUserCapitalExit(user, r.shares)) {
             s.debtReduction = s.initialDebt;
             s.collateralReleaseWBTC = type(uint256).max; // full-position sentinel
         }
@@ -361,6 +363,29 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             collateralReleaseWBTC: s.collateralReleaseWBTC, fxspShares: shares, unlockAt: unlockAt, stage: 0
         });
         emit WithdrawRequestInitialized(user, r.shares, shares, unlockAt);
+    }
+
+    /// @notice Treat a request for all non-fee-owned shares as the last user exit.
+    /// @dev IPOR may mint management/performance fee shares during an earlier
+    ///      partial withdrawal. Total supply is then slightly larger than the
+    ///      final user's shares. Comparing to totalSupply alone wrongly leaves a
+    ///      nonzero fxMINT debt on the last user's exit. Exclude only verified
+    ///      fee-account balances; any other user's shares prevent full closure.
+    function _isEntireUserCapitalExit(address user, uint256 requestedShares) private view returns (bool) {
+        if (requestedShares == 0 || IERC20(VAULT).balanceOf(user) < requestedShares) return false;
+        uint256 supply = IERC20(VAULT).totalSupply();
+        if (requestedShares == supply) return true;
+        (address managementAccount,,) = IFXMintManagerVault(VAULT).getManagementFeeData();
+        (address performanceAccount,) = IFXMintManagerVault(VAULT).getPerformanceFeeData();
+        uint256 feeShares;
+        if (managementAccount != address(0) && managementAccount != user) {
+            feeShares = IERC20(VAULT).balanceOf(managementAccount);
+        }
+        if (performanceAccount != address(0) && performanceAccount != user
+            && performanceAccount != managementAccount) {
+            feeShares += IERC20(VAULT).balanceOf(performanceAccount);
+        }
+        return feeShares <= supply && requestedShares == supply - feeShares;
     }
 
     /// @dev Isolated so public request bookkeeping remains within the non-viaIR
