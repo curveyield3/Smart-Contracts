@@ -86,6 +86,7 @@ contract CyWBTCSafetyForkV1 {
     address private constant CURVE_USDC_FXUSD = address(bytes20(hex"5018be882dcce5e3f2f3b0913ae2096b9b3fb61f"));
     address private constant UNIV3_USDC_WBTC = address(bytes20(hex"9a772018fbd77fcd2d25657e5c547baff3fd7d16"));
     address private constant USER = address(0xB001);
+    address private constant USER2 = address(0xB004);
     address private constant PUBLIC_CALLER = address(0xB002);
     address private constant UNAUTHORIZED = address(0xB003);
     uint256 private constant TARGET = 6e17;
@@ -114,6 +115,8 @@ contract CyWBTCSafetyForkV1 {
         uint256 fxspNavWad;
         uint256 userShares;
         uint256 userWBTC;
+        uint256 user2Shares;
+        uint256 user2WBTC;
         uint256 positionId;
         uint256 rawCollateral;
         uint256 rawDebt;
@@ -148,6 +151,8 @@ contract CyWBTCSafetyForkV1 {
         if (navOk && navData.length >= 32) s.fxspNavWad = abi.decode(navData, (uint256));
         s.userShares = IERC20(VAULT).balanceOf(USER);
         s.userWBTC = IERC20(WBTC).balanceOf(USER);
+        s.user2Shares = IERC20(VAULT).balanceOf(USER2);
+        s.user2WBTC = IERC20(WBTC).balanceOf(USER2);
         s.sharesReserved = IWithdrawalRequestFork(WITHDRAW_MANAGER).getSharesToRelease();
         if (address(balanceFuse) != address(0)) {
             s.positionId = balanceFuse.positionId();
@@ -179,6 +184,8 @@ contract CyWBTCSafetyForkV1 {
         vm.serializeUint(k, "fxspNavWad", s.fxspNavWad);
         vm.serializeUint(k, "userShares", s.userShares);
         vm.serializeUint(k, "userWBTC", s.userWBTC);
+        vm.serializeUint(k, "user2Shares", s.user2Shares);
+        vm.serializeUint(k, "user2WBTC", s.user2WBTC);
         vm.serializeUint(k, "fxMintPositionId", s.positionId);
         vm.serializeUint(k, "fxMintRawCollateral", s.rawCollateral);
         vm.serializeUint(k, "fxMintRawDebt", s.rawDebt);
@@ -195,6 +202,7 @@ contract CyWBTCSafetyForkV1 {
             && a.usdcIdle == b.usdcIdle && a.fxnIdle == b.fxnIdle && a.fxspIdle == b.fxspIdle
             && a.gaugeStakedShares == b.gaugeStakedShares
             && a.userShares == b.userShares && a.userWBTC == b.userWBTC
+            && a.user2Shares == b.user2Shares && a.user2WBTC == b.user2WBTC
             && a.positionId == b.positionId && a.rawCollateral == b.rawCollateral
             && a.rawDebt == b.rawDebt && a.sharesReserved == b.sharesReserved;
     }
@@ -1146,5 +1154,76 @@ contract CyWBTCSafetyForkV1 {
         _fullScheduledExit();
         _assertUserFullyExitedWithOnlyFeeAccountDust();
         _snapshot("fee_enabled_full_user_exit_final");
+    }
+
+    /// @notice One investor's complete exit must never close the position
+    ///      belonging to another investor or consume the other user's shares.
+    ///      The final investor must still be able to fully unwind the vault.
+    function test_17_two_investors_sequential_full_exits_preserve_other_user_and_zero_final_debt() public {
+        _deploy();
+        _configure();
+        _configureScheduledRedeemSwap();
+        _grant(800, USER2, "grant_depositor_role_to_second_user");
+        _fundAndDeposit(5_000_000); // first investor 0.05 WBTC
+        _tx("fund_second_real_wbtc", WBTC_FUNDING_HOLDER, WBTC,
+            abi.encodeWithSignature("transfer(address,uint256)", USER2, uint256(5_000_000)), true);
+        _tx("second_approves_underlying", USER2, WBTC,
+            abi.encodeWithSignature("approve(address,uint256)", VAULT, uint256(5_000_000)), true);
+        _tx("second_deposits_wbtc", USER2, VAULT,
+            abi.encodeWithSignature("deposit(uint256,address)", uint256(5_000_000), USER2), true);
+        _openNft();
+        _up();
+        State memory bothInvested = _state();
+        require(bothInvested.userShares > 0 && bothInvested.user2Shares > 0
+            && bothInvested.managerLtv <= TARGET, "Missing two-user leveraged preconditions");
+
+        _tx("first_user_requests_100pct_own_shares", USER, WITHDRAW_MANAGER,
+            abi.encodeWithSignature("requestShares(uint256)", bothInvested.userShares), true);
+        _tx("first_user_authorizes_own_shares", USER, VAULT,
+            abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), bothInvested.userShares), true);
+        _tx("public_initializes_first_investor_exit", PUBLIC_CALLER, address(publicExecutor),
+            abi.encodeWithSignature("InitializeFulfillWithdrawRequest(address)", USER), true);
+        uint256 unlockAt = _pendingUnlock();
+        require(unlockAt > block.timestamp, "First investor's cooldown missing");
+        vm.warp(unlockAt + 2);
+        vm.roll(block.number + 20);
+        for (uint256 i; i < 8 && _pendingUnlock() != 0; ++i) {
+            _tx(string.concat("public_advances_first_investor_exit_", vm.toString(i)),
+                PUBLIC_CALLER, address(publicExecutor),
+                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+        }
+        require(_pendingUnlock() == 0, "First investor exit stuck");
+        State memory onlySecond = _state();
+        require(onlySecond.userShares == 0 && onlySecond.userWBTC > 0,
+            "First investor did not exit entirely");
+        require(onlySecond.user2Shares == bothInvested.user2Shares && onlySecond.user2WBTC == 0,
+            "First investor's exit affected second investor's ownership");
+        require(onlySecond.rawDebt > 0 && onlySecond.rawCollateral > 0,
+            "First investor exit wrongly closed position backing second user");
+        require(onlySecond.managerLtv <= TARGET, "First exit left over-target LTV");
+        _snapshot("first_investor_exit_second_investor_preserved");
+
+        uint256 secondShares = IERC20(VAULT).balanceOf(USER2);
+        _tx("second_user_requests_100pct_own_shares", USER2, WITHDRAW_MANAGER,
+            abi.encodeWithSignature("requestShares(uint256)", secondShares), true);
+        _tx("second_user_authorizes_own_shares", USER2, VAULT,
+            abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), secondShares), true);
+        _tx("public_initializes_last_investor_exit", UNAUTHORIZED, address(publicExecutor),
+            abi.encodeWithSignature("InitializeFulfillWithdrawRequest(address)", USER2), true);
+        unlockAt = _pendingUnlock();
+        require(unlockAt > block.timestamp, "Second investor's cooldown missing");
+        vm.warp(unlockAt + 2);
+        vm.roll(block.number + 20);
+        for (uint256 i; i < 8 && _pendingUnlock() != 0; ++i) {
+            _tx(string.concat("public_advances_final_investor_exit_", vm.toString(i)),
+                UNAUTHORIZED, address(publicExecutor),
+                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+        }
+        State memory finalState = _state();
+        require(_pendingUnlock() == 0 && finalState.user2Shares == 0
+            && finalState.user2WBTC > 0, "Last investor did not exit");
+        require(finalState.rawDebt == 0 && finalState.rawCollateral == 0
+            && finalState.gaugeStakedShares == 0, "Last investor exit left leverage or staked assets");
+        _snapshot("both_investors_complete_exits");
     }
 }
