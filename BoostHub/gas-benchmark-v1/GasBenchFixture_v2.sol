@@ -20,6 +20,9 @@ contract GasBenchToken {
         balanceOf[from] -= amount; balanceOf[to] += amount; return true;
     }
 }
+contract GasBenchVault {
+    function updateAPY() external {}
+}
 contract GasBenchSwapper {
     function getAmountOut(address, address, uint256 amount) external pure returns (uint256) { return amount; }
 }

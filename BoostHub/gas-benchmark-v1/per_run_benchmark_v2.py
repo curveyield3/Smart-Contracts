@@ -62,12 +62,13 @@ def load_vyper(variant):
     code = (RESULT / ("vyper_creation_" + variant + ".hex")).read_text().strip()
     return abi, code
 
-def init_master(variant, boost, convex, target=(5000,5000), guard=True):
+def init_master(variant, boost, convex, target=(5000,5000), guard=True, vault_contract=False):
     token = deploy(*load_sol_artifact(variant, "GasBenchToken"))
     fxn = deploy(*load_sol_artifact(variant, "GasBenchToken"))
     swap = deploy(*load_sol_artifact(variant, "GasBenchSwapper"))
     dummy_guard = deploy(*load_sol_artifact(variant, "GasBenchGuard"))
-    master = deploy(*load_master(variant), (VAULT, token.address, fxn.address, swap.address))
+    vault_address = deploy(*load_sol_artifact(variant,"GasBenchVault")).address if vault_contract else VAULT
+    master = deploy(*load_master(variant), (vault_address, token.address, fxn.address, swap.address))
     child1 = deploy(*load_sol_artifact(variant,"GasBenchChild"), (master.address,token.address))
     child2 = deploy(*load_sol_artifact(variant,"GasBenchChild"), (master.address,token.address))
     for fn in (master.functions.configureChildren(child1.address,child2.address),):
@@ -100,7 +101,7 @@ MASTER_CASES = [
 
 def master_run(variant, scenario):
     name, boost, convex, new_deposit, amount, target, guard, mode = scenario
-    token, master, cb, cc = init_master(variant, boost, convex, target, guard)
+    token, master, cb, cc = init_master(variant, boost, convex, target, guard, mode == 'harvest')
     if new_deposit:
         assert transact(token.functions.mint(master.address, new_deposit*ETHER))["success"]
     if mode == "deposit":
