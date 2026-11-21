@@ -125,6 +125,22 @@ jobs:
           pathlib.Path('results/metrics_v1.json').write_text(json.dumps(obj,indent=2))
           print(json.dumps(obj,indent=2))
           PY
+      - name: Benchmark individual transaction receipts on isolated Anvil
+        shell: bash
+        env:
+          BENCH_REPETITIONS: "3"
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'web3>=7.0,<9'
+          anvil --chain-id 1 --port 8545 --gas-limit 30000000 --silent >/tmp/boosthub-bench-anvil.log 2>&1 &
+          ANVIL_PID=$!
+          trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            if cast chain-id --rpc-url http://127.0.0.1:8545 >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          test "$(cast chain-id --rpc-url http://127.0.0.1:8545)" = "1"
+          python BoostHub/gas-benchmark-v1/per_run_benchmark_v2.py | tee results/per_run_console_v2.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
