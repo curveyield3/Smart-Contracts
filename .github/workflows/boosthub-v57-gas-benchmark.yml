@@ -1,0 +1,95 @@
+name: BoostHub v57 gas benchmark v1
+on:
+  push:
+    branches:
+      - benchmark/boosthub-v57-gas
+    paths:
+      - "BoostHub/gas-benchmark-v1/**"
+      - ".github/workflows/boosthub-v57-gas-benchmark.yml"
+permissions:
+  contents: read
+concurrency:
+  group: boosthub-v57-gas-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compile-comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Materialize exact benchmark inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p results /tmp/boosthub-bench
+          python -m pip install --quiet brotli
+          python - <<'PY'
+          import base64, brotli, io, tarfile
+          data=base64.b64decode(open('BoostHub/gas-benchmark-v1/master_only_v1.b64').read())
+          with tarfile.open(fileobj=io.BytesIO(brotli.decompress(data))) as t:
+              t.extractall('/tmp/boosthub-bench/in',filter='data')
+          print('source payload sha256:',__import__('hashlib').sha256(data).hexdigest())
+          PY
+      - name: Compile baseline and candidate with matching production flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix /tmp/boosthub-deps --no-save '@openzeppelin-4/contracts@npm:@openzeppelin/contracts@4.9.6'
+          for variant in baseline candidate; do
+            D="/tmp/boosthub-bench/$variant"
+            mkdir -p "$D/contracts/interfaces"
+            cp "/tmp/boosthub-bench/in/$variant/StrategyDualFXNMasterV42.sol" "$D/contracts/"
+            cp /tmp/boosthub-bench/in/shared/*.sol "$D/contracts/interfaces/"
+            cat > "$D/foundry.toml" <<EOF
+          [profile.default]
+          src = "contracts"
+          out = "out"
+          test = "nonexistent_tests"
+          script = "nonexistent_scripts"
+          libs = []
+          solc = "0.8.28"
+          optimizer = true
+          optimizer_runs = 200
+          via_ir = true
+          evm_version = "cancun"
+          remappings = ["@openzeppelin-4/contracts/=/tmp/boosthub-deps/node_modules/@openzeppelin-4/contracts/"]
+          EOF
+            forge build --root "$D" --sizes | tee "results/build_$variant.log"
+            (cd "$D" && forge inspect contracts/StrategyDualFXNMasterV42.sol:StrategyDualFXNMasterV42 gasEstimates --json > "$GITHUB_WORKSPACE/results/compiler_gas_$variant.json" 2>/dev/null) || true
+          done
+      - name: Extract exact runtime and creation byte lengths
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json, hashlib, pathlib
+          target='StrategyDualFXNMasterV42.sol/StrategyDualFXNMasterV42.json'
+          obj={}
+          for v in ['baseline','candidate']:
+              p=pathlib.Path('/tmp/boosthub-bench')/v/'out'/target
+              j=json.loads(p.read_text())
+              def size(k):
+                  raw=j[k]['object'].removeprefix('0x')
+                  assert len(raw)%2==0 and all(c in '0123456789abcdefABCDEF' for c in raw)
+                  return len(raw)//2
+              obj[v]={
+                  'runtime_bytes':size('deployedBytecode'),
+                  'creation_bytes':size('bytecode'),
+                  'artifact_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),
+                  'source_sha256':hashlib.sha256((pathlib.Path('/tmp/boosthub-bench')/v/'contracts/StrategyDualFXNMasterV42.sol').read_bytes()).hexdigest(),
+              }
+          obj['delta']={k:obj['candidate'][k]-obj['baseline'][k] for k in ['runtime_bytes','creation_bytes']}
+          obj['code_deposit_gas_delta_at_200_per_byte']=obj['delta']['runtime_bytes']*200
+          obj['notice']='Bytecode comparison only; no tests, EVM executions, on-chain transactions or gas traces'
+          pathlib.Path('results/metrics_v1.json').write_text(json.dumps(obj,indent=2))
+          print(json.dumps(obj,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: boosthub-v57-compile-comparison-v1
+          path: results/
+          retention-days: 14
