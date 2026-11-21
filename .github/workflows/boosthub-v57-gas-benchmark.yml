@@ -60,6 +60,44 @@ jobs:
             forge build --root "$D" --sizes | tee "results/build_$variant.log"
             (cd "$D" && forge inspect contracts/StrategyDualFXNMasterV42.sol:StrategyDualFXNMasterV42 gasEstimates --json > "$GITHUB_WORKSPACE/results/compiler_gas_$variant.json" 2>/dev/null) || true
           done
+      - name: Compile Vyper v0.4.3 baseline and optimized staking adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet 'vyper==0.4.3'
+          vyper --version | tee results/vyper_version.txt
+          python - <<'PY'
+          import base64,brotli,io,tarfile,hashlib
+          data=base64.b64decode(open('BoostHub/gas-benchmark-v1/vyper_only_v1.b64').read())
+          with tarfile.open(fileobj=io.BytesIO(brotli.decompress(data))) as tar:
+              tar.extractall('/tmp/boosthub-bench/vyper',filter='data')
+          print('Vyper source bundle SHA256:',hashlib.sha256(data).hexdigest())
+          PY
+          for variant in baseline candidate; do
+            src="/tmp/boosthub-bench/vyper/$variant/BoostHubStaking.vy"
+            vyper --evm-version cancun -f bytecode "$src" > "results/vyper_creation_$variant.hex"
+            vyper --evm-version cancun -f bytecode_runtime "$src" > "results/vyper_runtime_$variant.hex"
+            vyper --evm-version cancun -f gas_estimates "$src" > "results/vyper_gas_$variant.json" 2>/dev/null || echo 'gas_estimates not supported or unavailable' > "results/vyper_gas_$variant.json"
+          done
+          python - <<'PY'
+          import pathlib, hashlib, json
+          res=pathlib.Path('results')
+          obj={}
+          for v in ('baseline','candidate'):
+              src=pathlib.Path('/tmp/boosthub-bench/vyper')/v/'BoostHubStaking.vy'
+              out={}
+              for label in ['runtime','creation']:
+                  raw=(res/f'vyper_{label}_{v}.hex').read_text().strip().removeprefix('0x')
+                  assert len(raw)>0 and len(raw)%2==0 and all(c in '0123456789abcdefABCDEF' for c in raw)
+                  out[label+'_bytes']=len(raw)//2
+              out['source_sha256']=hashlib.sha256(src.read_bytes()).hexdigest()
+              obj[v]=out
+          obj['delta']={key:obj['candidate'][key]-obj['baseline'][key] for key in ['runtime_bytes','creation_bytes']}
+          obj['code_deposit_gas_delta_per_instance']=200*obj['delta']['runtime_bytes']
+          obj['note']='Bytecode-only compiler evidence, not measured runtime transaction gas'
+          (res/'metrics_vyper_v1.json').write_text(json.dumps(obj,indent=2))
+          print(json.dumps(obj,indent=2))
+          PY
       - name: Extract exact runtime and creation byte lengths
         shell: bash
         run: |
