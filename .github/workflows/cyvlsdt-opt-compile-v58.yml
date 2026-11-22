@@ -1,0 +1,110 @@
+name: cyvlSDT v58 compile-only comparison
+on:
+  push:
+    branches: [cyvlsdt-optimization-v58]
+    paths:
+      - .github/workflows/cyvlsdt-opt-compile-v58.yml
+      - cyvlSDT/optimization-v58/source-v57.zip.b64
+      - cyvlSDT/optimization-v58/source-v58.zip.b64
+permissions:
+  contents: write
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Compile baseline and optimized Solidity, report comparable bytes
+        shell: bash
+        run: |
+          set -u
+          R="$GITHUB_WORKSPACE/cyvlSDT/optimization-v58"
+          BASE="$RUNNER_TEMP/cyvlsdt-v57"
+          CAND="$RUNNER_TEMP/cyvlsdt-v58"
+          mkdir -p "$BASE" "$CAND"
+          base64 --decode "$R/source-v57.zip.b64" > "$RUNNER_TEMP/v57.zip"
+          base64 --decode "$R/source-v58.zip.b64" > "$RUNNER_TEMP/v58.zip"
+          unzip -q "$RUNNER_TEMP/v57.zip" -d "$BASE"
+          unzip -q "$RUNNER_TEMP/v58.zip" -d "$CAND"
+          INSTALL=0; BASE_STATUS=0; CAND_STATUS=0
+          npm ci --prefix "$BASE" --no-audit --no-fund > "$RUNNER_TEMP/npm-ci.log" 2>&1 || INSTALL=$?
+          if [ "$INSTALL" -eq 0 ]; then
+            ln -s "$BASE/node_modules" "$CAND/node_modules"
+            (cd "$BASE" && ./node_modules/.bin/hardhat compile) > "$RUNNER_TEMP/v57-build.log" 2>&1 || BASE_STATUS=$?
+            (cd "$CAND" && ./node_modules/.bin/hardhat compile) > "$RUNNER_TEMP/v58-build.log" 2>&1 || CAND_STATUS=$?
+          else
+            BASE_STATUS=99
+            CAND_STATUS=99
+            echo "npm ci failed" > "$RUNNER_TEMP/v57-build.log"
+            echo "npm ci failed" > "$RUNNER_TEMP/v58-build.log"
+          fi
+          INSTALL_STATUS="$INSTALL" BASE_STATUS="$BASE_STATUS" CAND_STATUS="$CAND_STATUS" BASE="$BASE" CAND="$CAND" REPORT_DIR="$R" node <<'JS'
+          const fs=require('node:fs'), path=require('node:path');
+          const log=(filename)=>fs.existsSync(filename)?fs.readFileSync(filename,'utf8').split('\n').slice(-100).join('\n'):'missing log';
+          const dirs=[process.env.BASE,process.env.CAND];
+          function inventory(root) {
+            const base=path.join(root,'artifacts-v47','contracts');
+            const result={};
+            function walk(dir) {
+              if(!fs.existsSync(dir))return;
+              for(const f of fs.readdirSync(dir,{withFileTypes:true})){
+                const full=path.join(dir,f.name);
+                if(f.isDirectory()){walk(full);continue;}
+                if(!f.name.endsWith('.json') || f.name.endsWith('.dbg.json'))continue;
+                const j=JSON.parse(fs.readFileSync(full,'utf8'));
+                if(!j.contractName || !j.sourceName)continue;
+                const count=(s)=>typeof s==='string' && /^0x(?:[0-9a-fA-F]{2})+$/.test(s)?(s.length-2)/2:null;
+                const runtime=count(j.deployedBytecode);
+                const creation=count(j.bytecode);
+                result[j.sourceName+':'+j.contractName]={runtime,creation};
+              }
+            }
+            walk(base);return result;
+          }
+          const x=inventory(dirs[0]), y=inventory(dirs[1]);
+          const rows=[];
+          for(const k of [...new Set([...Object.keys(x),...Object.keys(y)])].sort()){
+            const a=x[k]||{},b=y[k]||{};
+            const delta=a.runtime!=null&&b.runtime!=null?b.runtime-a.runtime:'UNKNOWN';
+            rows.push('| '+k+' | '+(a.runtime??'UNKNOWN')+' | '+(b.runtime??'UNKNOWN')+' | '+delta+' |');
+          }
+          let status='npm ci exit '+process.env.INSTALL_STATUS+
+            '; v57 compile exit '+process.env.BASE_STATUS+'; v58 compile exit '+process.env.CAND_STATUS;
+          const report=[
+            '# GitHub compile-only comparison — cyvlSDT v57 versus v58',
+            '',
+            'Production package Hardhat settings: optimizer runs 200, viaIR=true, EVM Cancun, Solidity 0.8.28/0.8.30; identical inputs except optimized source and package version.',
+            '',
+            '**Execution:** '+status,
+            '',
+            '| Contract/source | v57 runtime bytes | v58 runtime bytes | v58 minus v57 |',
+            '|---|---:|---:|---:|',
+            ...rows,'',
+            '**Transaction gas:** NOT MEASURED (no tests, simulations or deployments were authorized).',
+            '**Creation bytes:** recorded in the JSON build inventories below.',
+            '',
+            '<details><summary>v57 compile log tail</summary>','',
+            '```',log(path.join(process.env.CAND,'..','v57-build.log')),'```','',
+            '</details>',
+            '<details><summary>v58 compile log tail</summary>','',
+            '```',log(path.join(process.env.CAND,'..','v58-build.log')),'```','',
+            '</details>',
+          ];
+          const dest=path.join(process.env.REPORT_DIR,'GITHUB_COMPILE_REPORT_v1.md');
+          fs.writeFileSync(dest,report.join('\n')+'\n');
+          fs.writeFileSync(path.join(process.env.REPORT_DIR,'GITHUB_COMPILE_SIZES_v1.json'),
+            JSON.stringify({status,baseline:x,optimized:y},null,2)+'\n');
+          JS
+          # Include diagnostic log tails even when compilation failed, without secrets.
+          cat "$RUNNER_TEMP/npm-ci.log" | tail -35
+          tail -50 "$RUNNER_TEMP/v57-build.log"
+          tail -50 "$RUNNER_TEMP/v58-build.log"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add cyvlSDT/optimization-v58/GITHUB_COMPILE_REPORT_v1.md cyvlSDT/optimization-v58/GITHUB_COMPILE_SIZES_v1.json
+          git commit -m "ci(cyvlsdt): record v57/v58 compiler evidence [skip ci]"
+          git push origin HEAD:cyvlsdt-optimization-v58
+          if [ "$INSTALL" -ne 0 ] || [ "$BASE_STATUS" -ne 0 ] || [ "$CAND_STATUS" -ne 0 ]; then exit 1; fi
