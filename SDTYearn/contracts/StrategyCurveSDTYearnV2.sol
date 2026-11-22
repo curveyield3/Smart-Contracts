@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 /**
- * @title StrategyCurveSDTYearnV1
+ * @title StrategyCurveSDTYearnV2
  * @notice SDT -> Curve TwoCrypto SDT/WETH LP -> a constructor-bound Yearn ERC4626 vault.
  * @dev This strategy is only a capital converter, not a reward harvester. The corresponding
  *      BeefyVaultSDTYearnV1 treats its 50 bps exit tax as a conversion-cost allowance.
@@ -38,7 +38,7 @@ interface ISDTYearnParentV1 {
     function totalSupply() external view returns (uint256);
 }
 
-contract StrategyCurveSDTYearnV1 is ReentrancyGuard {
+contract StrategyCurveSDTYearnV2 is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     address public constant CURVE_POOL = 0xA19bf6fBf05624282cb6ed498f4761f22e084Edd;
@@ -79,7 +79,7 @@ contract StrategyCurveSDTYearnV1 is ReentrancyGuard {
             revert InvalidDependency();
         }
         address sdt_ = curve.coins(SDT_INDEX);
-        if (sdt_ != 0x73968b9a57c6e53d41345fd57a6e6ae27d6cdb2f) revert InvalidDependency();
+        if (sdt_ != 0x73968b9a57c6E53d41345FD57a6E6ae27d6CDB2F) revert InvalidDependency();
         if (IYearnSDTLPVaultV1(yearnVault_).asset() != CURVE_POOL) revert InvalidDependency();
 
         yearn = IYearnSDTLPVaultV1(yearnVault_);
