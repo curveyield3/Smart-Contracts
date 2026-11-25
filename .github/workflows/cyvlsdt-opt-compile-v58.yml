@@ -1,110 +1,84 @@
-name: cyvlSDT v58 compile-only comparison
+name: cyvlSDT revenue strategy gross NAV v1 compile only
 on:
   push:
-    branches: [cyvlsdt-optimization-v58]
+    branches: [cyvlsdt-gross-nav-compile-v1]
     paths:
       - .github/workflows/cyvlsdt-opt-compile-v58.yml
-      - cyvlSDT/optimization-v58/source-v57.zip.b64
       - cyvlSDT/optimization-v58/source-v58.zip.b64
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: cyvlsdt-gross-nav-compile-v1
+  cancel-in-progress: false
 jobs:
   compile:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Compile baseline and optimized Solidity, report comparable bytes
+      - name: Authenticate exact candidate source and configuration
         shell: bash
         run: |
-          set -u
-          R="$GITHUB_WORKSPACE/cyvlSDT/optimization-v58"
-          BASE="$RUNNER_TEMP/cyvlsdt-v57"
-          CAND="$RUNNER_TEMP/cyvlsdt-v58"
-          mkdir -p "$BASE" "$CAND"
-          base64 --decode "$R/source-v57.zip.b64" > "$RUNNER_TEMP/v57.zip"
-          base64 --decode "$R/source-v58.zip.b64" > "$RUNNER_TEMP/v58.zip"
-          unzip -q "$RUNNER_TEMP/v57.zip" -d "$BASE"
-          unzip -q "$RUNNER_TEMP/v58.zip" -d "$CAND"
-          INSTALL=0; BASE_STATUS=0; CAND_STATUS=0
-          npm ci --prefix "$BASE" --no-audit --no-fund > "$RUNNER_TEMP/npm-ci.log" 2>&1 || INSTALL=$?
-          if [ "$INSTALL" -eq 0 ]; then
-            ln -s "$BASE/node_modules" "$CAND/node_modules"
-            (cd "$BASE" && ./node_modules/.bin/hardhat compile) > "$RUNNER_TEMP/v57-build.log" 2>&1 || BASE_STATUS=$?
-            (cd "$CAND" && ./node_modules/.bin/hardhat compile) > "$RUNNER_TEMP/v58-build.log" 2>&1 || CAND_STATUS=$?
-          else
-            BASE_STATUS=99
-            CAND_STATUS=99
-            echo "npm ci failed" > "$RUNNER_TEMP/v57-build.log"
-            echo "npm ci failed" > "$RUNNER_TEMP/v58-build.log"
-          fi
-          INSTALL_STATUS="$INSTALL" BASE_STATUS="$BASE_STATUS" CAND_STATUS="$CAND_STATUS" BASE="$BASE" CAND="$CAND" REPORT_DIR="$R" node <<'JS'
-          const fs=require('node:fs'), path=require('node:path');
-          const log=(filename)=>fs.existsSync(filename)?fs.readFileSync(filename,'utf8').split('\n').slice(-100).join('\n'):'missing log';
-          const dirs=[process.env.BASE,process.env.CAND];
-          function inventory(root) {
-            const base=path.join(root,'artifacts-v47','contracts');
-            const result={};
-            function walk(dir) {
-              if(!fs.existsSync(dir))return;
-              for(const f of fs.readdirSync(dir,{withFileTypes:true})){
-                const full=path.join(dir,f.name);
-                if(f.isDirectory()){walk(full);continue;}
-                if(!f.name.endsWith('.json') || f.name.endsWith('.dbg.json'))continue;
-                const j=JSON.parse(fs.readFileSync(full,'utf8'));
-                if(!j.contractName || !j.sourceName)continue;
-                const count=(s)=>typeof s==='string' && /^0x(?:[0-9a-fA-F]{2})+$/.test(s)?(s.length-2)/2:null;
-                const runtime=count(j.deployedBytecode);
-                const creation=count(j.bytecode);
-                result[j.sourceName+':'+j.contractName]={runtime,creation};
-              }
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/gross-nav"
+          base64 --decode cyvlSDT/optimization-v58/source-v58.zip.b64 > "$RUNNER_TEMP/gross-nav.zip"
+          unzip -q "$RUNNER_TEMP/gross-nav.zip" -d "$RUNNER_TEMP/gross-nav"
+          cd "$RUNNER_TEMP/gross-nav"
+          sha256sum -c <<'EOF'
+          d8b239014254bd8bbb748e2ab236faf497d1f258637382c98ffae6c0f06b38c3  contracts/CurveYieldRevenueStrategyV8.sol
+          810a34b7ed54c8a07ab74542253cc980e37bb39bf0053297d3bc3f0fdaf7b3f4  contracts/interfaces/ICurveYield.sol
+          50d5d73c55d0f46fabf611186dab21fd9b776ebd9064571f9bd408264bebea48  contracts/interfaces/ICurveYieldOmniRouter.sol
+          d3b3ccae007294a9d572623a4e8c9da3162f4463328152b14041241d385b1c98  contracts/interfaces/IStrategyBoostHubV1.sol
+          7d01c71a7ba5ea78afe469d1d13fbe22dd33ae5e6bc2d91b031720103d7cc47f  foundry.toml
+          2ba73adf9ba847ae9818b4b4d3d419c2b4af70d5807786b97a4c9d173e4ae7c4  package.json
+          EOF
+      - name: Install pinned compiler and dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/gross-nav"
+          npm install --ignore-scripts --no-audit --no-fund --save-exact solc@0.8.28
+      - name: Compile strategy and retain exact compiler evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/gross-nav"
+          node <<'JS'
+          const fs = require('node:fs'), path = require('node:path'), solc = require('solc');
+          const target = 'contracts/CurveYieldRevenueStrategyV8.sol', name = 'CurveYieldRevenueStrategyV8';
+          if (!solc.version().startsWith('0.8.28+commit.7893614a')) throw Error('compiler mismatch');
+          const sources = {};
+          function add(p) {
+            if (sources[p]) return;
+            const file = p.startsWith('@') ? path.join('node_modules',p) : p;
+            const content = fs.readFileSync(file,'utf8');
+            sources[p] = {content};
+            for (const m of content.matchAll(/import\s+(?:[^;]*?\sfrom\s*)?["']([^"']+)["']\s*;/g)) {
+              add(m[1].startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(p),m[1])) : m[1]);
             }
-            walk(base);return result;
           }
-          const x=inventory(dirs[0]), y=inventory(dirs[1]);
-          const rows=[];
-          for(const k of [...new Set([...Object.keys(x),...Object.keys(y)])].sort()){
-            const a=x[k]||{},b=y[k]||{};
-            const delta=a.runtime!=null&&b.runtime!=null?b.runtime-a.runtime:'UNKNOWN';
-            rows.push('| '+k+' | '+(a.runtime??'UNKNOWN')+' | '+(b.runtime??'UNKNOWN')+' | '+delta+' |');
-          }
-          let status='npm ci exit '+process.env.INSTALL_STATUS+
-            '; v57 compile exit '+process.env.BASE_STATUS+'; v58 compile exit '+process.env.CAND_STATUS;
-          const report=[
-            '# GitHub compile-only comparison — cyvlSDT v57 versus v58',
-            '',
-            'Production package Hardhat settings: optimizer runs 200, viaIR=true, EVM Cancun, Solidity 0.8.28/0.8.30; identical inputs except optimized source and package version.',
-            '',
-            '**Execution:** '+status,
-            '',
-            '| Contract/source | v57 runtime bytes | v58 runtime bytes | v58 minus v57 |',
-            '|---|---:|---:|---:|',
-            ...rows,'',
-            '**Transaction gas:** NOT MEASURED (no tests, simulations or deployments were authorized).',
-            '**Creation bytes:** recorded in the JSON build inventories below.',
-            '',
-            '<details><summary>v57 compile log tail</summary>','',
-            '```',log(path.join(process.env.CAND,'..','v57-build.log')),'```','',
-            '</details>',
-            '<details><summary>v58 compile log tail</summary>','',
-            '```',log(path.join(process.env.CAND,'..','v58-build.log')),'```','',
-            '</details>',
-          ];
-          const dest=path.join(process.env.REPORT_DIR,'GITHUB_COMPILE_REPORT_v1.md');
-          fs.writeFileSync(dest,report.join('\n')+'\n');
-          fs.writeFileSync(path.join(process.env.REPORT_DIR,'GITHUB_COMPILE_SIZES_v1.json'),
-            JSON.stringify({status,baseline:x,optimized:y},null,2)+'\n');
+          add(target);
+          const input = {language:'Solidity', sources, settings:{optimizer:{enabled:true,runs:25},viaIR:true,evmVersion:'cancun',metadata:{bytecodeHash:'ipfs'},outputSelection:{'*':{'*':['abi','metadata','evm.bytecode.object','evm.deployedBytecode.object','evm.deployedBytecode.immutableReferences','evm.methodIdentifiers']}}}};
+          fs.mkdirSync('out',{recursive:true});
+          fs.writeFileSync('out/standard-input.json',JSON.stringify(input));
+          const output = JSON.parse(solc.compile(JSON.stringify(input)));
+          fs.writeFileSync('out/standard-output.json',JSON.stringify(output));
+          for(const e of output.errors || []) console.log(e.formattedMessage);
+          if((output.errors || []).some(e=>e.severity==='error')) process.exit(1);
+          const a=output.contracts[target][name];
+          const byteCount=x=>{if(!/^(?:[0-9a-fA-F]{2})+$/.test(x))throw Error('invalid bytecode');return x.length/2};
+          const report={compiler:solc.version(),contract:target+':'+name,optimizerRuns:25,viaIR:true,evmVersion:'cancun',runtimeBytes:byteCount(a.evm.deployedBytecode.object),creationBytes:byteCount(a.evm.bytecode.object),warningCount:(output.errors||[]).filter(e=>e.severity==='warning').length,errorCount:0};
+          if(report.runtimeBytes>24576 || report.creationBytes+9*32>49152) throw Error('EVM size limit exceeded');
+          fs.writeFileSync('out/strategy-artifact.json',JSON.stringify(a));
+          fs.writeFileSync('out/compile-report.json',JSON.stringify(report,null,2));
+          console.log(JSON.stringify(report,null,2));
           JS
-          # Include diagnostic log tails even when compilation failed, without secrets.
-          cat "$RUNNER_TEMP/npm-ci.log" | tail -35
-          tail -50 "$RUNNER_TEMP/v57-build.log"
-          tail -50 "$RUNNER_TEMP/v58-build.log"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add cyvlSDT/optimization-v58/GITHUB_COMPILE_REPORT_v1.md cyvlSDT/optimization-v58/GITHUB_COMPILE_SIZES_v1.json
-          git commit -m "ci(cyvlsdt): record v57/v58 compiler evidence [skip ci]"
-          git push origin HEAD:cyvlsdt-optimization-v58
-          if [ "$INSTALL" -ne 0 ] || [ "$BASE_STATUS" -ne 0 ] || [ "$CAND_STATUS" -ne 0 ]; then exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cyvlsdt-gross-nav-v1-compiler
+          path: ${{ runner.temp }}/gross-nav/out/
+          if-no-files-found: warn
