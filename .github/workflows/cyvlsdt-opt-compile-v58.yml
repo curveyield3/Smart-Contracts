@@ -1,84 +1,144 @@
-name: cyvlSDT revenue strategy gross NAV v1 compile only
+name: cyvlSDT gross NAV vault and Curve pool fork simulation
 on:
   push:
     branches: [cyvlsdt-gross-nav-compile-v1]
     paths:
       - .github/workflows/cyvlsdt-opt-compile-v58.yml
-      - cyvlSDT/optimization-v58/source-v58.zip.b64
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: cyvlsdt-gross-nav-compile-v1
   cancel-in-progress: false
 jobs:
-  compile:
+  simulate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/download-artifact@v4
         with:
-          node-version: "22"
-      - name: Authenticate exact candidate source and configuration
+          name: cyvlsdt-gross-nav-v1-compiler
+          run-id: 45580608153
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/gross-nav
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Deploy and seed on pinned Ethereum Anvil fork
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/gross-nav"
-          base64 --decode cyvlSDT/optimization-v58/source-v58.zip.b64 > "$RUNNER_TEMP/gross-nav.zip"
-          unzip -q "$RUNNER_TEMP/gross-nav.zip" -d "$RUNNER_TEMP/gross-nav"
-          cd "$RUNNER_TEMP/gross-nav"
-          sha256sum -c <<'EOF'
-          d8b239014254bd8bbb748e2ab236faf497d1f258637382c98ffae6c0f06b38c3  contracts/CurveYieldRevenueStrategyV8.sol
-          810a34b7ed54c8a07ab74542253cc980e37bb39bf0053297d3bc3f0fdaf7b3f4  contracts/interfaces/ICurveYield.sol
-          50d5d73c55d0f46fabf611186dab21fd9b776ebd9064571f9bd408264bebea48  contracts/interfaces/ICurveYieldOmniRouter.sol
-          d3b3ccae007294a9d572623a4e8c9da3162f4463328152b14041241d385b1c98  contracts/interfaces/IStrategyBoostHubV1.sol
-          7d01c71a7ba5ea78afe469d1d13fbe22dd33ae5e6bc2d91b031720103d7cc47f  foundry.toml
-          2ba73adf9ba847ae9818b4b4d3d419c2b4af70d5807786b97a4c9d173e4ae7c4  package.json
-          EOF
-      - name: Install pinned compiler and dependencies
-        shell: bash
+        env:
+          ETHEREUM_FORK_RPC_URL: ${{ secrets.RPC_ETHEREUM }}
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/gross-nav"
-          npm install --ignore-scripts --no-audit --no-fund --save-exact solc@0.8.28
-      - name: Compile strategy and retain exact compiler evidence
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/gross-nav"
-          node <<'JS'
-          const fs = require('node:fs'), path = require('node:path'), solc = require('solc');
-          const target = 'contracts/CurveYieldRevenueStrategyV8.sol', name = 'CurveYieldRevenueStrategyV8';
-          if (!solc.version().startsWith('0.8.28+commit.7893614a')) throw Error('compiler mismatch');
-          const sources = {};
-          function add(p) {
-            if (sources[p]) return;
-            const file = p.startsWith('@') ? path.join('node_modules',p) : p;
-            const content = fs.readFileSync(file,'utf8');
-            sources[p] = {content};
-            for (const m of content.matchAll(/import\s+(?:[^;]*?\sfrom\s*)?["']([^"']+)["']\s*;/g)) {
-              add(m[1].startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(p),m[1])) : m[1]);
-            }
+          test -s strategy-artifact.json
+          jq -e '.runtimeBytes==10709 and .creationBytes==12040 and .errorCount==0' compile-report.json >/dev/null
+          jq -r '.sources["contracts/CurveYieldRevenueStrategyV8.sol"].content' standard-input.json | head -25 > header.txt
+          grep -q 'CurveYield System Component' header.txt
+          python3 - <<'PY'
+          import json,hashlib
+          s=json.load(open('standard-input.json'))['sources']['contracts/CurveYieldRevenueStrategyV8.sol']['content']
+          assert hashlib.sha256(s.encode()).hexdigest()=='d8b239014254bd8bbb748e2ab236faf497d1f258637382c98ffae6c0f06b38c3'
+          PY
+          test -n "$ETHEREUM_FORK_RPC_URL" || { echo 'RPC_ETHEREUM unavailable'; exit 1; }
+          BLOCK=26491237
+          HASH=0xa0dc143cecefbf34a18c8203246349bc162a7dc129ec4f519313033ebc4655a0
+          SAFE=0x47623c62f281807d615eeb4a2ceee9d97f9d3c49
+          SDT=0x73968b9a57c6e53d41345fd57a6e6ae27d6cdb2f
+          WANT=0x4abc523b4eab1fad413018711de14ccd8843d839
+          LOCKER=0x786e17f913a3b6d2764e77374268c009660cc27f
+          STAKING=0x8003fa826f5414a7c6cf0aa9fd3c73df97e77bac
+          ROUTER=0xa4a533025fef8d3446e7cb8a434824e1ee865b00
+          OLD=0x48ce7408e14251d40ef2dc9da64b971bb60e318d
+          TEMPLATE=0x00f63308ebb429f0967aa36a0def66ec1074975b5a
+          FACTORY=0x6a8cbed756804b16e05e741edabd5cb544ae21bf
+          ADMIN=0x9f2b20a772246960810045905b7daccf960ee288
+          POL=0xad60c84f4addec612ce6bd329435d5718a4d9b7a
+          TEN=10000000000000000000
+          TWENTY=20000000000000000000
+          APPROVE=10000000000000000000000
+          export ETH_RPC_URL=http://127.0.0.1:8545
+          mkdir -p evidence
+          test "$(cast chain-id --rpc-url "$ETHEREUM_FORK_RPC_URL")" = 1
+          test "$(cast block "$BLOCK" --rpc-url "$ETHEREUM_FORK_RPC_URL" --json | jq -r .hash)" = "$HASH"
+          anvil --fork-url "$ETHEREUM_FORK_RPC_URL" --fork-block-number "$BLOCK" --chain-id 1 --host 127.0.0.1 --port 8545 --silent > /tmp/gross-nav-anvil.log 2>&1 &
+          PID=$!
+          trap 'kill "$PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do if cast chain-id >/dev/null 2>&1; then break; fi; sleep 1; done
+          test "$(cast chain-id)" = 1
+          test "$(cast block-number)" = "$BLOCK"
+          test "$(cast block "$BLOCK" --json | jq -r .hash)" = "$HASH"
+          for a in "$SAFE" "$SDT" "$WANT" "$LOCKER" "$STAKING" "$ROUTER" "$OLD" "$TEMPLATE" "$FACTORY"; do
+            local_code="$(cast code "$a")"
+            test "$local_code" != 0x
+            test "$local_code" = "$(cast code "$a" --block "$BLOCK" --rpc-url "$ETHEREUM_FORK_RPC_URL")"
+          done
+          echo "VERIFIED FORK block=$BLOCK hash=$HASH"
+          cast rpc anvil_impersonateAccount "$SAFE" >/dev/null
+          # Fork-only gas funding; no token balance modifications.
+          cast rpc anvil_setBalance "$SAFE" 0x8ac7230489e80000 >/dev/null
+          send() {
+            local label="$1"; shift
+            cast send --from "$SAFE" --unlocked --json "$@" > "evidence/$label.json"
+            jq -e '.status=="0x1" or .status==1 or .status=="1"' "evidence/$label.json" >/dev/null
+            printf '%s gas=%s tx=%s\n' "$label" "$(jq -r .gasUsed "evidence/$label.json")" "$(jq -r .transactionHash "evidence/$label.json")"
           }
-          add(target);
-          const input = {language:'Solidity', sources, settings:{optimizer:{enabled:true,runs:25},viaIR:true,evmVersion:'cancun',metadata:{bytecodeHash:'ipfs'},outputSelection:{'*':{'*':['abi','metadata','evm.bytecode.object','evm.deployedBytecode.object','evm.deployedBytecode.immutableReferences','evm.methodIdentifiers']}}}};
-          fs.mkdirSync('out',{recursive:true});
-          fs.writeFileSync('out/standard-input.json',JSON.stringify(input));
-          const output = JSON.parse(solc.compile(JSON.stringify(input)));
-          fs.writeFileSync('out/standard-output.json',JSON.stringify(output));
-          for(const e of output.errors || []) console.log(e.formattedMessage);
-          if((output.errors || []).some(e=>e.severity==='error')) process.exit(1);
-          const a=output.contracts[target][name];
-          const byteCount=x=>{if(!/^(?:[0-9a-fA-F]{2})+$/.test(x))throw Error('invalid bytecode');return x.length/2};
-          const report={compiler:solc.version(),contract:target+':'+name,optimizerRuns:25,viaIR:true,evmVersion:'cancun',runtimeBytes:byteCount(a.evm.deployedBytecode.object),creationBytes:byteCount(a.evm.bytecode.object),warningCount:(output.errors||[]).filter(e=>e.severity==='warning').length,errorCount:0};
-          if(report.runtimeBytes>24576 || report.creationBytes+9*32>49152) throw Error('EVM size limit exceeded');
-          fs.writeFileSync('out/strategy-artifact.json',JSON.stringify(a));
-          fs.writeFileSync('out/compile-report.json',JSON.stringify(report,null,2));
-          console.log(JSON.stringify(report,null,2));
-          JS
+          num() { cast call "$@" | awk 'NR==1 {print $1}'; }
+          bal() { num "$1" 'balanceOf(address)(uint256)' "$2"; }
+          echo "BEFORE SDT=$(bal "$SDT" "$SAFE") cyvlSDT=$(bal "$WANT" "$SAFE")"
+          send 01-vault-clone --create "0x3d602d80600a3d3981f3363d3d373d3d3d363d73${TEMPLATE:2}5af43d82803e903d91602b57fd5bf3"
+          VAULT="$(jq -r .contractAddress evidence/01-vault-clone.json)"
+          test "$(cast code "$VAULT")" = "$(cast code "$OLD")"
+          echo "NEW_VAULT=$VAULT"
+          CTOR="$(cast abi-encode 'constructor(address,address,address,address,address,address,address,uint16,uint16)' "$SAFE" "$VAULT" "$WANT" "$SDT" "$STAKING" "$LOCKER" "$ROUTER" 6240 10)"
+          INIT="0x$(jq -r .evm.bytecode.object strategy-artifact.json)${CTOR:2}"
+          send 02-revenue-strategy --create "$INIT"
+          STRATEGY="$(jq -r .contractAddress evidence/02-revenue-strategy.json)"
+          echo "NEW_STRATEGY=$STRATEGY"
+          send 03-initialize "$VAULT" 'initialize(address,string,string,uint256,address,address,bool,bool,bool)' "$STRATEGY" 'CurveYield vlSDT Vault' cyvlSDTav 10 "$ADMIN" "$SAFE" true false true
+          test "$(cast call "$VAULT" 'strategy()(address)' | tr A-F a-f)" = "$(echo "$STRATEGY" | tr A-F a-f)"
+          test "$(num "$VAULT" 'totalSupply()(uint256)')" = 0
+          test "$(num "$VAULT" 'depositFeeBps()(uint256)')" = 0
+          # Existing live locker allowance covers this operation.
+          echo "LOCKER_POL_BPS=$(num "$LOCKER" 'poLDepositShareBps()(uint16)')"
+          send 04-locker "$LOCKER" 'deposit(uint256,address)' "$TWENTY" "$SAFE"
+          echo "LOCKER_MINT=$(bal "$WANT" "$SAFE")"
+          test "$(bal "$WANT" "$SAFE")" = "$TWENTY"
+          send 05-vault-approval "$WANT" 'approve(address,uint256)' "$VAULT" "$TEN"
+          echo "PREVIEW_DEPOSIT=$(num "$VAULT" 'previewDeposit(uint256)(uint256)' "$TEN")"
+          send 06-deposit "$VAULT" 'deposit(uint256,address)' "$TEN" "$SAFE"
+          SHARES="$(bal "$VAULT" "$SAFE")"
+          NAV="$(num "$VAULT" 'totalAssets()(uint256)')"
+          ACTIVE="$(num "$STAKING" 'activeBalance(address)(uint256)' "$STRATEGY")"
+          RATE="$(num "$VAULT" 'convertToAssets(uint256)(uint256)' 1000000000000000000)"
+          echo "DEPOSIT_RESULT shares=$SHARES nav=$NAV active=$ACTIVE rate=$RATE remaining_cyvlSDT=$(bal "$WANT" "$SAFE")"
+          test "$SHARES" = "$TEN"
+          test "$NAV" = "$TEN"
+          test "$ACTIVE" = "$TEN"
+          test "$RATE" = 1000000000000000000
+          test "$(bal "$WANT" "$SAFE")" = "$TEN"
+          POOLDATA='0x5bcd3d83000000000000000000000000000000000000000000000000000000000000016000000000000000000000000000000000000000000000000000000000000001a000000000000000000000000000000000000000000000000000000000000001e000000000000000000000000000000000000000000000000000000000000001f40000000000000000000000000000000000000000000000000000000001312d0000000000000000000000000000000000000000000000000000000005d21dba00000000000000000000000000000000000000000000000000000000000000012c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000026000000000000000000000000000000000000000000000000000000000000002e00000000000000000000000000000000000000000000000000000000000000360000000000000000000000000000000000000000000000000000000000000002043757276655969656c6420534454206379766c534454206379766c5344546176000000000000000000000000000000000000000000000000000000000000000763795344542d3300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300000000000000000000000073968b9a57c6e53d41345fd57a6e6ae27d6cdb2f0000000000000000000000004abc523b4eab1fad413018711de14ccd8843d83900000000000000000000000048ce7408e14251d40ef2dc9da64b971bb60e318d000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000300000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000'
+          POOLDATA="${POOLDATA/48ce7408e14251d40ef2dc9da64b971bb60e318d/$(echo "${VAULT:2}" | tr A-F a-f)}"
+          IDX="$(num "$FACTORY" 'pool_count()(uint256)')"
+          send 07-create-pool "$FACTORY" "$POOLDATA"
+          POOL="$(cast call "$FACTORY" 'pool_list(uint256)(address)' "$IDX")"
+          echo "NEW_POOL=$POOL"
+          test "$(cast code "$POOL")" != 0x
+          test "$(cast call "$POOL" 'coins(uint256)(address)' 2 | tr A-F a-f)" = "$(echo "$VAULT" | tr A-F a-f)"
+          for tok in "$SDT" "$WANT" "$VAULT"; do send "08-approve-${tok:2:8}" "$tok" 'approve(address,uint256)' "$POOL" "$APPROVE"; done
+          send 09-add-liquidity "$POOL" 'add_liquidity(uint256[],uint256,address)' "[$TEN,$TEN,$TEN]" 29700000000000000000 "$POL"
+          A="$(bal "$SDT" "$POOL")"; B="$(bal "$WANT" "$POOL")"; C="$(bal "$VAULT" "$POOL")"
+          LP="$(bal "$POOL" "$POL")"
+          echo "POOL_RESULT SDT=$A cyvlSDT=$B cyvlSDTav=$C LP=$LP"
+          test "$A" = "$TEN"; test "$B" = "$TEN"; test "$C" = "$TEN"
+          echo "POOL_STORED_RATES:"
+          cast call "$POOL" 'stored_rates()(uint256[])'
+          echo "FINAL_VAULT_NAV=$(num "$VAULT" 'totalAssets()(uint256)') FINAL_VAULT_RATE=$(num "$VAULT" 'convertToAssets(uint256)(uint256)' 1000000000000000000)"
+          jq -n --arg vault "$VAULT" --arg strategy "$STRATEGY" --arg pool "$POOL" --arg shares "$SHARES" --arg nav "$NAV" --arg active "$ACTIVE" --arg rate "$RATE" --arg sdt "$A" --arg cyvl "$B" --arg av "$C" --arg lp "$LP" '{vault:$vault,strategy:$strategy,pool:$pool,shares:$shares,nav:$nav,active:$active,rate:$rate,poolSDT:$sdt,poolCyvlSDT:$cyvl,poolCyvlSDTav:$av,lp:$lp}' > evidence/result.json
+          echo 'SIMULATION_PASS'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cyvlsdt-gross-nav-v1-compiler
-          path: ${{ runner.temp }}/gross-nav/out/
+          name: cyvlsdt-gross-nav-pool-fork-v1
+          path: ${{ runner.temp }}/gross-nav/evidence/
           if-no-files-found: warn
