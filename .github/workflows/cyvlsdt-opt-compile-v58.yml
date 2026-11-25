@@ -1,14 +1,14 @@
-name: cyvlSDT revenue strategy gross NAV v1 compile only
+name: Vault admin fee share 20 percent v1 compile only
 on:
   push:
-    branches: [cyvlsdt-gross-nav-compile-v1]
+    branches: [cyvlsdt-vault-admin-share-v1]
     paths:
       - .github/workflows/cyvlsdt-opt-compile-v58.yml
       - cyvlSDT/optimization-v58/source-v58.zip.b64
 permissions:
   contents: read
 concurrency:
-  group: cyvlsdt-gross-nav-compile-v1
+  group: cyvlsdt-vault-admin-share-v1
   cancel-in-progress: false
 jobs:
   compile:
@@ -35,20 +35,21 @@ jobs:
           7d01c71a7ba5ea78afe469d1d13fbe22dd33ae5e6bc2d91b031720103d7cc47f  foundry.toml
           2ba73adf9ba847ae9818b4b4d3d419c2b4af70d5807786b97a4c9d173e4ae7c4  package.json
           EOF
+          cp "$GITHUB_WORKSPACE/cyvlSDT/optimization-v58/contracts/BeefyVaultCurveYieldV8cyvlSDT.sol" contracts/BeefyVaultCurveYieldV8cyvlSDT.sol
       - name: Install pinned compiler and dependencies
         shell: bash
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/gross-nav"
           npm install --ignore-scripts --no-audit --no-fund --save-exact solc@0.8.28
-      - name: Compile strategy and retain exact compiler evidence
+      - name: Compile vault and retain exact compiler evidence
         shell: bash
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/gross-nav"
           node <<'JS'
           const fs = require('node:fs'), path = require('node:path'), solc = require('solc');
-          const target = 'contracts/CurveYieldRevenueStrategyV8.sol', name = 'CurveYieldRevenueStrategyV8';
+          const target = 'contracts/BeefyVaultCurveYieldV8cyvlSDT.sol', name = 'BeefyVaultCurveYieldV8cyvlSDT';
           if (!solc.version().startsWith('0.8.28+commit.7893614a')) throw Error('compiler mismatch');
           const sources = {};
           function add(p) {
@@ -61,6 +62,13 @@ jobs:
             }
           }
           add(target);
+          const assert=require('node:assert/strict');
+          const current=sources[target].content;
+          assert.equal(current.split('ADMIN_FEE_SHARE_BPS = 2_000;').length,2);
+          const baseline=current.replace('ADMIN_FEE_SHARE_BPS = 2_000;','ADMIN_FEE_SHARE_BPS = 3_000;');
+          let h=2166136261;for(let i=0;i<baseline.length;i++)h=Math.imul(h^baseline.charCodeAt(i),16777619)>>>0;
+          assert.equal(h,789528018);
+          assert.equal(baseline.length,38177);
           const input = {language:'Solidity', sources, settings:{optimizer:{enabled:true,runs:25},viaIR:true,evmVersion:'cancun',metadata:{bytecodeHash:'ipfs'},outputSelection:{'*':{'*':['abi','metadata','evm.bytecode.object','evm.deployedBytecode.object','evm.deployedBytecode.immutableReferences','evm.methodIdentifiers']}}}};
           fs.mkdirSync('out',{recursive:true});
           fs.writeFileSync('out/standard-input.json',JSON.stringify(input));
@@ -71,14 +79,14 @@ jobs:
           const a=output.contracts[target][name];
           const byteCount=x=>{if(!/^(?:[0-9a-fA-F]{2})+$/.test(x))throw Error('invalid bytecode');return x.length/2};
           const report={compiler:solc.version(),contract:target+':'+name,optimizerRuns:25,viaIR:true,evmVersion:'cancun',runtimeBytes:byteCount(a.evm.deployedBytecode.object),creationBytes:byteCount(a.evm.bytecode.object),warningCount:(output.errors||[]).filter(e=>e.severity==='warning').length,errorCount:0};
-          if(report.runtimeBytes>24576 || report.creationBytes+9*32>49152) throw Error('EVM size limit exceeded');
-          fs.writeFileSync('out/strategy-artifact.json',JSON.stringify(a));
+          if(report.runtimeBytes>24576 || report.creationBytes+2*32>49152) throw Error('EVM size limit exceeded');
+          fs.writeFileSync('out/vault-artifact.json',JSON.stringify(a));
           fs.writeFileSync('out/compile-report.json',JSON.stringify(report,null,2));
           console.log(JSON.stringify(report,null,2));
           JS
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cyvlsdt-gross-nav-v1-compiler
+          name: cyvlsdt-vault-admin-share-v1-compiler
           path: ${{ runner.temp }}/gross-nav/out/
           if-no-files-found: warn
