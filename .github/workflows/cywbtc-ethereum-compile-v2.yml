@@ -134,16 +134,7 @@ jobs:
           rm -rf contracts/yearn
           mkdir -p simulation-output "$ROOT/simulation-output"
           set +e
-          FOUNDRY_OUT=out-control FOUNDRY_CACHE_PATH=cache-control forge test --isolate --fork-url "$RPC" --fork-block-number 26502798 --match-path test/fork/CyWBTCSafetyFork_v1.t.sol --match-test '^test_18_admin_rebalance_down_at_crash_price_then_full_user_exit        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cywbtc-ethereum-fork-security-v1
-          path: |
-            ${{ runner.temp }}/cywbtc-ethereum/simulation-output/**
-            ${{ runner.temp }}/cywbtc-ethereum/fork-test.log
-          if-no-files-found: warn
-          retention-days: 90
- -vvv > "$ROOT/simulation-output/prior-source-slippage-control.log" 2>&1
+          FOUNDRY_OUT=out-control FOUNDRY_CACHE_PATH=cache-control forge test --isolate --fork-url "$RPC" --fork-block-number 26502798 --match-path test/fork/CyWBTCSafetyFork_v1.t.sol --match-test test_18_admin_rebalance_down_at_crash_price_then_full_user_exit -vvv > "$ROOT/simulation-output/prior-source-slippage-control.log" 2>&1
           CONTROL_EXIT=$?
           set -e
           echo "PRIOR_SOURCE_AT_26502798_EXIT=$CONTROL_EXIT"
