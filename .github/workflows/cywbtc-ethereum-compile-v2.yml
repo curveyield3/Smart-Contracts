@@ -82,26 +82,100 @@ jobs:
           printf '{"forkTestExitCode":%s,"mainnetWrites":false,"status":"%s"}\n' "$EXIT_CODE" "$([ "$EXIT_CODE" = 0 ] && echo PASS || echo FAIL)" > simulation-output/fork-status-v1.json
           exit "$EXIT_CODE"
 
-      - name: Compare FXMintLTVManager compiler profiles (optimization experiment)
+      - name: Compare fixed-block existing fork calls and validate smallest compiler profile
         shell: bash
+        env:
+          MAINNET_FORK_URL: ${{ secrets.ETHEREUM_FORK_RPC_URL }}
         run: |
           set -euo pipefail
-          cd "$RUNNER_TEMP/cywbtc-ethereum"
-          mkdir -p simulation-output
-          for ir in false true; do
-            for runs in 10000 1000 200; do
-              profile="runs-${runs}-via-ir-${ir}"
-              printf '\n=== FXMintLTVManager profile %s ===\n' "$profile"
-              if FOUNDRY_OUT="out-profile-$profile" FOUNDRY_CACHE_PATH="cache-profile-$profile" FOUNDRY_VIA_IR="$ir" FOUNDRY_OPTIMIZER_RUNS="$runs" \
-                forge build --sizes contracts/fuses/fxmint/FXMintLTVManager.sol > "simulation-output/$profile.log" 2>&1; then
-                echo "PROFILE $profile SUCCESS"
-                grep -F 'FXMintLTVManager ' "simulation-output/$profile.log" || true
+          ROOT="$RUNNER_TEMP/cywbtc-ethereum"
+          BENCH="$RUNNER_TEMP/cywbtc-optimizer-benchmark"
+          MANAGER="contracts/fuses/fxmint/FXMintLTVManager.sol"
+          RPC="${MAINNET_FORK_URL:-https://ethereum-rpc.publicnode.com}"
+          mkdir -p "$BENCH/results"
+          git fetch --no-tags --depth=1 origin 826debc23798185b8e156cd8b3ebc3f47e6319c0
+          git show "826debc23798185b8e156cd8b3ebc3f47e6319c0:cyWBTC-Ethereum/$MANAGER" > "$BENCH/baseline.sol"
+          cd "$ROOT"
+          cp "$MANAGER" "$BENCH/candidate.sol"
+          mv simulation-output "$BENCH/default-snapshots"
+          restore() {
+            cp "$BENCH/candidate.sol" "$MANAGER"
+            if [ -d simulation-output ]; then mv simulation-output "$BENCH/results/interrupted-snapshots"; fi
+            mv "$BENCH/default-snapshots" simulation-output
+            mv "$BENCH/results" simulation-output/optimizer-benchmark
+          }
+          trap restore EXIT
+          BLOCK="$(cast block-number --rpc-url "$RPC")"
+          printf '%s\n' "$BLOCK" > "$BENCH/results/fork-block.txt"
+          echo "BENCHMARK_FORK_BLOCK $BLOCK"
+          TESTS=(test_06_instant_withdraw_after_wbtc_appreciation_keeps_debt_exact test_14_partial_scheduled_withdrawal_then_remaining_full_exit test_18_admin_rebalance_down_at_crash_price_then_full_user_exit)
+          for profile in baseline candidate candidate-ir200 candidate-ir1000; do
+            case "$profile" in
+              baseline) cp "$BENCH/baseline.sol" "$MANAGER"; runs=10000; ir=false ;;
+              candidate) cp "$BENCH/candidate.sol" "$MANAGER"; runs=10000; ir=false ;;
+              candidate-ir200) cp "$BENCH/candidate.sol" "$MANAGER"; runs=200; ir=true ;;
+              candidate-ir1000) cp "$BENCH/candidate.sol" "$MANAGER"; runs=1000; ir=true ;;
+            esac
+            mkdir -p "$BENCH/results/$profile"
+            for test in "${TESTS[@]}"; do
+              mkdir -p simulation-output
+              if FOUNDRY_OUT="out-bench-$profile" FOUNDRY_CACHE_PATH="cache-bench-$profile" FOUNDRY_VIA_IR="$ir" FOUNDRY_OPTIMIZER_RUNS="$runs" \
+                forge test --isolate --fork-url "$RPC" --fork-block-number "$BLOCK" --match-path test/fork/CyWBTCSafetyFork_v1.t.sol --match-test "^$test$" -vv > "$BENCH/results/$profile/$test.log" 2>&1; then
+                echo "BENCH $profile $test PASS"
               else
-                echo "PROFILE $profile FAILED"
-                tail -n 50 "simulation-output/$profile.log"
+                echo "BENCH $profile $test FAIL"
+                tail -n 70 "$BENCH/results/$profile/$test.log"
               fi
+              mv simulation-output "$BENCH/results/$profile/$test"
             done
           done
+          mkdir -p simulation-output
+          if FOUNDRY_OUT=out-bench-candidate-ir200 FOUNDRY_CACHE_PATH=cache-bench-candidate-ir200 FOUNDRY_VIA_IR=true FOUNDRY_OPTIMIZER_RUNS=200 \
+            forge test --isolate --fork-url "$RPC" --fork-block-number "$BLOCK" --match-path test/fork/CyWBTCSafetyFork_v1.t.sol -vv > "$BENCH/results/candidate-ir200-full-suite.log" 2>&1; then
+            echo "IR200_FULL_SUITE PASS"
+            grep -E 'Suite result:|Ran [0-9]+ tests' "$BENCH/results/candidate-ir200-full-suite.log" || true
+          else
+            echo "IR200_FULL_SUITE FAIL"
+            tail -n 100 "$BENCH/results/candidate-ir200-full-suite.log"
+          fi
+          mv simulation-output "$BENCH/results/candidate-ir200-full-suite"
+          python3 - "$BENCH/results" <<'PY'
+          import json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          fields = ('label','from','to','calldata','rawReturnOrRevertData','success','expectedSuccess','blockNumber','accountingUnchanged')
+          def read(path):
+              return json.loads(path.read_text())
+          def same_call(a,b):
+              return all(a.get(k) == b.get(k) for k in fields)
+          def same_state(a,b,label):
+              for suffix in ('before','after'):
+                  p = a / f'state_{label}_{suffix}.json'
+                  q = b / f'state_{label}_{suffix}.json'
+                  if not p.exists() or not q.exists() or read(p) != read(q):
+                      return False
+              return True
+          results = []
+          for scenario in sorted((root/'baseline').glob('test_*')):
+              if not scenario.is_dir():
+                  continue
+              for file in sorted(scenario.glob('transaction_*.json')):
+                  original = read(file)
+                  label = original.get('label','')
+                  row = {'scenario':scenario.name,'label':label,'baseline':original.get('gasMeasuredInsideForge')}
+                  for profile in ('candidate','candidate-ir200','candidate-ir1000'):
+                      directory = root/profile/scenario.name
+                      target = directory/file.name
+                      if target.exists():
+                          candidate = read(target)
+                          if same_call(original,candidate) and same_state(scenario,directory,label):
+                              row[profile] = candidate.get('gasMeasuredInsideForge')
+                  if 'candidate' in row:
+                      results.append(row)
+                      if ('public_' in label or 'deleverages' in label or 'instant_release' in label or 'rebalance' in label or 'leverage' in label):
+                          print('GAS_MATCH '+json.dumps(row,sort_keys=True))
+          (root/'comparable-call-gas.json').write_text(json.dumps(results,indent=2))
+          print('COMPARABLE_BASELINE_CANDIDATE_CALLS',len(results))
+          PY
 
       - name: Retain transactional snapshots and failure evidence
         if: always()
