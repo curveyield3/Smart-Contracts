@@ -87,8 +87,15 @@ contract ConvexFXGaugeSupplyFuse is IFuseCommon {
         outputs[1]=TypeConversionLib.toBytes32(amount);
         TransientStorageLib.setOutputs(VERSION,outputs);
     }
+    function stakedBalanceOf(address account) external view returns(uint256) {
+        address personal = _personalFor(account);
+        return personal == address(0) ? 0 : IERC20(GAUGE).balanceOf(personal);
+    }
+    function _personalFor(address account) private view returns(address) {
+        return IConvexFXPoolRegistry(REGISTRY).vaultMap(PID,account);
+    }
     function _personal(bool create) private returns(address vault){
-        vault=IConvexFXPoolRegistry(REGISTRY).vaultMap(PID,address(this));
+        vault=_personalFor(address(this));
         if(vault==address(0) && create) vault=IConvexFXBooster(BOOSTER).createVault(PID);
         if(vault==address(0) && !create) revert ConvexFXGaugeSupplyFuseUnsupportedGauge(GAUGE);
     }

@@ -59,19 +59,15 @@ interface IFxSPNavForManager {
     function redeemRequests(address account) external view returns (uint128 amount, uint128 unlockAt);
 }
 interface IFXMintConvexReader {
-    function REGISTRY() external view returns (address);
-}
-interface IFXMintConvexRegistry {
-    function vaultMap(uint256 pid, address owner) external view returns (address);
+    function stakedBalanceOf(address account) external view returns (uint256);
+    function GAUGE() external view returns (address);
+    function FXSP() external view returns (address);
 }
 
 /// @notice fxMINT LTV logic plus ONE public, globally pending, native-IPOR withdrawal request.
 /// @dev Own storage holds only target/slippage/pending request. All PlasmaVault protocol operations
 ///      go through registered IPOR execution fuses. No Yearn/Morpho/Aave adapter or strategy allocator.
 struct FxSPEnterData { address vault; uint256 vaultAssetAmount; uint256 minSharesOut; }
-struct FxSPExitData { address vault; uint256 shares; }
-struct ConvexGaugeEnterData { address childLiquidityGauge; uint256 lpTokenAmount; }
-struct ConvexGaugeExitData { address childLiquidityGauge; uint256 lpTokenAmount; }
 struct IPORSwapData { address[] targets; bytes[] data; }
 struct IPORSwapEnterData { address tokenIn; address tokenOut; uint256 amountIn; uint256 minAmountOut; IPORSwapData data; }
 
@@ -124,22 +120,19 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         uint256 initialCollateral;
         uint256 initialDebt;
         uint256 exchangePrice;
-        uint256 initialLtv;
         uint256 collateralReleaseWBTC;
-        uint256 netWBTCNeeded;
         uint256 debtReduction;
         uint256 target;
-        uint256 desiredFinalLtv;
     }
     struct PendingRequest {
         address user;
+        uint8 stage; // 0=cooldown, 1=release recovery collateral, 2=finish repay, 3=final WBTC redemption.
         uint256 shares;
         uint256 nftId;
         uint256 debtReduction;
         uint256 collateralReleaseWBTC;
         uint256 fxspShares;
         uint256 unlockAt;
-        uint8 stage; // 0=cooldown, 1=release recovery collateral, 2=finish repay, 3=final WBTC redemption.
     }
 
     address public immutable VERSION;
@@ -147,26 +140,26 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     address public immutable VAULT;
     address public immutable OWNER;
     address public immutable POSITION_REGISTRY;
-    address public immutable POOL;
-    address public immutable POOL_MANAGER;
-    address public immutable WBTC;
-    address public immutable FXUSD;
-    address public immutable FXN;
-    address public immutable FXSP;
-    address public immutable FXMINT_BORROW_FUSE;
-    address public immutable FXMINT_COLLATERAL_FUSE;
-    address public immutable CONVEX_STAKE_FUSE;
-    address public immutable FXSP_SUPPLY_FUSE;
-    address public immutable CONVEX_GAUGE;
-    address public immutable OMNI_SWAP_FUSE;
-    address public immutable OMNI_ROUTER;
-    address public immutable USDC;
-    address public immutable WITHDRAW_MANAGER;
+    address private immutable POOL;
+    address private immutable POOL_MANAGER;
+    address private immutable WBTC;
+    address private immutable FXUSD;
+    address private immutable FXN;
+    address private immutable FXSP;
+    address private immutable FXMINT_BORROW_FUSE;
+    address private immutable FXMINT_COLLATERAL_FUSE;
+    address private immutable CONVEX_STAKE_FUSE;
+    address private immutable FXSP_SUPPLY_FUSE;
+    address private immutable CONVEX_GAUGE;
+    address private immutable OMNI_SWAP_FUSE;
+    address private immutable OMNI_ROUTER;
+    address private immutable USDC;
+    address private immutable WITHDRAW_MANAGER;
 
     // Stored in this deployed manager contract, not in the PlasmaVault delegatecall storage slots.
     uint256 public targetLtvWad;
     uint256 public withdrawSlippageBps;
-    PendingRequest public pendingRequest;
+    PendingRequest private _pendingRequest;
     uint256 private _status = 1;
     modifier nonReentrant() { if (_status != 1) revert InvalidConfiguration(); _status=2; _; _status=1; }
 
@@ -190,7 +183,6 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     error InvalidFulfillStage(uint8 stage);
     error InvalidWithdrawRequest(address user);
     error FuseExecutionFailed(bytes reason);
-    error UnexpectedVaultBalance(uint256 needed, uint256 actual);
     error UnexpectedPositionChange();
 
     event TargetLtvSet(uint256 oldTarget, uint256 newTarget);
@@ -216,6 +208,8 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             IFuseCommon(a.fxMintCollateralFuse).MARKET_ID() != MARKET_ID ||
             IFuseCommon(a.balanceFuse).MARKET_ID() != MARKET_ID ||
             IFuseCommon(a.convexStakeFuse).MARKET_ID() != 17 ||
+            IFXMintConvexReader(a.convexStakeFuse).GAUGE() != a.convexGauge ||
+            IFXMintConvexReader(a.convexStakeFuse).FXSP() != a.fxsp ||
             IFuseCommon(a.fxspSupplyFuse).MARKET_ID() != 16 ||
             IFuseCommon(a.omniSwapFuse).MARKET_ID() != 12) revert InvalidConfiguration();
         VERSION = address(this);
@@ -242,6 +236,15 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         targetLtvWad = initialTargetLtvWad;
     }
 
+    /// @notice Preserve the original eight-field getter ABI while packing stage with user.
+    function pendingRequest() external view returns (
+        address user, uint256 shares, uint256 nftId, uint256 debtReduction,
+        uint256 collateralReleaseWBTC, uint256 fxspShares, uint256 unlockAt, uint8 stage
+    ) {
+        PendingRequest storage p = _pendingRequest;
+        return (p.user, p.shares, p.nftId, p.debtReduction, p.collateralReleaseWBTC, p.fxspShares, p.unlockAt, p.stage);
+    }
+
     function setTargetLtvWad(uint256 target) external {
         _onlyOwnerImplementation();
         _validateTarget(target);
@@ -252,7 +255,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     /// @notice True only while the manager is executing an already-pending
     ///         scheduled withdrawal. No additional storage or executor authority.
     function isFinalizingScheduledWithdrawal() external view returns (bool) {
-        return address(this) == VERSION && _status == 2 && pendingRequest.user != address(0);
+        return address(this) == VERSION && _status == 2 && _pendingRequest.user != address(0);
     }
 
     function setWithdrawSlippageBps(uint256 bps) external {
@@ -291,7 +294,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         uint256 remainingRaw = _remainingRawCollateral(s.collateralReleaseWBTC, s.initialCollateral);
         uint256 newLtv = _ltv(remainingRaw, currentDebt, _exchangePrice());
         if (newLtv > s.target) revert DebtRepaymentRequiresScheduledWithdrawal(currentDebt);
-        _exitCollateral(s.id, s.collateralReleaseWBTC, s.netWBTCNeeded);
+        _exitCollateral(s.id, s.collateralReleaseWBTC, prefunded);
         assembly ("memory-safe") { tstore(usedSlot, 1) }
         emit CollateralWithdrawal(s.id, s.collateralReleaseWBTC, shortfall, 0);
     }
@@ -307,7 +310,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     ///      no reward-claim fuse or additional custody contract is needed.
     function compound(uint256 minFxspSharesOut) external {
         _onlyVaultDelegatecall();
-        uint256 fxn = IERC20(FXN).balanceOf(address(this));
+        uint256 fxn = _vaultBalance(FXN);
         if (fxn != 0) _swap(FXN, WBTC, fxn);
         _rebalanceUp(minFxspSharesOut);
     }
@@ -335,7 +338,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         // f(x) PoolConfiguration permits only ONE operate per transaction.
         // A matured request may require several permissionless finalize calls;
         // never overwrite its state by auto-starting another user's request.
-        if (pendingRequest.user != address(0)) revert PendingWithdrawalAlreadyActive();
+        if (_pendingRequest.user != address(0)) revert PendingWithdrawalAlreadyActive();
         IFXMintWithdrawManager.WithdrawRequestInfo memory r = IFXMintWithdrawManager(WITHDRAW_MANAGER).requestInfo(user);
         if (user == address(0) || r.shares == 0 ||
             r.endWithdrawWindowTimestamp <= block.timestamp + FXSP_COOLDOWN ||
@@ -368,17 +371,17 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             s.collateralReleaseWBTC = type(uint256).max;
         } else {
             uint256 desiredWBTC = IERC4626(VAULT).convertToAssets(r.shares);
-            uint256 idleWBTC = IERC20(WBTC).balanceOf(VAULT);
+            uint256 idleWBTC = _vaultBalance(WBTC);
             if (desiredWBTC <= idleWBTC) revert InvalidAmount();
             s = _prepareWithdrawal(desiredWBTC - idleWBTC);
             if (s.debtReduction == 0) revert InvalidAmount();
         }
         uint256 debtBudget = _repayBudget(s.debtReduction);
-        uint256 idleFxUSD = IERC20(FXUSD).balanceOf(VAULT);
+        uint256 idleFxUSD = _vaultBalance(FXUSD);
         if (idleFxUSD >= debtBudget) revert InvalidAmount(); // no delayed redemption required
         (uint256 shares, uint256 unlockAt) = _requestExistingFxsp(
             debtBudget - idleFxUSD, debtBudget, s.collateralReleaseWBTC == type(uint256).max);
-        pendingRequest = PendingRequest({
+        _pendingRequest = PendingRequest({
             user: user, shares: r.shares, nftId: s.id, debtReduction: s.debtReduction,
             collateralReleaseWBTC: s.collateralReleaseWBTC, fxspShares: shares, unlockAt: unlockAt, stage: 0
         });
@@ -423,10 +426,8 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         uint256 nav = IFxSPNavForManager(FXSP).nav();
         if (nav == 0) revert InvalidPrice();
         shares = Math.mulDiv(neededFxUSD, WAD, nav, Math.Rounding.Up);
-        uint256 idle = IERC20(FXSP).balanceOf(VAULT);
-        address registry = IFXMintConvexReader(CONVEX_STAKE_FUSE).REGISTRY();
-        address personal = IFXMintConvexRegistry(registry).vaultMap(37, VAULT);
-        uint256 staked = personal == address(0) ? 0 : IERC20(CONVEX_GAUGE).balanceOf(personal);
+        uint256 idle = _vaultBalance(FXSP);
+        uint256 staked = IFXMintConvexReader(CONVEX_STAKE_FUSE).stakedBalanceOf(VAULT);
         uint256 availableShares = idle + staked;
         // At the last investor exit all remaining Convex/fxSP principal must
         // become liquid WBTC, not merely the shares needed to repay fxMINT debt.
@@ -436,11 +437,9 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         else if (shares > availableShares) shares = availableShares;
         if (shares == 0) revert InsufficientLiquidity(requiredBudget, 0);
         if (shares > idle) {
-            _executeOne(CONVEX_STAKE_FUSE, abi.encodeWithSignature(
-                "exit((address,uint256))", ConvexGaugeExitData(CONVEX_GAUGE, shares - idle)));
+            _executeTokenAmount(CONVEX_STAKE_FUSE, bytes4(keccak256("exit((address,uint256))")), CONVEX_GAUGE, shares - idle);
         }
-        _executeOne(FXSP_SUPPLY_FUSE, abi.encodeWithSignature(
-            "exit((address,uint256))", FxSPExitData(FXSP, shares)));
+        _executeTokenAmount(FXSP_SUPPLY_FUSE, bytes4(keccak256("exit((address,uint256))")), FXSP, shares);
         (, uint128 matureAt) = IFxSPNavForManager(FXSP).redeemRequests(VAULT);
         unlockAt = uint256(matureAt);
         if (unlockAt < block.timestamp + FXSP_COOLDOWN) revert InvalidConfiguration();
@@ -458,27 +457,27 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     ///      public FinalizeFulfillWithdrawRequest button may be called again
     ///      permissionlessly after each advancing step. Each step is atomic.
     function _finalize() private {
-        PendingRequest storage p = pendingRequest;
+        PendingRequest storage p = _pendingRequest;
         if (p.user == address(0)) revert NoPendingRequest();
         if (block.timestamp < p.unlockAt) revert PendingNotMature(p.unlockAt);
         uint8 stage = p.stage;
         if (stage == 0) {
             // First mature finalization transaction: release real fxSP yield
             // and spend at most one permitted fxMINT PoolManager operation.
-            _executeOne(FXSP_SUPPLY_FUSE, abi.encodeWithSignature(
-                "finalizeExit((address,uint256))", FxSPExitData(FXSP, p.fxspShares)));
-            uint256 usdc = IERC20(USDC).balanceOf(VAULT);
+            _executeTokenAmount(FXSP_SUPPLY_FUSE, bytes4(keccak256("finalizeExit((address,uint256))")), FXSP, p.fxspShares);
+            uint256 usdc = _vaultBalance(USDC);
             if (usdc != 0) _swap(USDC, FXUSD, usdc);
             uint256 desiredReduction = p.debtReduction;
             if (p.collateralReleaseWBTC == type(uint256).max) {
                 (, desiredReduction) = _position(p.nftId); // include any accrued debt
             }
-            if (IERC20(FXUSD).balanceOf(VAULT) >= _repayBudget(desiredReduction)) {
+            uint256 budget = _repayBudget(desiredReduction);
+            if (_vaultBalance(FXUSD) >= budget) {
                 if (p.collateralReleaseWBTC == type(uint256).max) {
                     _closeEntirePositionAndRedeem(); // one f(x) operate: full debt+collateral
                     return;
                 }
-                _repayFromIdle(p.nftId, desiredReduction);
+                _repayFromIdleBudgeted(p.nftId, desiredReduction, budget);
                 p.debtReduction = 0;
                 p.stage = 3;
             } else {
@@ -515,11 +514,11 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     ///         sequence uses exactly one f(x) PoolManager operation.
     /// @notice Full-close on a single fxMINT operate: repay debt and remove collateral.
     function _closeEntirePositionAndRedeem() private {
-        PendingRequest storage p = pendingRequest;
+        PendingRequest storage p = _pendingRequest;
         (uint256 collateral, uint256 debt) = _position(p.nftId);
         if (collateral == 0) revert InvalidAmount();
         uint256 budget = _repayBudget(debt);
-        uint256 availableFxUSD = IERC20(FXUSD).balanceOf(VAULT);
+        uint256 availableFxUSD = _vaultBalance(FXUSD);
         if (availableFxUSD < budget) revert InsufficientFxUSDForRepayment(budget, availableFxUSD);
         _executeOne(FXMINT_COLLATERAL_FUSE, abi.encodeWithSignature(
             "exitAndRepayFull(uint256,uint256,uint256)",
@@ -528,7 +527,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         // final fxMINT debt is closed. A 100%-share redemption must first
         // settle that remaining non-WBTC exposure into the WBTC underlying,
         // or redeemFromRequest can attempt to transfer more WBTC than exists.
-        uint256 residualFxUSD = IERC20(FXUSD).balanceOf(VAULT);
+        uint256 residualFxUSD = _vaultBalance(FXUSD);
         if (residualFxUSD != 0) _swap(FXUSD, WBTC, residualFxUSD);
         _releaseNativeRequestShares(p.user, p.shares);
     }
@@ -536,7 +535,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     /// @dev For a partial exit, collateralFuse.exit already checks LIVE LTV
     ///      after the actual protocol call; do not duplicate that same check.
     function _releasePendingCollateralAndShares() private {
-        PendingRequest storage p = pendingRequest;
+        PendingRequest storage p = _pendingRequest;
         (uint256 collateral,) = _position(p.nftId);
         uint256 scaling = _collateralScaling();
         uint256 available = Math.mulDiv(collateral, WAD, scaling);
@@ -549,7 +548,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     function _releaseNativeRequestShares(address user, uint256 shares) private {
         IFXMintWithdrawManager(WITHDRAW_MANAGER).releaseFunds(block.timestamp - 1, shares);
         uint256 released = IFXMintManagerVault(VAULT).redeemFromRequest(shares, user, user);
-        delete pendingRequest;
+        delete _pendingRequest;
         emit WithdrawRequestFinalized(user, shares, released);
     }
 
@@ -563,17 +562,12 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         uint256 borrow = allowed - debt;
         if (borrow > RAW_DEBT_BUFFER) borrow -= RAW_DEBT_BUFFER;
         if (borrow == 0) return;
-        uint256 prior = IERC20(FXUSD).balanceOf(address(this));
-        _executeOne(FXMINT_BORROW_FUSE,
-            abi.encodeWithSignature("enter(uint256,uint256,uint256)", id, borrow, uint256(0)));
-        uint256 received = IERC20(FXUSD).balanceOf(address(this)) - prior;
+        uint256 received = _executeReceived(FXMINT_BORROW_FUSE,
+            abi.encodeWithSignature("enter(uint256,uint256,uint256)", id, borrow, uint256(0)), FXUSD);
         if (received == 0) revert InsufficientLiquidity(borrow, 0);
-        uint256 fxspBefore = IERC20(FXSP).balanceOf(address(this));
-        _executeOne(FXSP_SUPPLY_FUSE,
-            abi.encodeWithSignature("enter((address,uint256,uint256))", FxSPEnterData(FXSP, received, minFxspSharesOut)));
-        uint256 mintedShares = IERC20(FXSP).balanceOf(address(this)) - fxspBefore;
-        _executeOne(CONVEX_STAKE_FUSE,
-            abi.encodeWithSignature("enter((address,uint256))", ConvexGaugeEnterData(CONVEX_GAUGE, mintedShares)));
+        uint256 mintedShares = _executeReceived(FXSP_SUPPLY_FUSE,
+            abi.encodeWithSignature("enter((address,uint256,uint256))", FxSPEnterData(FXSP, received, minFxspSharesOut)), FXSP);
+        _executeTokenAmount(CONVEX_STAKE_FUSE, bytes4(keccak256("enter((address,uint256))")), CONVEX_GAUGE, mintedShares);
         emit TargetWindUp(id, borrow, received);
     }
 
@@ -593,13 +587,12 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         if (s.initialCollateral == 0) revert InsufficientCollateral(netWBTCNeeded, 0);
         s.exchangePrice = _exchangePrice();
         s.target = _liveTarget();
-        s.initialLtv = _ltv(s.initialCollateral, s.initialDebt, s.exchangePrice);
+        uint256 initialLtv = _ltv(s.initialCollateral, s.initialDebt, s.exchangePrice);
         (, uint256 withdrawFee, , ) = _feeRatios();
         if (withdrawFee >= FEE_PRECISION) revert InvalidConfiguration();
         s.collateralReleaseWBTC = Math.mulDiv(
             netWBTCNeeded, FEE_PRECISION, FEE_PRECISION - withdrawFee, Math.Rounding.Up
         );
-        s.netWBTCNeeded = netWBTCNeeded;
         uint256 scaling = _collateralScaling();
         uint256 requestedRaw = Math.mulDiv(s.collateralReleaseWBTC, scaling, WAD);
         if (requestedRaw > s.initialCollateral) revert InsufficientCollateral(requestedRaw, s.initialCollateral);
@@ -609,15 +602,16 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         uint256 originalCollateralUsd = Math.mulDiv(s.initialCollateral, s.exchangePrice, WAD);
         uint256 postCollateralUsd = Math.mulDiv(s.initialCollateral - riskRelease, s.exchangePrice, WAD);
         if (originalCollateralUsd == 0) revert InvalidPrice();
-        if (s.initialLtv > s.target + WITHDRAW_LTV_IMPROVEMENT_WAD) {
-            uint256 onePointLower = s.initialLtv - WITHDRAW_LTV_IMPROVEMENT_WAD;
+        uint256 desiredFinalLtv;
+        if (initialLtv > s.target + WITHDRAW_LTV_IMPROVEMENT_WAD) {
+            uint256 onePointLower = initialLtv - WITHDRAW_LTV_IMPROVEMENT_WAD;
             if (onePointLower > s.target + WITHDRAW_ROUNDING_HEADROOM_WAD) {
-                s.desiredFinalLtv = onePointLower - WITHDRAW_ROUNDING_HEADROOM_WAD;
-            } else s.desiredFinalLtv = s.target;
-        } else if (s.initialLtv > s.target) s.desiredFinalLtv = s.initialLtv;
-        else s.desiredFinalLtv = s.target;
+                desiredFinalLtv = onePointLower - WITHDRAW_ROUNDING_HEADROOM_WAD;
+            } else desiredFinalLtv = s.target;
+        } else if (initialLtv > s.target) desiredFinalLtv = initialLtv;
+        else desiredFinalLtv = s.target;
         if (s.initialDebt != 0) {
-            uint256 allowedDebt = Math.mulDiv(postCollateralUsd, s.desiredFinalLtv, WAD);
+            uint256 allowedDebt = Math.mulDiv(postCollateralUsd, desiredFinalLtv, WAD);
             if (s.initialDebt > allowedDebt) {
                 s.debtReduction = s.initialDebt - allowedDebt;
                 uint256 debtLeft = s.initialDebt - s.debtReduction;
@@ -653,7 +647,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         (uint256 rawCollateral, uint256 initialDebt) = _position(id);
         if (requestedReduction > initialDebt) requestedReduction = initialDebt;
         uint256 price = _exchangePrice();
-        uint256 stableAvailable = IERC20(FXUSD).balanceOf(VAULT);
+        uint256 stableAvailable = _vaultBalance(FXUSD);
         (, , , uint256 liveRepayFee) = _feeRatios();
         uint256 feeBps = _repayFeeBps(liveRepayFee);
         uint256 repayable = Math.mulDiv(stableAvailable, BPS,
@@ -679,7 +673,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     ///      The collateral side enforces the live target even if this check passes.
     function _sellCollateralForRemainingDebt(uint256 id, uint256 remainingToRepay) private {
         uint256 fullBudget = _repayBudget(remainingToRepay);
-        uint256 idleStable = IERC20(FXUSD).balanceOf(VAULT);
+        uint256 idleStable = _vaultBalance(FXUSD);
         if (fullBudget > idleStable) {
             uint256 price = _exchangePrice();
             uint256 sell = Math.mulDiv(fullBudget - idleStable, 1e8, price, Math.Rounding.Up);
@@ -689,9 +683,8 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             // CollateralFuse.exit and fxMINT PoolManager enforce both
             // withdrawable collateral and live target LTV after the change.
             // No duplicate preflight calculations in the public manager.
-            uint256 beforeWBTC = IERC20(WBTC).balanceOf(VAULT);
-            _exitCollateral(id, sell, 0);
-            uint256 receivedWBTC = IERC20(WBTC).balanceOf(VAULT) - beforeWBTC;
+            uint256 receivedWBTC = _executeReceived(FXMINT_COLLATERAL_FUSE,
+                abi.encodeWithSignature("exit(uint256,uint256,uint256)", id, sell, uint256(0)), WBTC);
             if (receivedWBTC == 0) revert InsufficientLiquidity(sell, 0);
             _swap(WBTC, FXUSD, receivedWBTC);
         }
@@ -709,8 +702,12 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
 
     function _repayFromIdle(uint256 id, uint256 debtReduction) private {
         if (debtReduction == 0) return;
-        uint256 budget = _repayBudget(debtReduction);
-        uint256 available = IERC20(FXUSD).balanceOf(VAULT);
+        _repayFromIdleBudgeted(id, debtReduction, _repayBudget(debtReduction));
+    }
+
+    function _repayFromIdleBudgeted(uint256 id, uint256 debtReduction, uint256 budget) private {
+        if (debtReduction == 0) return;
+        uint256 available = _vaultBalance(FXUSD);
         if (available < budget) revert InsufficientFxUSDForRepayment(budget, available);
         (, uint256 beforeDebt) = _position(id);
         bool full = debtReduction >= beforeDebt;
@@ -738,7 +735,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     }
 
     function _supplyAllIdleWBTC(uint256 id) private {
-        uint256 idle = IERC20(WBTC).balanceOf(address(this));
+        uint256 idle = _vaultBalance(WBTC);
         if (idle != 0) _executeOne(FXMINT_COLLATERAL_FUSE,
             abi.encodeWithSignature("enter(uint256,uint256)", id, idle));
     }
@@ -816,19 +813,29 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         if (address(this) != VAULT || address(this) == VERSION) revert IncorrectExecutionContext();
     }
 
+    function _executeTokenAmount(address fuse, bytes4 selector, address token, uint256 amount) private {
+        _executeOne(fuse, abi.encodeWithSelector(selector, token, amount));
+    }
+
+    function _vaultBalance(address token) private view returns (uint256) {
+        return IERC20(token).balanceOf(VAULT);
+    }
+
+    function _executeReceived(address fuse, bytes memory callData, address token) private returns (uint256) {
+        uint256 beforeBalance = _vaultBalance(token);
+        _executeOne(fuse, callData);
+        return _vaultBalance(token) - beforeBalance;
+    }
+
     function _executeOne(address fuse, bytes memory callData) private {
         FuseAction[] memory actions = new FuseAction[](1);
         actions[0] = FuseAction({fuse: fuse, data: callData});
-        if (address(this) == VAULT) {
-            // IPOR's existing vault-self nested fuse path (instant withdrawals/Alpha maintenance).
-            try IFXMintManagerVault(VAULT).executeInternal(actions) {} catch (bytes memory reason) {
-                revert FuseExecutionFailed(reason);
-            }
-        } else if (address(this) == VERSION) {
-            // Public delayed requests require the manager itself to have narrowly scoped ALPHA_ROLE.
-            try IFXMintManagerVault(VAULT).execute(actions) {} catch (bytes memory reason) {
-                revert FuseExecutionFailed(reason);
-            }
-        } else revert IncorrectExecutionContext();
+        bytes4 selector;
+        if (address(this) == VAULT) selector = IFXMintManagerVault.executeInternal.selector;
+        else if (address(this) == VERSION) selector = IFXMintManagerVault.execute.selector;
+        else revert IncorrectExecutionContext();
+        if (VAULT.code.length == 0) revert InvalidConfiguration();
+        (bool ok, bytes memory reason) = VAULT.call(abi.encodeWithSelector(selector, actions));
+        if (!ok) revert FuseExecutionFailed(reason);
     }
 }

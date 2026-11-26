@@ -19,7 +19,6 @@ import {FxSPSupplyFuse} from "../../contracts/fuses/fxsp/FxSPSupplyFuse.sol";
 import {FxSPCurveBalanceFuse} from "../../contracts/fuses/fxsp/FxSPCurveBalanceFuse.sol";
 import {ConvexFXGaugeSupplyFuse} from "../../contracts/fuses/convex/ConvexFXGaugeSupplyFuse.sol";
 import {ConvexFXGaugeBalanceFuse} from "../../contracts/fuses/convex/ConvexFXGaugeBalanceFuse.sol";
-import {FulfillWithdrawExecutor} from "../../contracts/executors/FulfillWithdrawExecutor.sol";
 import {FXNPriceFeedEthereum} from "../../contracts/price_oracle/price_feed/FXNPriceFeedEthereum_v1.sol";
 
 interface IFxMintPositionFork {
@@ -100,7 +99,6 @@ contract CyWBTCSafetyForkV1 {
     FxSPCurveBalanceFuse private fxspBalance;
     ConvexFXGaugeSupplyFuse private convexFuse;
     ConvexFXGaugeBalanceFuse private convexBalance;
-    FulfillWithdrawExecutor private publicExecutor;
     FXNPriceFeedEthereum private fxnFeed;
 
     struct FeeRecipientFork { address recipient; uint256 feeValue; }
@@ -283,9 +281,7 @@ contract CyWBTCSafetyForkV1 {
         ltvManager = new FXMintLTVManager(a, TARGET);
         _tx("safe_registers_live_risk_manager", OWNER, address(balanceFuse),
             abi.encodeWithSignature("setRiskManager(address)", address(ltvManager)), true);
-        publicExecutor = new FulfillWithdrawExecutor(address(ltvManager));
         require(ltvManager.targetLtvWad() == TARGET, "60% LTV constructor failed");
-        require(address(publicExecutor.MANAGER()) == address(ltvManager), "Wrong public manager");
         _snapshot("deploy_after");
     }
 
@@ -484,12 +480,12 @@ contract CyWBTCSafetyForkV1 {
         require(!canWithdraw, "Unreleased user request unexpectedly withdrawable");
         _tx("user_authorizes_manager_share_burn", USER, VAULT,
             abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), requested), true);
-        _tx("public_caller_starts_native_scheduled_exit", PUBLIC_CALLER, address(publicExecutor),
-            abi.encodeWithSignature("InitializeFulfillWithdrawRequest(address)", USER), true);
+        _tx("public_caller_starts_native_scheduled_exit", PUBLIC_CALLER, address(ltvManager),
+            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER), true);
         uint256 unlockAt = _pendingUnlock();
         require(unlockAt >= block.timestamp + 3600, "No cooldown initiated");
-        _tx("public_caller_cannot_finalize_before_unlock", PUBLIC_CALLER, address(publicExecutor),
-            abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), false);
+        _tx("public_caller_cannot_finalize_before_unlock", PUBLIC_CALLER, address(ltvManager),
+            abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), false);
         _snapshot("user_scheduled_cooldown_pending");
         vm.warp(unlockAt + 2);
         vm.roll(block.number + 20);
@@ -511,8 +507,8 @@ contract CyWBTCSafetyForkV1 {
             uint8 stage = _pendingStage();
             require(stage <= 3, "Invalid pending stage during final exit");
             _tx(string.concat("public_advances_full_exit_stage_", vm.toString(i)),
-                i % 2 == 0 ? UNAUTHORIZED : PUBLIC_CALLER, address(publicExecutor),
-                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+                i % 2 == 0 ? UNAUTHORIZED : PUBLIC_CALLER, address(ltvManager),
+                abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), true);
             _snapshot(string.concat("full_exit_after_stage_", vm.toString(stage)));
         }
         require(_pendingUnlock() == 0, "Final user request not fully settled");
@@ -582,10 +578,10 @@ contract CyWBTCSafetyForkV1 {
             abi.encodeWithSignature("setWithdrawSlippageBps(uint256)", uint256(56)), false);
         _tx("reject_direct_instant_withdraw", UNAUTHORIZED, address(ltvManager),
             abi.encodeWithSignature("instantWithdraw(bytes32[])", new bytes32[](1)), false);
-        _tx("reject_initialize_without_request", PUBLIC_CALLER, address(publicExecutor),
-            abi.encodeWithSignature("InitializeFulfillWithdrawRequest(address)", USER), false);
-        _tx("reject_finalize_without_request", PUBLIC_CALLER, address(publicExecutor),
-            abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), false);
+        _tx("reject_initialize_without_request", PUBLIC_CALLER, address(ltvManager),
+            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER), false);
+        _tx("reject_finalize_without_request", PUBLIC_CALLER, address(ltvManager),
+            abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), false);
         require(ltvManager.targetLtvWad() == TARGET, "Owner and guard tests corrupted target");
     }
 
@@ -950,13 +946,13 @@ contract CyWBTCSafetyForkV1 {
             _snapshot(string.concat(label, "_before"));
             State memory beforeState = _state();
             uint256 gasBefore = gasleft();
-            bytes memory calldataCopy = abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()");
+            bytes memory calldataCopy = abi.encodeWithSignature("finalizeFulfillWithdrawRequest()");
             vm.prank(PUBLIC_CALLER);
-            (bool ok, bytes memory result) = address(publicExecutor).call(calldataCopy);
+            (bool ok, bytes memory result) = address(ltvManager).call(calldataCopy);
             CallEvidence memory c;
             c.label = label;
             c.sender = PUBLIC_CALLER;
-            c.target = address(publicExecutor);
+            c.target = address(ltvManager);
             c.calldataCopy = calldataCopy;
             c.result = result;
             c.success = ok;
@@ -1086,8 +1082,8 @@ contract CyWBTCSafetyForkV1 {
             abi.encodeWithSignature("requestShares(uint256)", partialShares), true);
         _tx("partial_user_authorizes_manager", USER, VAULT,
             abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), partialShares), true);
-        _tx("public_starts_partial_exit", PUBLIC_CALLER, address(publicExecutor),
-            abi.encodeWithSignature("InitializeFulfillWithdrawRequest(address)", USER), true);
+        _tx("public_starts_partial_exit", PUBLIC_CALLER, address(ltvManager),
+            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER), true);
         uint256 unlockAt = _pendingUnlock();
         require(unlockAt >= block.timestamp + 3600, "Missing partial cooldown");
         State memory scheduled = _state();
@@ -1097,8 +1093,8 @@ contract CyWBTCSafetyForkV1 {
         _snapshot("partial_matured_before_public_finalizations");
         for (uint256 i; i < 8 && _pendingUnlock() != 0; i++) {
             _tx(string.concat("public_completes_partial_step_", vm.toString(i)),
-                PUBLIC_CALLER, address(publicExecutor),
-                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+                PUBLIC_CALLER, address(ltvManager),
+                abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), true);
         }
         require(_pendingUnlock() == 0, "Partial withdrawal never finalized");
         State memory partiallyExited = _state();
@@ -1183,16 +1179,16 @@ contract CyWBTCSafetyForkV1 {
             abi.encodeWithSignature("requestShares(uint256)", bothInvested.userShares), true);
         _tx("first_user_authorizes_own_shares", USER, VAULT,
             abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), bothInvested.userShares), true);
-        _tx("public_initializes_first_investor_exit", PUBLIC_CALLER, address(publicExecutor),
-            abi.encodeWithSignature("InitializeFulfillWithdrawRequest(address)", USER), true);
+        _tx("public_initializes_first_investor_exit", PUBLIC_CALLER, address(ltvManager),
+            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER), true);
         uint256 unlockAt = _pendingUnlock();
         require(unlockAt > block.timestamp, "First investor's cooldown missing");
         vm.warp(unlockAt + 2);
         vm.roll(block.number + 20);
         for (uint256 i; i < 8 && _pendingUnlock() != 0; ++i) {
             _tx(string.concat("public_advances_first_investor_exit_", vm.toString(i)),
-                PUBLIC_CALLER, address(publicExecutor),
-                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+                PUBLIC_CALLER, address(ltvManager),
+                abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), true);
         }
         require(_pendingUnlock() == 0, "First investor exit stuck");
         State memory onlySecond = _state();
@@ -1210,16 +1206,16 @@ contract CyWBTCSafetyForkV1 {
             abi.encodeWithSignature("requestShares(uint256)", secondShares), true);
         _tx("second_user_authorizes_own_shares", USER2, VAULT,
             abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), secondShares), true);
-        _tx("public_initializes_last_investor_exit", UNAUTHORIZED, address(publicExecutor),
-            abi.encodeWithSignature("InitializeFulfillWithdrawRequest(address)", USER2), true);
+        _tx("public_initializes_last_investor_exit", UNAUTHORIZED, address(ltvManager),
+            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER2), true);
         unlockAt = _pendingUnlock();
         require(unlockAt > block.timestamp, "Second investor's cooldown missing");
         vm.warp(unlockAt + 2);
         vm.roll(block.number + 20);
         for (uint256 i; i < 8 && _pendingUnlock() != 0; ++i) {
             _tx(string.concat("public_advances_final_investor_exit_", vm.toString(i)),
-                UNAUTHORIZED, address(publicExecutor),
-                abi.encodeWithSignature("FinalizeFulfillWithdrawRequest()"), true);
+                UNAUTHORIZED, address(ltvManager),
+                abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), true);
         }
         State memory finalState = _state();
         require(_pendingUnlock() == 0 && finalState.user2Shares == 0
