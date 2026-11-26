@@ -82,6 +82,27 @@ jobs:
           printf '{"forkTestExitCode":%s,"mainnetWrites":false,"status":"%s"}\n' "$EXIT_CODE" "$([ "$EXIT_CODE" = 0 ] && echo PASS || echo FAIL)" > simulation-output/fork-status-v1.json
           exit "$EXIT_CODE"
 
+      - name: Compare FXMintLTVManager compiler profiles (optimization experiment)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cywbtc-ethereum"
+          mkdir -p simulation-output
+          for ir in false true; do
+            for runs in 10000 1000 200; do
+              profile="runs-${runs}-via-ir-${ir}"
+              printf '\n=== FXMintLTVManager profile %s ===\n' "$profile"
+              if FOUNDRY_OUT="out-profile-$profile" FOUNDRY_CACHE_PATH="cache-profile-$profile" FOUNDRY_VIA_IR="$ir" FOUNDRY_OPTIMIZER_RUNS="$runs" \
+                forge build --sizes contracts/fuses/fxmint/FXMintLTVManager.sol > "simulation-output/$profile.log" 2>&1; then
+                echo "PROFILE $profile SUCCESS"
+                grep -F 'FXMintLTVManager ' "simulation-output/$profile.log" || true
+              else
+                echo "PROFILE $profile FAILED"
+                tail -n 50 "simulation-output/$profile.log"
+              fi
+            done
+          done
+
       - name: Retain transactional snapshots and failure evidence
         if: always()
         uses: actions/upload-artifact@v4
