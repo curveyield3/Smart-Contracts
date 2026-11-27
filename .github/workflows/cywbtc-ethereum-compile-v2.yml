@@ -1,4 +1,4 @@
-name: cyWBTC Ethereum IPOR source compile v2 (bytecode only)
+name: cyWBTC Ethereum IPOR source compile v2 (v4 fork qualification)
 on:
   push:
     paths:
@@ -61,3 +61,24 @@ jobs:
           export FOUNDRY_VIA_IR=true FOUNDRY_OPTIMIZER_RUNS=200 FOUNDRY_OUT=out-ir200 FOUNDRY_CACHE_PATH=cache-ir200
           forge build --sizes contracts/fuses/fxmint/FXMintLTVManager.sol contracts/fuses/fxmint/FXMintCollateralFuse.sol contracts/executors/FulfillWithdrawExecutor.sol
           forge inspect contracts/fuses/fxmint/FXMintLTVManager.sol:FXMintLTVManager deployedBytecode | python3 -c 'import sys; h=sys.stdin.read().strip().removeprefix("0x"); print("COMPACT_RUNTIME_BYTES="+str(len(bytes.fromhex(h))))'
+
+      - name: V4 integrated lifecycle qualification on isolated Ethereum fork
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          MAINNET_FORK_URL: ${{ secrets.ETHEREUM_FORK_RPC_URL }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/cywbtc-ethereum"
+          rm -rf contracts/yearn
+          export FOUNDRY_VIA_IR=true FOUNDRY_OPTIMIZER_RUNS=200 FOUNDRY_OUT=out-ir200 FOUNDRY_CACHE_PATH=cache-ir200
+          RPC="${MAINNET_FORK_URL:-https://ethereum-rpc.publicnode.com}"
+          forge test --isolate --fork-url "$RPC" --fork-block-number 26502615 --match-path test/fork/CyWBTCSafetyFork_v1.t.sol -vvv 2>&1 | tee simulation-output/v4-fork-qualification.log
+      - name: Retain qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cywbtc-v4-fork-qualification-v1
+          path: ${{ runner.temp }}/cywbtc-ethereum/simulation-output/
+          if-no-files-found: warn
+          retention-days: 90

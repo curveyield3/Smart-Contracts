@@ -15,6 +15,7 @@ import {FXMintBorrowFuse} from "../../contracts/fuses/fxmint/FXMintBorrowFuse.so
 import {FXMintCollateralFuse} from "../../contracts/fuses/fxmint/FXMintCollateralFuse.sol";
 import {FXMintBalanceFuse} from "../../contracts/fuses/fxmint/FXMintBalanceFuse.sol";
 import {FXMintLTVManager} from "../../contracts/fuses/fxmint/FXMintLTVManager.sol";
+import {FulfillWithdrawExecutor} from "../../contracts/executors/FulfillWithdrawExecutor.sol";
 import {FxSPSupplyFuse} from "../../contracts/fuses/fxsp/FxSPSupplyFuse.sol";
 import {FxSPCurveBalanceFuse} from "../../contracts/fuses/fxsp/FxSPCurveBalanceFuse.sol";
 import {ConvexFXGaugeSupplyFuse} from "../../contracts/fuses/convex/ConvexFXGaugeSupplyFuse.sol";
@@ -55,7 +56,7 @@ interface ICurveYieldRouterFork {
     function routeLength(address tokenIn, address tokenOut) external view returns (uint256);
 }
 
-contract CyWBTCSafetyForkV1 {
+contract CyWBTCLTVManagerV4QualificationV1 {
     using Math for uint256;
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
@@ -95,6 +96,7 @@ contract CyWBTCSafetyForkV1 {
     FXMintBorrowFuse private borrowFuse;
     FXMintCollateralFuse private collateralFuse;
     FXMintLTVManager private ltvManager;
+    FulfillWithdrawExecutor private executor;
     FxSPSupplyFuse private fxspFuse;
     FxSPCurveBalanceFuse private fxspBalance;
     ConvexFXGaugeSupplyFuse private convexFuse;
@@ -270,15 +272,16 @@ contract CyWBTCSafetyForkV1 {
         convexFuse = new ConvexFXGaugeSupplyFuse(17, BOOSTER, REGISTRY);
         convexBalance = new ConvexFXGaugeBalanceFuse(17, REGISTRY);
         fxnFeed = new FXNPriceFeedEthereum();
+        address predictedExecutor = vm.computeCreateAddress(address(this), uint256(vm.getNonce(address(this))) + 1);
         FXMintLTVManager.Addresses memory a = FXMintLTVManager.Addresses({
-            vault: VAULT, owner: OWNER, balanceFuse: address(balanceFuse), fxMintPool: FXMINT_POOL,
-            poolManager: POOL_MANAGER, wbtc: WBTC, fxusd: FXUSD, fxn: FXN, fxsp: FXSP,
-            fxMintBorrowFuse: address(borrowFuse), fxMintCollateralFuse: address(collateralFuse),
-            convexStakeFuse: address(convexFuse), fxspSupplyFuse: address(fxspFuse),
-            convexGauge: GAUGE, omniSwapFuse: OMNI_FUSE, omniRouter: OMNI,
-            usdc: USDC, withdrawManager: WITHDRAW_MANAGER
+            vault: VAULT, registry: address(balanceFuse), pool: FXMINT_POOL,
+            collateralFuse: address(collateralFuse), borrowFuse: address(borrowFuse),
+            supplyFuse: address(fxspFuse), stakeFuse: address(convexFuse), fxsp: FXSP,
+            withdrawManager: WITHDRAW_MANAGER, withdrawExecutor: predictedExecutor
         });
         ltvManager = new FXMintLTVManager(a, TARGET);
+        executor = new FulfillWithdrawExecutor(address(ltvManager));
+        require(address(executor)==predictedExecutor,"Executor binding");
         _tx("safe_registers_live_risk_manager", OWNER, address(balanceFuse),
             abi.encodeWithSignature("setRiskManager(address)", address(ltvManager)), true);
         require(ltvManager.targetLtvWad() == TARGET, "60% LTV constructor failed");
@@ -296,10 +299,14 @@ contract CyWBTCSafetyForkV1 {
         // Grant only the fork test depositor; do not silently open the vault globally.
         _grant(800, USER, "grant_depositor_role_to_test_user");
         _grant(200, OWNER, "grant_alpha_safe");
-        _grant(200, address(ltvManager), "grant_alpha_ltv_manager");
+        _grant(200, address(executor), "grant_alpha_executor");
         // Only the already-validating scheduled-withdraw manager may refresh
         // balances before pricing a real user's authorized withdrawal request.
-        _grant(1000, address(ltvManager), "grant_nav_refresh_ltv_manager");
+        _grant(1000, address(executor), "grant_nav_refresh_executor");
+        bytes4[] memory selectors = new bytes4[](2);
+        selectors[0] = FXMintLTVManager.setTargetLtvWad.selector;
+        selectors[1] = FXMintLTVManager.setWithdrawSlippageBps.selector;
+        _tx("native_manager_config_roles", OWNER, ACCESS, abi.encodeWithSignature("setTargetFunctionRole(address,bytes4[],uint64)", address(ltvManager), selectors, uint64(100)), true);
         _grant(300, OWNER, "grant_fuse_manager_safe");
         _grant(900, OWNER, "grant_instant_config_safe");
         _grant(901, OWNER, "grant_request_fee_safe");
@@ -404,28 +411,6 @@ contract CyWBTCSafetyForkV1 {
         _tx("configure_existing_usdc_fxusd_curve_route", OWNER, OMNI,
             abi.encodeCall(ICurveYieldRouterFork.setRoute, (USDC, FXUSD, route)), true);
         require(ICurveYieldRouterFork(OMNI).routeLength(USDC, FXUSD) == 1, "Scheduled route not installed on fork");
-        // The same exact user-approved WBTC -> USDC 0.05% V3 -> fxUSD Curve
-        // route is needed only if native scheduled debt repayment is short.
-        ICurveYieldRouterFork.Hop[] memory collateralRecovery = new ICurveYieldRouterFork.Hop[](2);
-        collateralRecovery[0] = ICurveYieldRouterFork.Hop({
-            poolType: 2,
-            tokenOut: USDC,
-            swapContract: UNIV3_USDC_WBTC,
-            poolId: bytes32(0),
-            poolData: new bytes(0),
-            oracle: ICurveYieldRouterFork.Oracle({
-                oracleAddress: address(0),
-                readFunctionID: bytes4(0),
-                requiredInputs: new bytes(0),
-                invert: false,
-                rateDecimals: 0
-            })
-        });
-        collateralRecovery[1] = route[0];
-        _tx("configure_existing_wbtc_usdc_fxusd_repayment_route", OWNER, OMNI,
-            abi.encodeCall(ICurveYieldRouterFork.setRoute, (WBTC, FXUSD, collateralRecovery)), true);
-        require(ICurveYieldRouterFork(OMNI).routeLength(WBTC, FXUSD) == 2, "Recovery route not installed on fork");
-
         // Entire vault exit must settle *all* remaining idle fxUSD into WBTC
         // after the atomic fxMINT debt+collateral close. The same approved
         // direct two-hop route is used; never introduce an extra WETH hop.
@@ -452,864 +437,163 @@ contract CyWBTCSafetyForkV1 {
         require(ICurveYieldRouterFork(OMNI).routeLength(FXUSD, WBTC) == 2, "Final settlement route not installed");
     }
 
-    function _pendingUnlock() private view returns (uint256 unlockAt) {
-        (bool ok, bytes memory result) = address(ltvManager).staticcall(abi.encodeWithSignature("pendingRequest()"));
-        require(ok && result.length >= 224, "No manager pending request");
-        (, , , , , , unlockAt) = abi.decode(
-            result, (address, uint256, uint256, uint256, uint256, uint256, uint256)
-        );
-    }
 
-    function _pendingStage() private view returns (uint8 stage) {
-        (bool ok, bytes memory result) = address(ltvManager).staticcall(
-            abi.encodeWithSignature("pendingRequest()"));
-        require(ok && result.length >= 256, "Pending stage unavailable");
-        (, , , , , , , stage) = abi.decode(
-            result, (address, uint256, uint256, uint256, uint256, uint256, uint256, uint8)
-        );
-    }
+    struct SwapCalls { address[] targets; bytes[] data; }
+    struct SwapData { address tokenIn; address tokenOut; uint256 amount; uint256 minOut; SwapCalls calls; }
 
-    function _fullScheduledExit() private {
-        uint256 allUserShares = IERC20(VAULT).balanceOf(USER);
-        require(allUserShares > 0, "No user shares before full exit");
-        _tx("user_requests_100_percent_of_shares", USER, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("requestShares(uint256)", allUserShares), true);
-        (uint256 requested, uint256 endWindow, bool canWithdraw, uint256 windowSec) =
-            IWithdrawalRequestFork(WITHDRAW_MANAGER).requestInfo(USER);
-        require(requested > 0 && endWindow >= block.timestamp + 3600 && windowSec >= 3600, "Bad native IPOR request");
-        require(!canWithdraw, "Unreleased user request unexpectedly withdrawable");
-        _tx("user_authorizes_manager_share_burn", USER, VAULT,
-            abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), requested), true);
-        _tx("public_caller_starts_native_scheduled_exit", PUBLIC_CALLER, address(ltvManager),
-            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER), true);
-        uint256 unlockAt = _pendingUnlock();
-        require(unlockAt >= block.timestamp + 3600, "No cooldown initiated");
-        _tx("public_caller_cannot_finalize_before_unlock", PUBLIC_CALLER, address(ltvManager),
-            abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), false);
-        _snapshot("user_scheduled_cooldown_pending");
-        vm.warp(unlockAt + 2);
-        vm.roll(block.number + 20);
-        if (simulatedPriceShiftBeforeFinalizeBps != 0) {
-            _shockWBTC(simulatedPriceShiftBeforeFinalizeBps);
-        }
-        _snapshot("user_scheduled_after_cooldown");
-        if (simulatedPriceShiftBeforeFinalizeBps != 0) {
-            _driveShockedRequestWithSafeRecovery();
-            return;
-        }
-        // f(x) PoolConfiguration permits at most one operate per transaction.
-        // A prior partial exit can leave a tiny management-fee share supply,
-        // changing the final request from a totalSupply equality into a
-        // staged repay/collateral release sequence. Keep advancing the actual
-        // on-chain pending stage until it clears; never mistake a successful
-        // intermediate call for a completed user redemption.
-        for (uint256 i; i < 8 && _pendingUnlock() != 0; ++i) {
-            uint8 stage = _pendingStage();
-            require(stage <= 3, "Invalid pending stage during final exit");
-            _tx(string.concat("public_advances_full_exit_stage_", vm.toString(i)),
-                i % 2 == 0 ? UNAUTHORIZED : PUBLIC_CALLER, address(ltvManager),
-                abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), true);
-            _snapshot(string.concat("full_exit_after_stage_", vm.toString(stage)));
-        }
-        require(_pendingUnlock() == 0, "Final user request not fully settled");
-        _snapshot("user_full_exit_final");
-        require(IERC20(VAULT).balanceOf(USER) == 0, "User did not redeem all shares");
-        require(IERC20(WBTC).balanceOf(USER) > 0, "User got no WBTC on full withdrawal");
-        State memory post = _state();
-        require(post.rawDebt == 0, "Debt left after 100% user exit");
-        require(_pendingUnlock() == 0, "Manager pending request not cleared");
+    function _action(string memory label,address fuse,bytes memory data,bool succeeds) private {
+        FuseAction[] memory a=new FuseAction[](1);
+        a[0]=FuseAction(fuse,data);
+        _tx(label,OWNER,VAULT,abi.encodeWithSignature("execute((address,bytes)[])",a),succeeds);
     }
-
-    function _fundAndDeposit(uint256 amount) private {
-        require(IERC20(WBTC).balanceOf(WBTC_FUNDING_HOLDER) >= amount,
-            "Fork source lacks real WBTC liquidity");
-        _tx("fund_user_real_wbtc", WBTC_FUNDING_HOLDER, WBTC,
-            abi.encodeWithSignature("transfer(address,uint256)", USER, amount), true);
-        _tx("user_approve_wbtc", USER, WBTC,
-            abi.encodeWithSignature("approve(address,uint256)", VAULT, amount), true);
-        bytes memory result = _tx("user_deposit_wbtc", USER, VAULT,
-            abi.encodeWithSignature("deposit(uint256,address)", amount, USER), true);
-        require(abi.decode(result, (uint256)) > 0, "User obtained no shares");
-        require(IERC20(VAULT).balanceOf(USER) > 0, "User balance not credited");
+    function _setTarget(uint256 target) private {
+        _tx("set_target",OWNER,address(ltvManager),abi.encodeCall(FXMintLTVManager.setTargetLtvWad,(target)),true);
+        require(ltvManager.targetLtvWad()==target,"Target not applied");
     }
-
-    function _openNft() private {
-        uint256 amount = IERC20(WBTC).balanceOf(VAULT);
-        require(amount > 0, "No WBTC collateral");
-        FuseAction[] memory actions = new FuseAction[](2);
-        actions[0] = FuseAction(address(collateralFuse),
-            abi.encodeWithSignature("enterNewPosition(uint256)", amount));
-        actions[1] = FuseAction(address(balanceFuse),
-            abi.encodeWithSignature("enterRegisterLatestPosition()"));
-        _tx("owner_open_nft_and_register_atomically", OWNER, VAULT,
-            abi.encodeWithSignature("execute((address,bytes)[])", actions), true);
-        require(balanceFuse.positionId() > 0, "NFT ID not registered");
-        (uint256 collateral, uint256 debt) = IFxMintPositionFork(FXMINT_POOL).getPosition(balanceFuse.positionId());
-        require(collateral > 0 && debt > 0, "fxMINT missing position");
+    function _deposit(uint256 amount) private {
+        _tx("fund_user_real_wbtc",WBTC_FUNDING_HOLDER,WBTC,abi.encodeCall(IERC20.transfer,(USER,amount)),true);
+        _tx("user_approve_wbtc",USER,WBTC,abi.encodeCall(IERC20.approve,(VAULT,amount)),true);
+        uint256 oldShares=IERC20(VAULT).balanceOf(USER);
+        _tx("user_deposit_wbtc",USER,VAULT,abi.encodeCall(IERC4626.deposit,(amount,USER)),true);
+        require(IERC20(VAULT).balanceOf(USER)>oldShares,"No shares minted");
     }
-
+    function _open() private {
+        FuseAction[] memory a=new FuseAction[](2);
+        a[0]=FuseAction(address(collateralFuse),abi.encodeCall(FXMintCollateralFuse.enterNewPosition,(IERC20(WBTC).balanceOf(VAULT))));
+        a[1]=FuseAction(address(balanceFuse),abi.encodeCall(FXMintBalanceFuse.enterRegisterLatestPosition,()));
+        _tx("open_and_register_position",OWNER,VAULT,abi.encodeWithSignature("execute((address,bytes)[])",a),true);
+        require(_state().rawDebt>0&&_state().rawCollateral>0,"Position missing");
+    }
     function _up() private {
-        FuseAction[] memory actions = new FuseAction[](1);
-        actions[0] = FuseAction(address(ltvManager),
-            abi.encodeWithSignature("rebalanceUp(uint256)", uint256(0)));
-        _tx("owner_borrow_to_60_percent_and_stake", OWNER, VAULT,
-            abi.encodeWithSignature("execute((address,bytes)[])", actions), true);
-        State memory s = _state();
-        require(s.managerLtv <= TARGET, "Vault operation exceeded target 60% LTV");
-        require(s.rawDebt != 0, "No borrowed debt recorded");
+        _action("rebalance_up",address(ltvManager),abi.encodeCall(FXMintLTVManager.rebalanceUp,(0)),true);
+        State memory st=_state();
+        require(st.managerLtv<=ltvManager.targetLtvWad(),"LTV exceeds target");
     }
-
-    function test_00_permission_guards_with_persistent_snapshots() public {
-        _deploy();
-        address[] memory noFuses = new address[](0);
-        _tx("reject_user_add_fuses", UNAUTHORIZED, VAULT,
-            abi.encodeWithSignature("addFuses(address[])", noFuses), false);
-        _tx("reject_user_release_funds", UNAUTHORIZED, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("releaseFunds(uint256,uint256)", block.timestamp, uint256(1)), false);
-        _tx("reject_direct_execute_internal", UNAUTHORIZED, VAULT,
-            abi.encodeWithSignature("executeInternal((address,bytes)[])", new FuseAction[](0)), false);
-        _tx("reject_nonowner_set_ltv", UNAUTHORIZED, address(ltvManager),
-            abi.encodeWithSignature("setTargetLtvWad(uint256)", uint256(5e17)), false);
-        _tx("reject_zero_ltv", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setTargetLtvWad(uint256)", uint256(0)), false);
-        _tx("reject_overprotocol_ltv", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setTargetLtvWad(uint256)", uint256(99e16)), false);
-        _tx("reject_invalid_slippage", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setWithdrawSlippageBps(uint256)", uint256(56)), false);
-        _tx("reject_direct_instant_withdraw", UNAUTHORIZED, address(ltvManager),
-            abi.encodeWithSignature("instantWithdraw(bytes32[])", new bytes32[](1)), false);
-        _tx("reject_initialize_without_request", PUBLIC_CALLER, address(ltvManager),
-            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER), false);
-        _tx("reject_finalize_without_request", PUBLIC_CALLER, address(ltvManager),
-            abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), false);
-        require(ltvManager.targetLtvWad() == TARGET, "Owner and guard tests corrupted target");
+    function _start(uint256 amount,uint256 target) private {
+        _deploy(); _configure(); _setTarget(target); _deposit(amount); _open(); _up();
+        State memory st=_state();
+        require(st.managerLtv+1e15>=target,"Borrow not near target");
+        require(convexFuse.stakedBalanceOf(VAULT)>0,"No staked fxSP");
+        _snapshot("leveraged");
     }
-
-    function test_01_config_user_deposit_nft_and_leverage() public {
-        _deploy();
-        _configure();
-        _fundAndDeposit(10_000_000); // 0.1 real WBTC from existing fork-state liquidity
-        _openNft();
-        _up();
-        _snapshot("leverage_final_state");
+    function _shock(uint256 bps) private {
+        address oracle=IFxMintPositionFork(FXMINT_POOL).priceOracle();
+        uint256 price=Math.mulDiv(IFxMintPriceFork(oracle).getExchangePrice(),bps,10000);
+        vm.mockCall(oracle,abi.encodeCall(IFxMintPriceFork.getExchangePrice,()),abi.encode(price));
+        vm.mockCall(PRICE_MANAGER,abi.encodeWithSignature("getAssetPrice(address)",WBTC),abi.encode(price,uint256(18)));
+        _snapshot("simulated_price_shock");
     }
-    function test_02_user_request_public_two_button_full_scheduled_exit() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        _fullScheduledExit();
+    function _swapIndependent(address tokenIn,address tokenOut) private {
+        uint256 amount=IERC20(tokenIn).balanceOf(VAULT);
+        if(amount==0) return;
+        address[] memory targets=new address[](2);
+        bytes[] memory data=new bytes[](2);
+        targets[0]=tokenIn; targets[1]=OMNI;
+        data[0]=abi.encodeCall(IERC20.approve,(OMNI,amount));
+        data[1]=abi.encodeWithSignature("swap(address,address,uint256)",tokenIn,tokenOut,amount);
+        SwapData memory d=SwapData(tokenIn,tokenOut,amount,0,SwapCalls(targets,data));
+        _action("independent_ipor_conversion",OMNI_FUSE,abi.encodeWithSignature("enter((address,address,uint256,uint256,(address[],bytes[])))",d),true);
     }
-
-    function test_03_direct_alpha_borrow_must_not_bypass_target_ltv() public {
-        _deploy();
-        _configure();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        uint256 beforeLtv = _state().managerLtv;
-        require(beforeLtv <= TARGET, "Initial over-target position");
-        FuseAction[] memory actions = new FuseAction[](1);
-        actions[0] = FuseAction(address(borrowFuse),
-            abi.encodeWithSignature("enter(uint256,uint256,uint256)", balanceFuse.positionId(), uint256(100e18), uint256(0)));
-        _tx("reject_alpha_direct_borrow_above_target", OWNER, VAULT,
-            abi.encodeWithSignature("execute((address,bytes)[])", actions), false);
-        require(_state().managerLtv == beforeLtv, "Direct borrow bypassed target");
-        _snapshot("over_target_borrow_rejected");
+    function _request(uint256 shares) private {
+        _tx("user_requests_shares",USER,WITHDRAW_MANAGER,abi.encodeCall(IWithdrawalRequestFork.requestShares,(shares)),true);
+        (uint256 requested,,,)=IWithdrawalRequestFork(WITHDRAW_MANAGER).requestInfo(USER);
+        require(requested>0,"No request");
+        _tx("user_approves_executor",USER,VAULT,abi.encodeCall(IERC20.approve,(address(executor),requested)),true);
+        _tx("initialize_scheduled",PUBLIC_CALLER,address(executor),abi.encodeCall(FulfillWithdrawExecutor.InitializeFulfillWithdrawRequest,(USER)),true);
+        (address user,uint256 pendingShares,,,,)=executor.pending();
+        require(user==USER&&pendingShares==requested,"Pending mismatch");
     }
-
-    function test_04_direct_alpha_collateral_exit_must_not_bypass_ltv() public {
-        _deploy();
-        _configure();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        uint256 beforeLtv = _state().managerLtv;
-        require(beforeLtv <= TARGET, "Initial over-target position");
-        FuseAction[] memory actions = new FuseAction[](1);
-        actions[0] = FuseAction(address(collateralFuse),
-            abi.encodeWithSignature("exit(uint256,uint256,uint256)",
-                balanceFuse.positionId(), uint256(100_000), uint256(0)));
-        _tx("reject_alpha_direct_collateral_exit_above_target", OWNER, VAULT,
-            abi.encodeWithSignature("execute((address,bytes)[])", actions), false);
-        require(_state().managerLtv == beforeLtv, "Direct collateral exit bypassed target");
-        _snapshot("over_target_collateral_exit_rejected");
+    function _advance(string memory label) private {
+        _tx(label,PUBLIC_CALLER,address(executor),abi.encodeCall(FulfillWithdrawExecutor.FinalizeFulfillWithdrawRequest,()),true);
     }
-
-    /// @notice An ordinary user must never force immediate debt repayment or
-    /// protocol fxSP redemption by requesting all shares instantly.
-    function test_05_user_cannot_force_instant_debt_repayment_or_exit_tax() public {
-        _deploy();
-        _configure();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        State memory beforeState = _state();
-        require(beforeState.rawDebt > 0, "Precondition missing live f(x) debt");
-        _tx("user_instant_100pct_exit_rejected_without_debt_repay", USER, VAULT,
-            abi.encodeWithSignature("redeem(uint256,address,address)", beforeState.userShares, USER, USER), false);
-        State memory afterState = _state();
-        require(_sameAccounting(beforeState, afterState), "Instant rejection changed position");
-        require(afterState.rawDebt == beforeState.rawDebt, "Instant path repaid debt");
-        require(afterState.gaugeStakedShares == beforeState.gaugeStakedShares,
-            "Instant path caused forced Convex unstake / fxSP tax");
-        _snapshot("instant_exit_blocked_without_tax");
-    }
-
-    function _mockWBTCExchangePrice(uint256 numerator, uint256 denominator) private returns (uint256) {
-        require(numerator > 0 && denominator > 0, "Bad price shock");
-        address oracle = IFxMintPositionFork(FXMINT_POOL).priceOracle();
-        uint256 original = IFxMintPriceFork(oracle).getExchangePrice();
-        uint256 shifted = Math.mulDiv(original, numerator, denominator);
-        // Change the *real f(x) exchange price call* on the local fork only.
-        // This models repricing of collateral; it does not modify real mainnet.
-        vm.mockCall(oracle, abi.encodeWithSignature("getExchangePrice()"), abi.encode(shifted));
-        return shifted;
-    }
-
-    /// @notice At an appreciated WBTC price, a safe instant release must be
-    /// possible without changing debt, un-staking fxSP or incurring repayment.
-    function test_06_instant_withdraw_after_wbtc_appreciation_keeps_debt_exact() public {
-        _deploy();
-        _configure();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        _mockWBTCExchangePrice(130, 100);
-        State memory beforeState = _state();
-        require(beforeState.managerLtv < TARGET, "Positive price shock did not improve LTV");
-        // 0.002 WBTC from 0.1 WBTC collateral is small enough to remain below 60%.
-        _tx("user_instant_release_after_30pct_wbtc_appreciation", USER, VAULT,
-            abi.encodeWithSignature("withdraw(uint256,address,address)", uint256(200_000), USER, USER), true);
-        State memory afterState = _state();
-        require(afterState.rawDebt == beforeState.rawDebt, "Instant withdrawal repaid debt");
-        require(afterState.gaugeStakedShares == beforeState.gaugeStakedShares,
-            "Instant withdrawal unstaked yield / caused a tax");
-        require(afterState.fxspIdle == beforeState.fxspIdle, "Instant withdrawal used fxSP");
-        require(afterState.userWBTC > beforeState.userWBTC, "No WBTC reached user");
-        require(afterState.managerLtv <= TARGET, "Instant release violated target LTV");
-        _snapshot("positive_shock_instant_safe_no_repay");
-    }
-
-    /// @notice External price decline may put an existing position over target,
-    /// but vault actions may not further increase debt or allow a forced instant
-    /// repayment or collateral withdrawal at that shocked price.
-    function test_07_price_crashes_block_instant_exit_and_extra_leverage() public {
-        _deploy();
-        _configure();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        uint256 originalDebt = _state().rawDebt;
-        require(originalDebt > 0, "No debt to challenge against price crashes");
-        address oracle = IFxMintPositionFork(FXMINT_POOL).priceOracle();
-        uint256 initialPrice = IFxMintPriceFork(oracle).getExchangePrice();
-        uint256[4] memory shockBps = [uint256(9_500), 9_000, 8_000, 7_000];
-        for (uint256 i; i < shockBps.length; i++) {
-            vm.mockCall(oracle, abi.encodeWithSignature("getExchangePrice()"),
-                abi.encode(Math.mulDiv(initialPrice, shockBps[i], 10_000)));
-            State memory beforeState = _state();
-            require(beforeState.managerLtv > TARGET, "Price drop did not exceed the initial 60% LTV");
-            string memory label = string.concat("crash_", vm.toString(shockBps[i]));
-            _tx(string.concat(label, "_instant_exit_rejected"), USER, VAULT,
-                abi.encodeWithSignature("withdraw(uint256,address,address)", uint256(50_000), USER, USER), false);
-            // Rebalance-up must not initiate new debt when already above target.
-            FuseAction[] memory actions = new FuseAction[](1);
-            actions[0] = FuseAction(address(ltvManager),
-                abi.encodeWithSignature("rebalanceUp(uint256)", uint256(0)));
-            _tx(string.concat(label, "_rebalance_up_cannot_add_debt"), OWNER, VAULT,
-                abi.encodeWithSignature("execute((address,bytes)[])", actions), true);
-            State memory afterState = _state();
-            require(afterState.rawDebt == originalDebt, "Rebalance added debt during collateral crash");
-            require(afterState.userShares == beforeState.userShares, "Price-shock action burned shares");
-            require(afterState.gaugeStakedShares == beforeState.gaugeStakedShares,
-                "Price-shock action caused forced taxed unstake");
-            _snapshot(string.concat(label, "_verified"));
-        }
-    }
-
-    /// @notice Full withdrawal must remain possible even after repeated owner
-    /// adjustments and no-op operational cycles, not only after fresh leverage.
-    function test_08_full_scheduled_exit_after_owner_and_vault_operations() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        _tx("owner_changes_slippage_to_55bps", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setWithdrawSlippageBps(uint256)", uint256(55)), true);
-        _tx("owner_restores_slippage_to_20bps", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setWithdrawSlippageBps(uint256)", uint256(20)), true);
-        _tx("owner_sets_target_65pct_then_restores_60pct", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setTargetLtvWad(uint256)", uint256(65e16)), true);
-        _tx("owner_restores_60pct_target", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setTargetLtvWad(uint256)", TARGET), true);
-        FuseAction[] memory actions = new FuseAction[](1);
-        actions[0] = FuseAction(address(ltvManager),
-            abi.encodeWithSignature("rebalanceUp(uint256)", uint256(0)));
-        _tx("owner_rebalance_up_after_previous_complete_cycle", OWNER, VAULT,
-            abi.encodeWithSignature("execute((address,bytes)[])", actions), true);
-        actions[0] = FuseAction(address(ltvManager),
-            abi.encodeWithSignature("compound(uint256)", uint256(0)));
-        _tx("owner_compound_no_idle_fxn", OWNER, VAULT,
-            abi.encodeWithSignature("execute((address,bytes)[])", actions), true);
-        _snapshot("before_full_exit_after_operating_cycles");
-        _fullScheduledExit();
-    }
-
-    /// @dev Price shocks are applied only to fork reads; the historical
-    ///      price oracle remains untouched on Ethereum mainnet.
-    function _shockWBTC(uint256 newPriceBps) private {
-        address fxMintOracle = IFxMintPositionFork(FXMINT_POOL).priceOracle();
-        uint256 oldPrice = IFxMintPriceFork(fxMintOracle).getExchangePrice();
-        uint256 newPrice = Math.mulDiv(oldPrice, newPriceBps, 10_000);
-        require(newPrice != 0 && newPrice < type(uint128).max, "Shock price outside scale");
-        vm.mockCall(fxMintOracle, abi.encodeWithSignature("getExchangePrice()"), abi.encode(newPrice));
-        vm.mockCall(PRICE_MANAGER, abi.encodeWithSignature("getAssetPrice(address)", WBTC),
-            abi.encode(newPrice, uint256(18)));
-        _snapshot(string.concat("wbtc_shock_", vm.toString(newPriceBps)));
-    }
-
-    function _vaultManagerAction(string memory name, bytes memory data) private {
-        FuseAction[] memory actions = new FuseAction[](1);
-        actions[0] = FuseAction(address(ltvManager), data);
-        _tx(name, OWNER, VAULT, abi.encodeWithSignature("execute((address,bytes)[])", actions), true);
-    }
-
-    function test_05_instant_redeem_at_target_cannot_trigger_taxed_debt_repay() public {
-        _deploy();
-        _configure();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        State memory beforeState = _state();
-        uint256 requested = beforeState.userShares / 100;
-        require(requested > 0, "Need positive instant request");
-        _tx("user_instant_redeem_rejected_when_debt_repay_needed", USER, VAULT,
-            abi.encodeWithSignature("redeem(uint256,address,address)", requested, USER, USER), false);
-        State memory afterState = _state();
-        require(_sameAccounting(beforeState, afterState), "Rejected instant redeem changed assets, debt or shares");
-        _snapshot("instant_redeem_rejected_no_forced_tax");
-    }
-
-    function test_06_wbtc_price_crash_cannot_trigger_bad_admin_or_user_actions() public {
-        _deploy();
-        _configure();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        State memory beforeShock = _state();
-        require(beforeShock.managerLtv <= TARGET, "Original entry unsafe");
-        _shockWBTC(7500); // Realistic 25% rapid Bitcoin drawdown.
-        State memory shocked = _state();
-        require(shocked.managerLtv > TARGET, "Price decline did not create undercollateralization");
-        require(shocked.rawCollateral == beforeShock.rawCollateral &&
-            shocked.rawDebt == beforeShock.rawDebt, "A price read changed live position");
-        _vaultManagerAction("no_additional_borrow_after_wbtc_price_crash",
-            abi.encodeWithSignature("rebalanceUp(uint256)", uint256(0)));
-        require(_state().rawDebt == shocked.rawDebt, "Admin increased debt after adverse shock");
-        _tx("reject_rebalance_down_without_idle_stablecoin_liquidity", OWNER, VAULT,
-            _oneManagerAction(abi.encodeWithSignature("rebalanceDown()")), false);
-        uint256 shares = IERC20(VAULT).balanceOf(USER) / 100;
-        _tx("reject_instant_exit_during_wbtc_price_crash", USER, VAULT,
-            abi.encodeWithSignature("redeem(uint256,address,address)", shares, USER, USER), false);
-        // Repricing and subsequent balance-cache refresh legitimately change
-        // totalAssets; require the real balances and obligations stay unchanged.
-        State memory postShock = _state();
-        require(postShock.rawDebt == shocked.rawDebt &&
-            postShock.rawCollateral == shocked.rawCollateral &&
-            postShock.userShares == shocked.userShares &&
-            postShock.wbtcIdle == shocked.wbtcIdle &&
-            postShock.fxusdIdle == shocked.fxusdIdle &&
-            postShock.fxspIdle == shocked.fxspIdle &&
-            postShock.gaugeStakedShares == shocked.gaugeStakedShares,
-            "Vault changed real balances or debt during price shock");
-        _snapshot("price_crash_final_account_state");
-    }
-
-    function _oneManagerAction(bytes memory payload) private view returns (bytes memory) {
-        FuseAction[] memory actions = new FuseAction[](1);
-        actions[0] = FuseAction(address(ltvManager), payload);
-        return abi.encodeWithSignature("execute((address,bytes)[])", actions);
-    }
-
-    function test_07_wbtc_price_rally_allows_safe_instant_exit_without_debt_repay() public {
-        _deploy();
-        _configure();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        _shockWBTC(15000); // 50% intracycle BTC rally.
-        State memory beforeState = _state();
-        require(beforeState.managerLtv < TARGET, "Rally failed to improve LTV");
-        uint256 requested = beforeState.userShares / 200;
-        _tx("user_instant_redeem_after_wbtc_rally", USER, VAULT,
-            abi.encodeWithSignature("redeem(uint256,address,address)", requested, USER, USER), true);
-        State memory afterState = _state();
-        require(afterState.rawDebt == beforeState.rawDebt,
-            "Instant redemption must not force fxMINT debt repayment or tax");
-        require(afterState.managerLtv <= TARGET, "Instant redemption exceeded 60% target");
-        require(afterState.userShares < beforeState.userShares &&
-            afterState.userWBTC > beforeState.userWBTC, "Shares/assets not settled");
-        _snapshot("price_rally_safe_instant_exit");
-    }
-
-    function test_08_admin_routine_actions_then_full_public_user_exit() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        _tx("owner_set_65pct_ltv_target", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setTargetLtvWad(uint256)", 65e16), true);
-        require(ltvManager.targetLtvWad() == 65e16, "Target did not update");
-        _tx("owner_reset_60pct_ltv_target", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setTargetLtvWad(uint256)", TARGET), true);
-        _tx("owner_set_withdraw_slippage_25bps", OWNER, address(ltvManager),
-            abi.encodeWithSignature("setWithdrawSlippageBps(uint256)", uint256(25)), true);
-        _vaultManagerAction("owner_rebalance_up_already_at_target",
-            abi.encodeWithSignature("rebalanceUp(uint256)", uint256(0)));
-        _vaultManagerAction("owner_compound_without_claimed_fxn",
-            abi.encodeWithSignature("compound(uint256)", uint256(0)));
-        require(_state().managerLtv <= TARGET, "Routine manager action created excess debt");
-        _fullScheduledExit();
-        // Fee accrual during the cooldown can mint a few shares to the
-        // official DAO recipient. User 100% exit is valid when those tiny
-        // *owned* shares and their corresponding WBTC dust are the only residue.
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
-        _snapshot("full_exit_only_fee_account_dust");
-    }
-
-    function test_09_fee_admin_config_and_unauthorized_fee_guards() public {
-        _deploy();
-        _configure();
-        _tx("reject_unauthorized_deposit_fee", UNAUTHORIZED, FEE_MANAGER,
-            abi.encodeWithSignature("setDepositFee(uint256)", 5e15), false);
-        _tx("set_40bps_deposit_fee", OWNER, FEE_MANAGER,
-            abi.encodeWithSignature("setDepositFee(uint256)", 4e15), true);
-        _tx("set_45bps_regular_withdraw_fee", OWNER, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("updateWithdrawFee(uint256)", 45e14), true);
-        _tx("set_45bps_scheduled_request_fee", OWNER, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("updateRequestFee(uint256)", 45e14), true);
-        (bool ok, bytes memory ret) = FEE_MANAGER.staticcall(abi.encodeWithSignature("getDepositFee()"));
-        require(ok && abi.decode(ret, (uint256)) == 4e15, "Deposit fee differs from expected");
-        (ok, ret) = WITHDRAW_MANAGER.staticcall(abi.encodeWithSignature("getWithdrawFee()"));
-        require(ok && abi.decode(ret, (uint256)) == 45e14, "Regular withdrawal fee differs");
-        (ok, ret) = WITHDRAW_MANAGER.staticcall(abi.encodeWithSignature("getRequestFee()"));
-        require(ok && abi.decode(ret, (uint256)) == 45e14, "Scheduled request fee differs");
-        _tx("reject_nonowner_withdraw_fee_change", UNAUTHORIZED, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("updateWithdrawFee(uint256)", uint256(0)), false);
-        _tx("reject_nonowner_scheduled_fee_change", UNAUTHORIZED, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("updateRequestFee(uint256)", uint256(0)), false);
-        _snapshot("fee_configuration_after_role_checks");
-    }
-
-    /// @notice Stress mainnet-priced f(x) and IPOR collateral reads together
-    /// between the user's initial request and the matured exit.
-    function test_10_full_exit_succeeds_after_20pct_wbtc_crash_during_cooldown() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        simulatedPriceShiftBeforeFinalizeBps = 8_000;
-        _fullScheduledExit();
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
-        _snapshot("full_exit_after_mature_cooldown_20pct_crash");
-    }
-
-    function test_11_full_exit_succeeds_after_40pct_wbtc_rally_during_cooldown() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        simulatedPriceShiftBeforeFinalizeBps = 14_000;
-        _fullScheduledExit();
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
-        _snapshot("full_exit_after_mature_cooldown_40pct_rally");
-    }
-    /// @notice A large oracle change can precede DEX repricing. In that
-    /// temporarily inconsistent market state the existing UniversalTokenSwapper
-    /// slippage guard MUST revert without losing state, and the request must be
-    /// completable after prices again agree. Do not weaken the live swap guard.
-    function _driveShockedRequestWithSafeRecovery() private {
-        bool slippageProtected;
-        for (uint256 i; i < 8 && _pendingUnlock() != 0; i++) {
-            string memory label = string.concat("shock_finalize_step_", vm.toString(i));
-            _snapshot(string.concat(label, "_before"));
-            State memory beforeState = _state();
-            uint256 gasBefore = gasleft();
-            bytes memory calldataCopy = abi.encodeWithSignature("finalizeFulfillWithdrawRequest()");
-            vm.prank(PUBLIC_CALLER);
-            (bool ok, bytes memory result) = address(ltvManager).call(calldataCopy);
-            CallEvidence memory c;
-            c.label = label;
-            c.sender = PUBLIC_CALLER;
-            c.target = address(ltvManager);
-            c.calldataCopy = calldataCopy;
-            c.result = result;
-            c.success = ok;
-            c.expected = ok;
-            c.gasMeasured = gasBefore - gasleft();
-            c.accountingUnchanged = _sameAccounting(beforeState, _state());
-            _snapshot(string.concat(label, "_after"));
-            _saveCall(c);
-            if (!ok) {
-                require(!slippageProtected, "Failed again after restoring consistent prices");
-                require(c.accountingUnchanged, "Blocked price-shock swap changed vault accounting");
-                require(result.length >= 4 &&
-                    bytes4(result) == FXMintLTVManager.FuseExecutionFailed.selector,
-                    "Unexpected price-shock revert (not fuse slippage protection)");
-                slippageProtected = true;
-                vm.clearMockedCalls(); // fork-only: restore the real f(x)/IPOR oracle state
-                _snapshot("restore_consistent_chain_pricing_after_shock_guard");
+    function _finish(bool full) private {
+        uint256 initialUserShares=IERC20(VAULT).balanceOf(USER);
+        uint256 initialWBTC=IERC20(WBTC).balanceOf(USER);
+        for(uint256 i;i<14;i++){
+            (address user,,uint256 end,uint256 cooling,uint256 unlock,bool closed)=executor.pending();
+            if(user==address(0)) break;
+            if(cooling>0&&block.timestamp<unlock){vm.warp(unlock+2);vm.roll(block.number+20);}
+            else {vm.warp(block.timestamp+2);vm.roll(block.number+1);}
+            require(block.timestamp<end,"Request window expired");
+            if(cooling==0){
+                if(closed) {
+                    _swapIndependent(USDC,FXUSD);
+                    _swapIndependent(FXUSD,WBTC);
+                } else {
+                    _swapIndependent(USDC,FXUSD);
+                }
             }
+            _advance(string.concat("advance_",vm.toString(i)));
         }
-        require(slippageProtected, "Market/oracle mismatch did not trigger protection");
-        require(_pendingUnlock() == 0, "Request remained stuck after prices recovered");
-        require(IERC20(VAULT).balanceOf(USER) == 0, "User shares not fully redeemed after shock");
-        State memory post = _state();
-        require(post.rawDebt == 0, "fxMINT debt persisted after shock recovery");
-        require(post.gaugeStakedShares == 0, "Convex position persisted after full exit");
-        _snapshot("price_shock_then_recovery_full_user_exit");
+        (address pendingUser,,,,,)=executor.pending();
+        require(pendingUser==address(0),"Scheduled request not settled");
+        State memory st=_state();
+        require(st.userShares<initialUserShares&&st.userWBTC>initialWBTC,"User settlement missing");
+        if(full) require(st.userShares==0&&st.rawDebt==0&&st.rawCollateral==0,"Full unwind incomplete");
+        else require(st.managerLtv<=ltvManager.targetLtvWad(),"Partial exit exceeds target");
+        _snapshot("settlement_complete");
     }
-    /// @notice Fee shares are minted to IPOR's FeeManager account rather than
-    /// directly to the DAO Safe. At full user exit this account can retain
-    /// very small accrued management-fee shares against a few WBTC satoshis.
-    function _assertUserFullyExitedWithOnlyFeeAccountDust() private view {
-        require(IERC20(VAULT).balanceOf(USER) == 0, "User has unredeemed shares");
-        (bool okM, bytes memory managementRaw) =
-            VAULT.staticcall(abi.encodeWithSignature("getManagementFeeData()"));
-        (bool okP, bytes memory performanceRaw) =
-            VAULT.staticcall(abi.encodeWithSignature("getPerformanceFeeData()"));
-        require(okM && managementRaw.length >= 96 && okP && performanceRaw.length >= 64,
-            "IPOR fee accounts unavailable");
-        (address managementAccount,,) = abi.decode(managementRaw, (address, uint16, uint32));
-        (address performanceAccount,) = abi.decode(performanceRaw, (address, uint16));
-        require(managementAccount != address(0) && performanceAccount != address(0),
-            "Invalid fee accounts");
-        uint256 sharesLeft = IERC20(VAULT).totalSupply();
-        uint256 feeShares = IERC20(VAULT).balanceOf(managementAccount)
-            + (managementAccount == performanceAccount ? 0 : IERC20(VAULT).balanceOf(performanceAccount));
-        // IPOR's deposit fee and request fee accrue as shares held by its
-        // WithdrawManager. They remain legitimately owned protocol capital,
-        // not unredeemed user shares or a still-leveraged open position.
-        if (WITHDRAW_MANAGER != managementAccount && WITHDRAW_MANAGER != performanceAccount) {
-            feeShares += IERC20(VAULT).balanceOf(WITHDRAW_MANAGER);
-        }
-        require(sharesLeft == feeShares, "Non-fee shares remain after user exit");
-        // Discrete fee realization after a sudden oracle recovery can mint
-        // performance-fee shares and keep the proportional WBTC in custody.
-        // This is fee-owned capital, NOT user shares or unowned collateral.
-        // Reject any unexpectedly large share allocation (1% initial user shares).
-        require(sharesLeft <= 10_000_000, "Excessive fee share residue");
-        State memory s = _state();
-        require(s.rawDebt == 0 && s.rawCollateral == 0 && s.gaugeStakedShares == 0 &&
-            s.fxusdIdle == 0 && s.fxspIdle == 0 && s.usdcIdle == 0 && s.wbtcIdle <= 100_000,
-            "Residual leverage or unaccounted collateral after user exit");
+    function test_01_target_configuration() public {
+        _deploy(); _configure();
+        _setTarget(30e16); _setTarget(45e16); _setTarget(60e16); _setTarget(75e16);
+        _tx("below_min",OWNER,address(ltvManager),abi.encodeCall(FXMintLTVManager.setTargetLtvWad,(30e16-1)),false);
+        _tx("above_max",OWNER,address(ltvManager),abi.encodeCall(FXMintLTVManager.setTargetLtvWad,(75e16+1)),false);
+        _tx("slippage_config",OWNER,address(ltvManager),abi.encodeCall(FXMintLTVManager.setWithdrawSlippageBps,(35)),true);
+        require(ltvManager.withdrawSlippageBps()==35,"Slippage not applied");
     }
-    /// @notice ERC4626 mint() must work as a distinct user entry point
-    /// (not just deposit()), preserve share accounting, then allow a complete
-    /// scheduled close after all strategy assets have entered live markets.
-    function test_12_user_mint_entrypoint_and_full_withdrawal() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        uint256 funding = 10_000_000;
-        _tx("mint_user_funded_with_real_wbtc", WBTC_FUNDING_HOLDER, WBTC,
-            abi.encodeWithSignature("transfer(address,uint256)", USER, funding), true);
-        _tx("mint_user_approves_underlying", USER, WBTC,
-            abi.encodeWithSignature("approve(address,uint256)", VAULT, funding), true);
-        uint256 shares = IERC4626(VAULT).previewDeposit(funding);
-        require(shares > 0, "No mintable shares");
-        uint256 requiredAssets = IERC4626(VAULT).previewMint(shares);
-        require(requiredAssets > 0 && requiredAssets <= funding, "Invalid mint preview");
-        uint256 beforeWBTC = IERC20(WBTC).balanceOf(USER);
-        bytes memory ret = _tx("user_mint_erc4626_shares", USER, VAULT,
-            abi.encodeWithSignature("mint(uint256,address)", shares, USER), true);
-        require(abi.decode(ret,(uint256)) == requiredAssets, "Mint charged unexpected assets");
-        require(IERC20(VAULT).balanceOf(USER) == shares, "Mint did not issue shares");
-        require(beforeWBTC - IERC20(WBTC).balanceOf(USER) == requiredAssets, "Mint debit mismatch");
-        _openNft();
-        _up();
-        require(_state().managerLtv <= TARGET, "Mint-funded strategy exceeded LTV");
-        _fullScheduledExit();
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
+    function test_02_open_and_leverage_30() public { _start(5_000_000,30e16); }
+    function test_03_open_and_leverage_45() public { _start(8_000_000,45e16); }
+    function test_04_open_and_leverage_60() public { _start(10_000_000,60e16); }
+    function test_05_open_and_leverage_75() public { _start(15_000_000,75e16); }
+    function test_06_subsequent_deposit_and_raise_target() public {
+        _start(10_000_000,45e16);
+        uint256 oldCollateral=_state().rawCollateral; _deposit(2_000_000); _up();
+        require(_state().rawCollateral>oldCollateral,"Idle WBTC not supplied");
+        _setTarget(60e16); _up();
+        require(_state().managerLtv+1e15>=60e16,"Not rebalanced to higher target");
     }
-
-    /// @notice No third party can redeem, transfer or withdraw somebody else's
-    /// shares without allowance, including after user capital is leveraged.
-    function test_13_reject_unauthorized_user_share_spending_and_preserve_full_exit() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        uint256 shares = IERC20(VAULT).balanceOf(USER);
-        State memory initial = _state();
-        _tx("reject_third_party_redeem_user_shares", UNAUTHORIZED, VAULT,
-            abi.encodeWithSignature("redeem(uint256,address,address)", shares / 10, UNAUTHORIZED, USER), false);
-        _tx("reject_third_party_withdraw_user_assets", UNAUTHORIZED, VAULT,
-            abi.encodeWithSignature("withdraw(uint256,address,address)", uint256(10_000), UNAUTHORIZED, USER), false);
-        _tx("reject_unapproved_transfer_from_user", UNAUTHORIZED, VAULT,
-            abi.encodeWithSignature("transferFrom(address,address,uint256)", USER, UNAUTHORIZED, shares / 10), false);
-        require(_sameAccounting(initial, _state()), "Unauthorized call changed account state");
-        _fullScheduledExit();
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
+    function test_07_appreciation_instant_withdraw() public {
+        _start(10_000_000,60e16); _shock(13000);
+        State memory beforeState=_state();
+        (uint256 gross,uint256 reduction,uint256 projected)=ltvManager.previewWithdrawal(200_000);
+        require(gross>=200_000&&reduction==0&&projected<=60e16,"Bad safe preview");
+        _tx("instant_withdraw",USER,VAULT,abi.encodeCall(IERC4626.withdraw,(200_000,USER,USER)),true);
+        State memory afterState=_state();
+        require(afterState.rawDebt==beforeState.rawDebt&&afterState.userWBTC>beforeState.userWBTC&&afterState.managerLtv<=60e16,"Instant exit state");
     }
-    /// @notice The nonterminal withdrawal path must reduce principal debt
-    /// safely, preserve the remaining user's position, and not strand the
-    /// subsequent 100% exit request behind native f(x) cooldown state.
-    function test_14_partial_scheduled_withdrawal_then_remaining_full_exit() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        State memory original = _state();
-        uint256 partialShares = original.userShares / 4;
-        require(partialShares > 0 && partialShares < original.userShares, "Partial setup invalid");
-        _tx("partial_user_requests_quarter_shares", USER, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("requestShares(uint256)", partialShares), true);
-        _tx("partial_user_authorizes_manager", USER, VAULT,
-            abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), partialShares), true);
-        _tx("public_starts_partial_exit", PUBLIC_CALLER, address(ltvManager),
-            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER), true);
-        uint256 unlockAt = _pendingUnlock();
-        require(unlockAt >= block.timestamp + 3600, "Missing partial cooldown");
-        State memory scheduled = _state();
-        require(scheduled.userShares == original.userShares, "Request prematurely burned user shares");
-        vm.warp(unlockAt + 2);
-        vm.roll(block.number + 20);
-        _snapshot("partial_matured_before_public_finalizations");
-        for (uint256 i; i < 8 && _pendingUnlock() != 0; i++) {
-            _tx(string.concat("public_completes_partial_step_", vm.toString(i)),
-                PUBLIC_CALLER, address(ltvManager),
-                abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), true);
-        }
-        require(_pendingUnlock() == 0, "Partial withdrawal never finalized");
-        State memory partiallyExited = _state();
-        require(partiallyExited.userShares > 0 && partiallyExited.userShares < original.userShares,
-            "Partial withdrawal did not leave correct remaining shares");
-        require(partiallyExited.userWBTC > original.userWBTC, "Partial withdrawal delivered no WBTC");
-        require(partiallyExited.rawDebt > 0 && partiallyExited.rawDebt < original.rawDebt,
-            "Partial withdrawal did not reduce fxMINT principal safely");
-        require(partiallyExited.managerLtv <= TARGET,
-            "Partial withdrawal left position above owner 60pct LTV target");
-        _snapshot("partial_exit_settled_safe");
-        _fullScheduledExit();
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
+    function test_08_depreciation_no_windup() public {
+        _start(10_000_000,60e16); _shock(9000); State memory beforeState=_state();
+        require(beforeState.managerLtv>60e16,"Shock did not raise LTV");
+        _action("rebalance_no_extra_debt",address(ltvManager),abi.encodeCall(FXMintLTVManager.rebalanceUp,(0)),true);
+        require(_state().rawDebt==beforeState.rawDebt,"Unexpected debt change");
+        (,uint256 reduction,)=ltvManager.previewWithdrawal(200_000);
+        require(reduction>0,"Preview failed to require repayment");
+        _action("deleveraging_without_liquidity",address(ltvManager),abi.encodeCall(FXMintLTVManager.rebalanceDown,()),false);
     }
-
-    /// @notice Successful user instant-withdrawals must not strand the remaining
-    /// capital after a market-price rebound back to the original live price.
-    function test_15_safe_instant_withdraw_then_final_user_exit_after_price_recovery() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        uint256 debt = _state().rawDebt;
-        _shockWBTC(15_000);
-        _tx("rally_user_instant_withdraw_before_final_exit", USER, VAULT,
-            abi.encodeWithSignature("withdraw(uint256,address,address)", uint256(100_000), USER, USER), true);
-        State memory afterInstant = _state();
-        require(afterInstant.rawDebt == debt && afterInstant.managerLtv <= TARGET,
-            "Rally instant exit repaid debt or exceeded LTV");
-        vm.clearMockedCalls();
-        _snapshot("rally_returned_to_normal_price_before_final_exit");
-        _fullScheduledExit();
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
+    function test_09_deleverage_funded() public {
+        _start(10_000_000,60e16);
+        // Fork-only funding fixture, no live transfer; preserves real repayment token and protocol calls.
+        _tx("fork_fixture_funds_idle_fxusd",CURVE_USDC_FXUSD,FXUSD,abi.encodeCall(IERC20.transfer,(VAULT,1_000e18)),true);
+        _shock(9000); State memory beforeState=_state();
+        _action("rebalance_down",address(ltvManager),abi.encodeCall(FXMintLTVManager.rebalanceDown,()),true);
+        State memory afterState=_state();
+        require(afterState.rawDebt<beforeState.rawDebt&&afterState.managerLtv<=60e16&&afterState.rawCollateral==beforeState.rawCollateral,"Deleveraging failed");
     }
-
-    /// @notice Real deposit and native request fees must not break the
-    /// scheduled full exit or make the user pay two withdrawal fees.
-    function test_16_fee_enabled_deposit_leverage_and_complete_user_exit() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _tx("owner_set_deposit_fee_before_funded_lifecycle", OWNER, FEE_MANAGER,
-            abi.encodeWithSignature("setDepositFee(uint256)", uint256(4e15)), true);
-        _tx("owner_set_scheduled_request_fee_before_funded_lifecycle", OWNER, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("updateRequestFee(uint256)", uint256(45e14)), true);
-        _tx("owner_set_regular_withdraw_fee_before_funded_lifecycle", OWNER, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("updateWithdrawFee(uint256)", uint256(45e14)), true);
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        State memory beforeExit = _state();
-        require(beforeExit.managerLtv <= TARGET, "Fee-enabled leverage exceeded target");
-        _fullScheduledExit();
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
-        _snapshot("fee_enabled_full_user_exit_final");
+    function test_10_partial_scheduled() public {
+        _start(10_000_000,60e16); _configureScheduledRedeemSwap();
+        _request(IERC20(VAULT).balanceOf(USER)/10);
+        (,,,uint256 cooling,uint256 unlock,)=executor.pending();
+        require(cooling>0&&unlock>block.timestamp,"Cooldown not started");
+        _tx("early_finalize",PUBLIC_CALLER,address(executor),abi.encodeCall(FulfillWithdrawExecutor.FinalizeFulfillWithdrawRequest,()),false);
+        _finish(false);
     }
-
-    /// @notice One investor's complete exit must never close the position
-    ///      belonging to another investor or consume the other user's shares.
-    ///      The final investor must still be able to fully unwind the vault.
-    function test_17_two_investors_sequential_full_exits_preserve_other_user_and_zero_final_debt() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _grant(800, USER2, "grant_depositor_role_to_second_user");
-        _fundAndDeposit(5_000_000); // first investor 0.05 WBTC
-        _tx("fund_second_real_wbtc", WBTC_FUNDING_HOLDER, WBTC,
-            abi.encodeWithSignature("transfer(address,uint256)", USER2, uint256(5_000_000)), true);
-        _tx("second_approves_underlying", USER2, WBTC,
-            abi.encodeWithSignature("approve(address,uint256)", VAULT, uint256(5_000_000)), true);
-        _tx("second_deposits_wbtc", USER2, VAULT,
-            abi.encodeWithSignature("deposit(uint256,address)", uint256(5_000_000), USER2), true);
-        _openNft();
-        _up();
-        State memory bothInvested = _state();
-        require(bothInvested.userShares > 0 && bothInvested.user2Shares > 0
-            && bothInvested.managerLtv <= TARGET, "Missing two-user leveraged preconditions");
-
-        _tx("first_user_requests_100pct_own_shares", USER, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("requestShares(uint256)", bothInvested.userShares), true);
-        _tx("first_user_authorizes_own_shares", USER, VAULT,
-            abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), bothInvested.userShares), true);
-        _tx("public_initializes_first_investor_exit", PUBLIC_CALLER, address(ltvManager),
-            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER), true);
-        uint256 unlockAt = _pendingUnlock();
-        require(unlockAt > block.timestamp, "First investor's cooldown missing");
-        vm.warp(unlockAt + 2);
-        vm.roll(block.number + 20);
-        for (uint256 i; i < 8 && _pendingUnlock() != 0; ++i) {
-            _tx(string.concat("public_advances_first_investor_exit_", vm.toString(i)),
-                PUBLIC_CALLER, address(ltvManager),
-                abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), true);
-        }
-        require(_pendingUnlock() == 0, "First investor exit stuck");
-        State memory onlySecond = _state();
-        require(onlySecond.userShares == 0 && onlySecond.userWBTC > 0,
-            "First investor did not exit entirely");
-        require(onlySecond.user2Shares == bothInvested.user2Shares && onlySecond.user2WBTC == 0,
-            "First investor's exit affected second investor's ownership");
-        require(onlySecond.rawDebt > 0 && onlySecond.rawCollateral > 0,
-            "First investor exit wrongly closed position backing second user");
-        require(onlySecond.managerLtv <= TARGET, "First exit left over-target LTV");
-        _snapshot("first_investor_exit_second_investor_preserved");
-
-        uint256 secondShares = IERC20(VAULT).balanceOf(USER2);
-        _tx("second_user_requests_100pct_own_shares", USER2, WITHDRAW_MANAGER,
-            abi.encodeWithSignature("requestShares(uint256)", secondShares), true);
-        _tx("second_user_authorizes_own_shares", USER2, VAULT,
-            abi.encodeWithSignature("approve(address,uint256)", address(ltvManager), secondShares), true);
-        _tx("public_initializes_last_investor_exit", UNAUTHORIZED, address(ltvManager),
-            abi.encodeWithSignature("initializeFulfillWithdrawRequest(address)", USER2), true);
-        unlockAt = _pendingUnlock();
-        require(unlockAt > block.timestamp, "Second investor's cooldown missing");
-        vm.warp(unlockAt + 2);
-        vm.roll(block.number + 20);
-        for (uint256 i; i < 8 && _pendingUnlock() != 0; ++i) {
-            _tx(string.concat("public_advances_final_investor_exit_", vm.toString(i)),
-                UNAUTHORIZED, address(ltvManager),
-                abi.encodeWithSignature("finalizeFulfillWithdrawRequest()"), true);
-        }
-        State memory finalState = _state();
-        require(_pendingUnlock() == 0 && finalState.user2Shares == 0
-            && finalState.user2WBTC > 0, "Last investor did not exit");
-        require(finalState.rawDebt == 0 && finalState.rawCollateral == 0
-            && finalState.gaugeStakedShares == 0, "Last investor exit left leverage or staked assets");
-        _snapshot("both_investors_complete_exits");
+    function test_11_full_scheduled() public {
+        _start(10_000_000,60e16); _configureScheduledRedeemSwap();
+        _request(IERC20(VAULT).balanceOf(USER));
+        _finish(true);
     }
-
-    /// @notice Exercise the SUCCESS path of owner-initiated deleveraging after
-    ///      a BTC drawdown. Funds originate as real fxUSD on an isolated fork;
-    ///      no mocks or token-mint shortcuts are needed for the repayment asset.
-    ///      No Convex unstake/tax may occur, and subsequent full redemption must work.
-    function test_18_admin_rebalance_down_at_crash_price_then_full_user_exit() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        State memory initial = _state();
-        require(initial.rawDebt > 0 && initial.managerLtv <= TARGET,
-            "Initial live debt missing");
-        // This source is a liquid Curve fxUSD/USDC pool holding real fxUSD
-        // on the fork. Only fork state changes; no transfer is broadcast.
-        uint256 sponsorFxUSD = 1_000e18;
-        require(IERC20(FXUSD).balanceOf(CURVE_USDC_FXUSD) >= sponsorFxUSD,
-            "No fxUSD funding liquidity at forked block");
-        _tx("fork_funds_idle_fxusd_for_safe_deleveraging", CURVE_USDC_FXUSD, FXUSD,
-            abi.encodeWithSignature("transfer(address,uint256)", VAULT, sponsorFxUSD), true);
-        _shockWBTC(9_000);
-        State memory beforeDeleverage = _state();
-        require(beforeDeleverage.managerLtv > TARGET,
-            "10pct crash did not exceed configured LTV");
-        _vaultManagerAction("owner_deleverages_with_idle_stable_only",
-            abi.encodeWithSignature("rebalanceDown()"));
-        State memory afterDeleverage = _state();
-        require(afterDeleverage.rawDebt < beforeDeleverage.rawDebt
-            && afterDeleverage.managerLtv <= TARGET,
-            "Successful rebalanceDown did not restore safe LTV");
-        require(afterDeleverage.gaugeStakedShares == beforeDeleverage.gaugeStakedShares,
-            "Admin deleverage prematurely unstaked tax-sensitive Convex principal");
-        require(afterDeleverage.rawCollateral == beforeDeleverage.rawCollateral,
-            "Admin deleverage withdrew collateral");
-        _snapshot("admin_successfully_deleveraged_10pct_crash");
-        vm.clearMockedCalls();
-        _snapshot("admin_deleverage_after_market_price_recovery");
-        _fullScheduledExit();
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
-    }
-
-    /// @notice Test the actual owner fee splits, not merely DAO defaults.
-    ///      Both fee setters must update the live IPOR vault rates through its
-    ///      canonical FeeManager and survive a fully leveraged user lifecycle.
-    function test_19_owner_supplementary_fee_splits_and_complete_user_exit() public {
-        _deploy();
-        _configure();
-        _configureScheduledRedeemSwap();
-        FeeRecipientFork[] memory recipients = new FeeRecipientFork[](1);
-        recipients[0] = FeeRecipientFork(OWNER, 70); // 0.7% owner + 0.3% DAO
-        _tx("safe_configures_owner_management_fee_70bps", OWNER, FEE_MANAGER,
-            abi.encodeWithSignature("updateManagementFee((address,uint256)[])", recipients), true);
-        recipients[0] = FeeRecipientFork(OWNER, 600); // 6% owner + 2% DAO
-        _tx("safe_configures_owner_performance_fee_600bps", OWNER, FEE_MANAGER,
-            abi.encodeWithSignature("updatePerformanceFee((address,uint256)[])", recipients), true);
-
-        (bool ok, bytes memory ret) = FEE_MANAGER.staticcall(
-            abi.encodeWithSignature("getTotalManagementFee()"));
-        require(ok && abi.decode(ret, (uint256)) == 100,
-            "Management fee total must be exactly 1 percent");
-        (ok, ret) = FEE_MANAGER.staticcall(
-            abi.encodeWithSignature("getTotalPerformanceFee()"));
-        require(ok && abi.decode(ret, (uint256)) == 800,
-            "Performance fee total must be exactly 8 percent");
-        (ok, ret) = FEE_MANAGER.staticcall(
-            abi.encodeWithSignature("getManagementFeeRecipients()"));
-        require(ok, "Management fee recipient read reverted");
-        FeeRecipientFork[] memory ownerManagement = abi.decode(ret, (FeeRecipientFork[]));
-        require(ownerManagement.length == 1 && ownerManagement[0].recipient == OWNER &&
-            ownerManagement[0].feeValue == 70, "Owner management fee recipient incorrect");
-        (ok, ret) = FEE_MANAGER.staticcall(
-            abi.encodeWithSignature("getPerformanceFeeRecipients()"));
-        require(ok, "Performance fee recipient read reverted");
-        FeeRecipientFork[] memory ownerPerformance = abi.decode(ret, (FeeRecipientFork[]));
-        require(ownerPerformance.length == 1 && ownerPerformance[0].recipient == OWNER &&
-            ownerPerformance[0].feeValue == 600, "Owner performance fee recipient incorrect");
-
-        _snapshot("owner_supplementary_fees_verified");
-        _fundAndDeposit(10_000_000);
-        _openNft();
-        _up();
-        require(_state().managerLtv <= TARGET, "Fee-configured leverage violated target");
-        _fullScheduledExit();
-        _assertUserFullyExitedWithOnlyFeeAccountDust();
-        _snapshot("owner_fees_full_user_exit_final");
+    function test_12_full_scheduled_price_change() public {
+        _start(10_000_000,45e16); _configureScheduledRedeemSwap();
+        _request(IERC20(VAULT).balanceOf(USER)); _shock(11000); _finish(true);
     }
 }
