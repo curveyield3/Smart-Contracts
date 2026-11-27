@@ -303,10 +303,6 @@ contract CyWBTCLTVManagerV4QualificationV1 {
         // Only the already-validating scheduled-withdraw manager may refresh
         // balances before pricing a real user's authorized withdrawal request.
         _grant(1000, address(executor), "grant_nav_refresh_executor");
-        bytes4[] memory selectors = new bytes4[](2);
-        selectors[0] = FXMintLTVManager.setTargetLtvWad.selector;
-        selectors[1] = FXMintLTVManager.setWithdrawSlippageBps.selector;
-        _tx("native_manager_config_roles", OWNER, ACCESS, abi.encodeWithSignature("setTargetFunctionRole(address,bytes4[],uint64)", address(ltvManager), selectors, uint64(100)), true);
         _grant(300, OWNER, "grant_fuse_manager_safe");
         _grant(900, OWNER, "grant_instant_config_safe");
         _grant(901, OWNER, "grant_request_fee_safe");
@@ -536,6 +532,9 @@ contract CyWBTCLTVManagerV4QualificationV1 {
     function test_01_target_configuration() public {
         _deploy(); _configure();
         _setTarget(30e16); _setTarget(45e16); _setTarget(60e16); _setTarget(75e16);
+        _tx("non_atomist_target_rejected",UNAUTHORIZED,address(ltvManager),abi.encodeCall(FXMintLTVManager.setTargetLtvWad,(60e16)),false);
+        _tx("non_atomist_reserve_rejected",UNAUTHORIZED,address(ltvManager),abi.encodeCall(FXMintLTVManager.setWithdrawSlippageBps,(35)),false);
+        require(ltvManager.targetLtvWad()==75e16,"Rejected call changed target");
         _tx("below_min",OWNER,address(ltvManager),abi.encodeCall(FXMintLTVManager.setTargetLtvWad,(30e16-1)),false);
         _tx("above_max",OWNER,address(ltvManager),abi.encodeCall(FXMintLTVManager.setTargetLtvWad,(75e16+1)),false);
         _tx("slippage_config",OWNER,address(ltvManager),abi.encodeCall(FXMintLTVManager.setWithdrawSlippageBps,(35)),true);

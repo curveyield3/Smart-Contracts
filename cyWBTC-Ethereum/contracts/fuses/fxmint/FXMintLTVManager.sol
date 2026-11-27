@@ -22,7 +22,7 @@ interface IFXMRegistry { function positionId() external view returns(uint256); }
 interface IFXMOracle { function getExchangePrice() external view returns(uint256); }
 interface IFXMFees { function getPoolFeeRatio(address,address) external view returns(uint256,uint256,uint256,uint256); }
 interface IFXMScale { function getTokenScalingFactor(address) external view returns(uint256); }
-interface IFXMAccess { function canCall(address,address,bytes4) external view returns(bool,uint32); }
+interface IFXMAccess { function hasRole(uint64,address) external view returns(bool,uint32); }
 interface IFXMVault {
     function authority() external view returns(address);
     function executeInternal(FuseAction[] calldata) external;
@@ -120,14 +120,14 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         _validate(target); targetLtvWad=target;
     }
 
-    // Uses the vault's live IPOR authority. Delayed roles use its native execute path.
+    // Read the existing IPOR ATOMIST_ROLE directly. Initialized vaults revoke
+    // ADMIN_ROLE and cannot register new target selectors through that role.
+    // Only active members with zero execution delay may configure this manager.
     function authority() public view returns(address) { return IFXMVault(VAULT).authority(); }
     function _authorized() private view {
-        // Storage ownership, not an independent permission system: configuration is
-        // an AccessManager target, never a delegated write into PlasmaVault.
         if(address(this)!=VERSION) revert Invalid();
-        (bool immediate,)=IFXMAccess(authority()).canCall(msg.sender,address(this),msg.sig);
-        if(!immediate) revert Unauthorized();
+        (bool active,uint32 delay)=IFXMAccess(authority()).hasRole(100,msg.sender);
+        if(!active||delay!=0) revert Unauthorized();
     }
     function setTargetLtvWad(uint256 target) external {
         _authorized(); _validate(target); emit TargetLtvSet(targetLtvWad,target); targetLtvWad=target;
