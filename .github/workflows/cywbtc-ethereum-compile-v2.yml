@@ -17,6 +17,7 @@ jobs:
         with:
           version: stable
       - name: Compile v19-derived Ethereum contracts without via-ir
+        id: standard_build
         shell: bash
         run: |
           set -euo pipefail
@@ -82,6 +83,7 @@ jobs:
           exit "$EXIT_CODE"
 
       - name: Compile and validate compact viaIR 200-run profile
+        if: ${{ !cancelled() && steps.standard_build.outcome == 'success' }}
         shell: bash
         env:
           MAINNET_FORK_URL: ${{ secrets.ETHEREUM_FORK_RPC_URL }}
