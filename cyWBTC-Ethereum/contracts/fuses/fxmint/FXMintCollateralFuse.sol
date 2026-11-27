@@ -22,12 +22,14 @@ interface IFXMintCollateralPool {
 }
 interface IFXMintRiskRegistry {
     function riskManager() external view returns (address);
+    function positionId() external view returns (uint256);
 }
 interface IFXMintFullCloseFxUSD {
     function fxUSD() external view returns (address);
 }
 interface IFXMintTargetReader {
     function targetLtvWad() external view returns (uint256);
+    function fullCloseEligible() external view returns (bool);
 }
 interface IFXMintExchangePriceReader {
     function getExchangePrice() external view returns (uint256);
@@ -136,12 +138,14 @@ contract FXMintCollateralFuse is IFuseCommon {
     /// @dev The live f(x) configuration uses a tx-long transient lock and
     ///      refuses debt=0 with nonzero collateral (ErrorDebtRatioTooSmall).
     ///      Public scheduled fulfillment MUST repay and withdraw together.
-    ///      Only the Safe-registered manager implementation can invoke it.
+    ///      Native vault self-call, for the registered position and a live eligible full exit.
     function exitAndRepayFull(
         uint256 positionId, uint256 maxSpentFXUSD, uint256 minReceivedWBTC
     ) external returns (uint256 received, uint256 spent) {
         if (address(this) == VERSION) revert IncorrectExecutionContext();
-        if (msg.sender != IFXMintRiskRegistry(POSITION_REGISTRY).riskManager())
+        IFXMintRiskRegistry registry = IFXMintRiskRegistry(POSITION_REGISTRY);
+        if (msg.sender != address(this) || positionId != registry.positionId()
+            || !IFXMintTargetReader(registry.riskManager()).fullCloseEligible())
             revert OnlyRegisteredRiskManager();
         _onlyOwned(positionId);
         address stable = IFXMintFullCloseFxUSD(POOL).fxUSD();
