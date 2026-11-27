@@ -404,6 +404,28 @@ contract CyWBTCSafetyForkV1 {
         _tx("configure_existing_usdc_fxusd_curve_route", OWNER, OMNI,
             abi.encodeCall(ICurveYieldRouterFork.setRoute, (USDC, FXUSD, route)), true);
         require(ICurveYieldRouterFork(OMNI).routeLength(USDC, FXUSD) == 1, "Scheduled route not installed on fork");
+        // The same exact user-approved WBTC -> USDC 0.05% V3 -> fxUSD Curve
+        // route is needed only if native scheduled debt repayment is short.
+        ICurveYieldRouterFork.Hop[] memory collateralRecovery = new ICurveYieldRouterFork.Hop[](2);
+        collateralRecovery[0] = ICurveYieldRouterFork.Hop({
+            poolType: 2,
+            tokenOut: USDC,
+            swapContract: UNIV3_USDC_WBTC,
+            poolId: bytes32(0),
+            poolData: new bytes(0),
+            oracle: ICurveYieldRouterFork.Oracle({
+                oracleAddress: address(0),
+                readFunctionID: bytes4(0),
+                requiredInputs: new bytes(0),
+                invert: false,
+                rateDecimals: 0
+            })
+        });
+        collateralRecovery[1] = route[0];
+        _tx("configure_existing_wbtc_usdc_fxusd_repayment_route", OWNER, OMNI,
+            abi.encodeCall(ICurveYieldRouterFork.setRoute, (WBTC, FXUSD, collateralRecovery)), true);
+        require(ICurveYieldRouterFork(OMNI).routeLength(WBTC, FXUSD) == 2, "Recovery route not installed on fork");
+
         // Entire vault exit must settle *all* remaining idle fxUSD into WBTC
         // after the atomic fxMINT debt+collateral close. The same approved
         // direct two-hop route is used; never introduce an extra WETH hop.

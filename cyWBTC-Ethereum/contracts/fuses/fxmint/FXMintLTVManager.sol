@@ -92,6 +92,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     // bounded 25% margin. All existing live debt/LTV checks remain mandatory.
     uint256 private constant INSTANT_LIQUIDITY_MARGIN_BPS = 2_500;
     uint256 private constant WBTC_SCALING = 1e28;
+    uint256 private constant COLLATERAL_RECOVERY_SWAP_BUFFER_BPS = 300;
 
     struct Addresses {
         address vault;
@@ -123,7 +124,7 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     }
     struct PendingRequest {
         address user;
-        uint8 stage; // 0=fxSP cooldown and repayment; 3=final WBTC redemption.
+        uint8 stage; // 0=cooldown; 1=recovery collateral; 2=finish repayment; 3=final WBTC redemption.
         uint256 shares;
         uint256 nftId;
         uint256 debtReduction;
@@ -456,36 +457,41 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         PendingRequest storage p = _pendingRequest;
         if (p.user == address(0)) revert NoPendingRequest();
         if (block.timestamp < p.unlockAt) revert PendingNotMature(p.unlockAt);
-        if (p.stage == 3) {
+        uint8 stage = p.stage;
+        if (stage == 0 || stage == 2) {
+            bool full = p.collateralReleaseWBTC == type(uint256).max;
+            uint256 reduction = p.debtReduction;
+            uint256 budget;
+            bool recovery;
+            if (stage == 0) {
+                _executeTokenAmount(FXSP_SUPPLY_FUSE, bytes4(keccak256("finalizeExit((address,uint256))")), FXSP, p.fxspShares);
+                uint256 usdc = IERC20(USDC).balanceOf(VAULT);
+                if (usdc != 0) _executeOne(OMNI_SWAP_FUSE, _swapData(USDC, FXUSD, usdc));
+                if (full) (, reduction) = IFXMintManagerPosition(POOL).getPosition(p.nftId);
+                budget = _repayBudget(reduction);
+                recovery = IERC20(FXUSD).balanceOf(VAULT) < budget;
+            } else if (!full && reduction != 0) {
+                budget = _repayBudget(reduction);
+            }
+            if (recovery) {
+                p.debtReduction = _repayAvailableScheduledFxUSD(p.nftId, reduction);
+                p.stage = 1;
+            } else if (full) {
+                _finishRequest(p, true);
+                return;
+            } else {
+                _repayFromIdleBudgeted(p.nftId, reduction, budget);
+                p.debtReduction = 0;
+                p.stage = 3;
+            }
+        } else if (stage == 1) {
+            _sellCollateralForRemainingDebt(p.nftId, p.debtReduction);
+            p.stage = 2;
+        } else if (stage == 3) {
             _finishRequest(p, false);
             return;
-        }
-        if (p.stage != 0) revert InvalidFulfillStage(p.stage);
-
-        _executeTokenAmount(FXSP_SUPPLY_FUSE, bytes4(keccak256("finalizeExit((address,uint256))")), FXSP, p.fxspShares);
-        uint256 usdc = IERC20(USDC).balanceOf(VAULT);
-        if (usdc != 0) _executeOne(OMNI_SWAP_FUSE, _swapData(USDC, FXUSD, usdc));
-        bool full = p.collateralReleaseWBTC == type(uint256).max;
-        uint256 reduction = p.debtReduction;
-        if (full) (, reduction) = IFXMintManagerPosition(POOL).getPosition(p.nftId);
-        uint256 budget = _repayBudget(reduction);
-        uint256 available = IERC20(FXUSD).balanceOf(VAULT);
-        if (available < budget) {
-            // Never sell WBTC or increase debt to fund repayment. Redeem
-            // more existing fxSP, if available, using the native cooldown.
-            if (full) revert InsufficientFxUSDForRepayment(budget, available);
-            IFXMintWithdrawManager.WithdrawRequestInfo memory r =
-                IFXMintWithdrawManager(WITHDRAW_MANAGER).requestInfo(p.user);
-            if (r.endWithdrawWindowTimestamp <= block.timestamp + FXSP_COOLDOWN)
-                revert InvalidWithdrawRequest(p.user);
-            (p.fxspShares, p.unlockAt) = _requestExistingFxsp(budget - available, budget, false);
-        } else if (full) {
-            _finishRequest(p, true);
-            return;
         } else {
-            _repayFromIdleBudgeted(p.nftId, reduction, budget);
-            p.debtReduction = 0;
-            p.stage = 3;
+            revert InvalidFulfillStage(stage);
         }
         emit WithdrawRequestAdvanced(p.user, p.stage, p.debtReduction);
     }
@@ -588,13 +594,69 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             s.debtReduction >= s.initialDebt ? 0 : s.initialDebt - s.debtReduction);
     }
 
-    function _repayBudget(uint256 debtReduction) private view returns (uint256) {
+    function _repayCostBps() private view returns (uint256) {
         (, , , uint256 fee) = _feeRatios();
         if (fee >= FEE_PRECISION) revert InvalidConfiguration();
         uint256 reserve = IFXMintManagerConfig(VERSION).withdrawSlippageBps();
         if (reserve < MIN_SLIPPAGE_BPS || reserve > MAX_SLIPPAGE_BPS) revert InvalidSlippage(reserve);
         uint256 feeBps = Math.max(MIN_REPAY_RESERVE_BPS, Math.mulDiv(fee, BPS, FEE_PRECISION, Math.Rounding.Up));
-        return debtReduction + Math.mulDiv(debtReduction, feeBps + reserve, BPS, Math.Rounding.Up) + RAW_DEBT_BUFFER;
+        return feeBps + reserve;
+    }
+
+    function _repayBudget(uint256 debtReduction) private view returns (uint256) {
+        return debtReduction + Math.mulDiv(debtReduction, _repayCostBps(), BPS, Math.Rounding.Up) + RAW_DEBT_BUFFER;
+    }
+
+    /// @notice Scheduled-only debt repayment recovery when redeemed fxSP is
+    ///         insufficient to cover both principal and fees. First repay from
+    ///         actual fxUSD, then release a small SAFE amount of WBTC and swap it
+    ///         using the existing WBTC->USDC->fxUSD OmniRouter configuration.
+    /// @dev Neither the normal user instant redemption nor instantWithdraw calls
+    ///      this function. Each withdrawal checks the live configured LTV.
+    function _repayAvailableScheduledFxUSD(uint256 id, uint256 requestedReduction)
+        private returns (uint256 remainingToRepay)
+    {
+        (uint256 rawCollateral, uint256 initialDebt) = IFXMintManagerPosition(POOL).getPosition(id);
+        if (requestedReduction > initialDebt) requestedReduction = initialDebt;
+        uint256 price = _exchangePrice();
+        uint256 stableAvailable = IERC20(FXUSD).balanceOf(VAULT);
+        uint256 repayable = Math.mulDiv(stableAvailable, BPS, BPS + _repayCostBps() + 100);
+        if (repayable > requestedReduction) repayable = requestedReduction;
+        (uint256 minDebtRatio,) = IFXMintManagerPosition(POOL).getDebtRatioRange();
+        uint256 minResidual = Math.mulDiv(
+            Math.mulDiv(rawCollateral, price, WAD), minDebtRatio, WAD, Math.Rounding.Up
+        ) + RAW_DEBT_BUFFER;
+        if (repayable != 0 && initialDebt - repayable < minResidual) {
+            repayable = initialDebt > minResidual ? initialDebt - minResidual : 0;
+        }
+        if (repayable != 0) {
+            _executeOne(FXMINT_BORROW_FUSE, abi.encodeWithSignature("exit(uint256,uint256,bool,uint256)", id, repayable, false, stableAvailable));
+        }
+        (, uint256 debtAfter) = IFXMintManagerPosition(POOL).getPosition(id);
+        if (debtAfter > initialDebt) revert UnexpectedPositionChange();
+        uint256 repaid = initialDebt - debtAfter;
+        remainingToRepay = requestedReduction > repaid ? requestedReduction - repaid : 0;
+    }
+
+    /// @dev Separate bounded branch so Solidity 0.8.30 compiles without viaIR.
+    ///      The collateral side enforces the live target even if this check passes.
+    function _sellCollateralForRemainingDebt(uint256 id, uint256 remainingToRepay) private {
+        uint256 fullBudget = _repayBudget(remainingToRepay);
+        uint256 idleStable = IERC20(FXUSD).balanceOf(VAULT);
+        if (fullBudget > idleStable) {
+            uint256 price = _exchangePrice();
+            uint256 sell = Math.mulDiv(fullBudget - idleStable, 1e8, price, Math.Rounding.Up);
+            sell = Math.mulDiv(sell, BPS + COLLATERAL_RECOVERY_SWAP_BUFFER_BPS,
+                BPS, Math.Rounding.Up);
+            if (sell == 0) revert InvalidAmount();
+            // CollateralFuse.exit and fxMINT PoolManager enforce both
+            // withdrawable collateral and live target LTV after the change.
+            // No duplicate preflight calculations in the public manager.
+            uint256 receivedWBTC = _executeOne(FXMINT_COLLATERAL_FUSE,
+                abi.encodeWithSignature("exit(uint256,uint256,uint256)", id, sell, uint256(0)), WBTC);
+            if (receivedWBTC == 0) revert InsufficientLiquidity(sell, 0);
+            _executeOne(OMNI_SWAP_FUSE, _swapData(WBTC, FXUSD, receivedWBTC));
+        }
     }
 
     function _repayFromIdleBudgeted(uint256 id, uint256 debtReduction, uint256 budget) private returns (uint256 afterDebt) {
