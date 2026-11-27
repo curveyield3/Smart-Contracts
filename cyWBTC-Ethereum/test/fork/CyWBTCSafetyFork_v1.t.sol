@@ -309,6 +309,24 @@ contract CyWBTCLTVManagerV4QualificationV1 {
         _grant(902, OWNER, "grant_withdraw_fee_safe");
         _grant(1200, OWNER, "grant_oracle_config_safe");
 
+        // Fee-only comparison against qualification run 80, on the isolated fork.
+        _tx("configure_deposit_fee_40bps", OWNER, FEE_MANAGER,
+            abi.encodeWithSignature("setDepositFee(uint256)", uint256(4e15)), true);
+        _tx("configure_instant_withdraw_fee_45bps", OWNER, WITHDRAW_MANAGER,
+            abi.encodeWithSignature("updateWithdrawFee(uint256)", uint256(45e14)), true);
+        _tx("configure_scheduled_withdraw_fee_35bps", OWNER, WITHDRAW_MANAGER,
+            abi.encodeWithSignature("updateRequestFee(uint256)", uint256(35e14)), true);
+
+        (bool depositFeeOk, bytes memory depositFeeData) = FEE_MANAGER.staticcall(
+            abi.encodeWithSignature("getDepositFee()"));
+        require(depositFeeOk && abi.decode(depositFeeData, (uint256)) == 4e15, "Deposit fee mismatch");
+        (bool instantFeeOk, bytes memory instantFeeData) = WITHDRAW_MANAGER.staticcall(
+            abi.encodeWithSignature("getWithdrawFee()"));
+        require(instantFeeOk && abi.decode(instantFeeData, (uint256)) == 45e14, "Instant fee mismatch");
+        (bool requestFeeOk, bytes memory requestFeeData) = WITHDRAW_MANAGER.staticcall(
+            abi.encodeWithSignature("getRequestFee()"));
+        require(requestFeeOk && abi.decode(requestFeeData, (uint256)) == 35e14, "Request fee mismatch");
+
         address[] memory assets = new address[](2);
         address[] memory feeds = new address[](2);
         assets[0] = FXUSD; assets[1] = FXN;
