@@ -29,7 +29,7 @@ interface IFXMintFullCloseFxUSD {
 }
 interface IFXMintTargetReader {
     function targetLtvWad() external view returns (uint256);
-    function fullCloseEligible() external view returns (bool);
+    function fullCloseEligibleWithFeeAccounts(address management, address performance) external view returns (bool);
 }
 interface IFXMintExchangePriceReader {
     function getExchangePrice() external view returns (uint256);
@@ -145,7 +145,10 @@ contract FXMintCollateralFuse is IFuseCommon {
         if (address(this) == VERSION) revert IncorrectExecutionContext();
         IFXMintRiskRegistry registry = IFXMintRiskRegistry(POSITION_REGISTRY);
         if (msg.sender != address(this) || positionId != registry.positionId()
-            || !IFXMintTargetReader(registry.riskManager()).fullCloseEligible())
+            || !IFXMintTargetReader(registry.riskManager()).fullCloseEligibleWithFeeAccounts(
+                PlasmaVaultLib.getManagementFeeData().feeAccount,
+                PlasmaVaultLib.getPerformanceFeeData().feeAccount
+            ))
             revert OnlyRegisteredRiskManager();
         _onlyOwned(positionId);
         address stable = IFXMintFullCloseFxUSD(POOL).fxUSD();

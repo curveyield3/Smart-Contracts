@@ -7,6 +7,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IFuseCommon} from "../IFuseCommon.sol";
 import {IFuseInstantWithdraw} from "../IFuseInstantWithdraw.sol";
 import {FuseAction} from "../../interfaces/IPlasmaVault.sol";
+import {PlasmaVaultLib} from "../../libraries/PlasmaVaultLib.sol";
 
 interface IFXMPosition {
     function ownerOf(uint256 id) external view returns (address);
@@ -248,9 +249,16 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
             ||block.timestamp<q.end-q.window||IERC20(VAULT).balanceOf(user)<shares
             ||IERC20(VAULT).allowance(user,WITHDRAW_EXECUTOR)<shares) revert Invalid();
     }
-    function _last(address user,uint256 shares) private view returns(bool) {
-        (address m,,)=IFXMVault(VAULT).getManagementFeeData();
-        (address p,)=IFXMVault(VAULT).getPerformanceFeeData();
+    function _feeAccounts() private view returns(address m,address p) {
+        if(address(this)==VAULT) {
+            m=PlasmaVaultLib.getManagementFeeData().feeAccount;
+            p=PlasmaVaultLib.getPerformanceFeeData().feeAccount;
+        } else {
+            (m,,)=IFXMVault(VAULT).getManagementFeeData();
+            (p,)=IFXMVault(VAULT).getPerformanceFeeData();
+        }
+    }
+    function _last(address user,uint256 shares,address m,address p) private view returns(bool) {
         uint256 other=IERC20(VAULT).totalSupply()-shares;
         if(m!=user&&m!=address(0)) other-=IERC20(VAULT).balanceOf(m);
         if(p!=user&&p!=m&&p!=address(0)) other-=IERC20(VAULT).balanceOf(p);
@@ -260,7 +268,8 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
     function _fxspAvailable() private view returns(uint256) { return _balance(FXSP)+IFXMConvex(STAKE).stakedBalanceOf(VAULT); }
     function _scheduled(address user,uint256 shares) private view returns(Plan memory p) {
         IFXMWithdraw.Request memory q=_request(user,shares); Risk memory r=_risk(); p.id=r.id;
-        p.full=_last(user,shares);
+        (address m,address performance)=_feeAccounts();
+        p.full=_last(user,shares,m,performance);
         if(p.full) { p.gross=type(uint256).max; p.reduction=r.debt; }
         else {
             uint256 reserved=IFXMWithdraw(WITHDRAW_MANAGER).getSharesToRelease();
@@ -308,8 +317,17 @@ contract FXMintLTVManager is IFuseCommon, IFuseInstantWithdraw {
         _exit(p.id,p.gross,0); emit CollateralWithdrawal(p.id,p.gross,0,0);
     }
     function fullCloseEligible() public view returns(bool) {
+        (address m,address p)=_feeAccounts();
+        return _fullCloseEligible(m,p);
+    }
+    /// @notice Read-only eligibility calculation with fee accounts supplied by the
+    /// collateral fuse from native vault storage. Not an execution authorization.
+    function fullCloseEligibleWithFeeAccounts(address m,address p) external view returns(bool) {
+        return _fullCloseEligible(m,p);
+    }
+    function _fullCloseEligible(address m,address p) private view returns(bool) {
         (address user,uint256 shares,uint256 end,uint256 cooling,,bool closed)=IFXMSettlement(WITHDRAW_EXECUTOR).pending();
-        if(user==address(0)||closed||cooling!=0||_request(user,shares).end!=end||!_last(user,shares)||_fxspAvailable()!=0) return false;
+        if(user==address(0)||closed||cooling!=0||_request(user,shares).end!=end||!_last(user,shares,m,p)||_fxspAvailable()!=0) return false;
         (uint128 outstanding,)=IFXMFxSP(FXSP).redeemRequests(VAULT);
         if(outstanding!=0) return false;
         return _balance(FXUSD)>=_budget(_risk().debt);
