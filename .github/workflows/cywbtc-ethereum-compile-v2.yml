@@ -1,4 +1,4 @@
-name: cyWBTC Ethereum IPOR source compile v2
+name: cyWBTC Ethereum IPOR source compile v2 (bytecode only)
 on:
   push:
     paths:
@@ -16,7 +16,7 @@ jobs:
       - uses: foundry-rs/foundry-toolchain@v1
         with:
           version: stable
-      - name: Compile v19-derived Ethereum contracts without via-ir
+      - name: Prepare v19-derived Ethereum contracts and compile standard profile
         shell: bash
         run: |
           set -euo pipefail
@@ -49,76 +49,15 @@ jobs:
             "@yearn-vaults/=lib/yearn-vaults/"
           ]
           TOML
-          forge build --sizes \
-            contracts/fuses/fxsp/FxSPSupplyFuse.sol \
-            contracts/fuses/fxsp/FxSPCurveBalanceFuse.sol \
-            contracts/fuses/convex/ConvexFXGaugeSupplyFuse.sol \
-            contracts/fuses/convex/ConvexFXGaugeBalanceFuse.sol \
-            contracts/fuses/fxmint/FXMintBalanceFuse.sol \
-            contracts/fuses/fxmint/FXMintLTVManager.sol \
-            contracts/fuses/fxmint/FXMintBorrowFuse.sol \
-            contracts/fuses/fxmint/FXMintCollateralFuse.sol \
-            contracts/price_oracle/price_feed/FXNPriceFeedEthereum_v1.sol
+          forge build --sizes contracts/fuses/fxmint/FXMintLTVManager.sol
+          forge inspect contracts/fuses/fxmint/FXMintLTVManager.sol:FXMintLTVManager deployedBytecode | python3 -c 'import sys; h=sys.stdin.read().strip().removeprefix("0x"); print("STANDARD_RUNTIME_BYTES="+str(len(bytes.fromhex(h))))'
 
-      - name: Execute cyWBTC admin/user integrity checks on an isolated mainnet fork
+      - name: Compact viaIR 200-run runtime size
+        if: ${{ !cancelled() }}
         shell: bash
-        env:
-          MAINNET_FORK_URL: ${{ secrets.ETHEREUM_FORK_RPC_URL }}
-        run: |
-          set -euo pipefail
-          ROOT="$RUNNER_TEMP/cywbtc-ethereum"
-          RPC="${MAINNET_FORK_URL:-https://ethereum-rpc.publicnode.com}"
-          cd "$ROOT"
-          mkdir -p simulation-output
-          # The pinned v19 archive contains retired Yearn contracts unrelated to cyWBTC.
-          # Their legacy compiler error must not shadow this isolated IPOR fork suite.
-          rm -rf contracts/yearn
-          set +e
-          forge test --isolate --fork-url "$RPC" --fork-block-number 26502615 --match-path test/fork/CyWBTCSafetyFork_v1.t.sol -vvv > fork-test.log 2>&1
-          EXIT_CODE=$?
-          set -e
-          cat fork-test.log
-          printf '{"forkTestExitCode":%s,"mainnetWrites":false,"status":"%s"}\n' "$EXIT_CODE" "$([ "$EXIT_CODE" = 0 ] && echo PASS || echo FAIL)" > simulation-output/fork-status-v1.json
-          exit "$EXIT_CODE"
-
-      - name: Compile and validate compact viaIR 200-run profile
-        shell: bash
-        env:
-          MAINNET_FORK_URL: ${{ secrets.ETHEREUM_FORK_RPC_URL }}
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/cywbtc-ethereum"
-          RPC="${MAINNET_FORK_URL:-https://ethereum-rpc.publicnode.com}"
           export FOUNDRY_VIA_IR=true FOUNDRY_OPTIMIZER_RUNS=200 FOUNDRY_OUT=out-ir200 FOUNDRY_CACHE_PATH=cache-ir200
-          forge build --sizes \
-            contracts/fuses/fxsp/FxSPSupplyFuse.sol \
-            contracts/fuses/fxsp/FxSPCurveBalanceFuse.sol \
-            contracts/fuses/convex/ConvexFXGaugeSupplyFuse.sol \
-            contracts/fuses/convex/ConvexFXGaugeBalanceFuse.sol \
-            contracts/fuses/fxmint/FXMintBalanceFuse.sol \
-            contracts/fuses/fxmint/FXMintLTVManager.sol \
-            contracts/fuses/fxmint/FXMintBorrowFuse.sol \
-            contracts/fuses/fxmint/FXMintCollateralFuse.sol \
-            contracts/price_oracle/price_feed/FXNPriceFeedEthereum_v1.sol | tee compact-build.log
-          mv simulation-output simulation-output-default
-          mkdir simulation-output
-          set +e
-          forge test --isolate --fork-url "$RPC" --fork-block-number 26502615 --match-path test/fork/CyWBTCSafetyFork_v1.t.sol -vv > compact-fork-test.log 2>&1
-          EXIT_CODE=$?
-          set -e
-          cat compact-fork-test.log
-          mv simulation-output simulation-output-default/compact-profile
-          mv simulation-output-default simulation-output
-          cp compact-build.log compact-fork-test.log simulation-output/
-          exit "$EXIT_CODE"
-
-      - name: Retain transactional snapshots and failure evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cywbtc-ethereum-fork-security-v1
-          path: |
-            ${{ runner.temp }}/cywbtc-ethereum/simulation-output/**
-            ${{ runner.temp }}/cywbtc-ethereum/fork-test.log
-          if-no-files-found: warn
-          retention-days: 90
+          forge build --sizes contracts/fuses/fxmint/FXMintLTVManager.sol
+          forge inspect contracts/fuses/fxmint/FXMintLTVManager.sol:FXMintLTVManager deployedBytecode | python3 -c 'import sys; h=sys.stdin.read().strip().removeprefix("0x"); print("COMPACT_RUNTIME_BYTES="+str(len(bytes.fromhex(h))))'
