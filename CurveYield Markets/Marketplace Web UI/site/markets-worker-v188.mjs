@@ -3060,9 +3060,7 @@ function opLinkStats(rows){
  return result;
 }
 
-/* v188 persistent Markets catalog. Native verification remains unchanged.
-   Cron: every three minutes (one provider batch per slot; aggregate publication at :51).
-   No public request writes R2. All token views are complete atomic objects. */
+/* v188: scheduled protocol batches; atomic token views; no R2 writes on reads. */
 const CY_CAT_PREFIX="catalog/v1/1/";
 const CY_CAT_SPECS=[{id:"base",name:null,protocols:["Aave V3","Aave V4","Beefy Vaults","Compound III","Euler EVK","SparkLend"]},...CY_NATIVE_SPECS,{id:"fraxlend",name:"Fraxlend native registry and pair-level Ethereum RPC",protocols:["Fraxlend"]}];
 const CY_CAT_HOUR=3600000;
@@ -3143,8 +3141,9 @@ async function cyCatRead(bucket,u){
  try{const hit=await caches.default.match(cacheKey);if(hit?.ok)d=await hit.json()}catch{}
  if(!d){
   const obj=await cyCatGet(bucket,key);
-  if(!obj)return null;
-  d=obj.doc;
+  if(obj)d=obj.doc;
+  else if(asset){const root=await cyCatGet(bucket,"all.json");if(root)d={...root.doc,opportunities:[]}}
+  if(!d)return null;
   if(!d?.storage?.r2Catalog||!Array.isArray(d.opportunities))throw Error("Invalid persistent catalog");
   try{await caches.default.put(cacheKey,new Response(JSON.stringify(d),{headers:{"content-type":"application/json","cache-control":"public,max-age=90"}}))}catch{}
  }
@@ -3178,7 +3177,7 @@ function opPage(d,u){
  else if(sort==="asset")arr.sort((x,y)=>String(x.assetSymbol||x.asset).localeCompare(String(y.assetSymbol||y.asset))||y.tvlUsdEstimate-x.tvlUsdEstimate);
  else arr.sort((x,y)=>y.tvlUsdEstimate-x.tvlUsdEstimate);
  return {chainId:1,updatedAt:d.updatedAt,view:research?"research":"verified",
-  count:research?d.researchCount:d.count,counts:research?d.researchCounts:d.counts,
+  count:research?(d.researchCount??d.count):d.count,counts:research?(d.researchCounts??d.counts):d.counts,
   discoveryFilter:d.discoveryFilter,
   depositAssetIdentifiedCount:d.depositAssetIdentifiedCount,indexOnlyCount:d.indexOnlyCount,basketOnlyCount:d.basketOnlyCount,lpCompositionCount:d.lpCompositionCount,lpNativeCount:d.lpNativeCount,convexBoosterResolvedCount:d.convexBoosterResolvedCount,convexNativePricedCount:d.convexNativePricedCount,
   lpCompositionCount:d.lpCompositionCount,lpNativeCount:d.lpNativeCount,convexBoosterResolvedCount:d.convexBoosterResolvedCount,convexNativePricedCount:d.convexNativePricedCount,convexBoosterResolvedCount:d.convexBoosterResolvedCount,convexNativePricedCount:d.convexNativePricedCount,
